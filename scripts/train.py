@@ -1,9 +1,12 @@
 """Stage A training: recurrent bViT with per-step readout on CIFAR.
 
-Single GPU / CPU:
-    python scripts/train.py --out runs/debug
-Multi-GPU (e.g. Kaggle 2x T4):
+Single GPU (e.g. one H100) or CPU:
+    python scripts/train.py --out runs/debug --max-cpus 8
+Multi-GPU:
     torchrun --nproc_per_node=2 scripts/train.py --out runs/c100_bvit_s
+
+CPU usage is capped by --max-cpus (or FSV_MAX_CPUS, default 8); see fsv/cpu.py.
+Normally launched through scripts/run_experiment.py, which also writes the report.
 """
 
 from __future__ import annotations
@@ -25,8 +28,9 @@ from torch.utils.data import DataLoader, DistributedSampler
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from fsv.cpu import default_workers, limit_cpus  # noqa: E402
 from fsv.data import NUM_CLASSES, build_splits  # noqa: E402
-from fsv.engine import autocast_ctx, collect_outputs  # noqa: E402
+from fsv.engine import auto_amp, autocast_ctx, collect_outputs  # noqa: E402
 from fsv.losses import StageALossConfig, stage_a_loss  # noqa: E402
 from fsv.metrics import per_step_metrics  # noqa: E402
 from fsv.mixup import Mixup  # noqa: E402
@@ -40,12 +44,15 @@ def parse_args(argv=None):
     p.add_argument("--data-dir", default="data")
     p.add_argument("--holdout", type=int, default=5000)
     p.add_argument("--fake-data", action="store_true", help="random images, for smoke tests")
-    p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--workers", type=int, default=None, help="DataLoader workers (default: max-cpus - 1)")
+    p.add_argument("--max-cpus", type=int, default=None, help="hard CPU-core cap (default: $FSV_MAX_CPUS or 8)")
     p.add_argument("--no-randaug", action="store_true")
     p.add_argument("--erase", type=float, default=0.25)
     # model
     p.add_argument("--model", default="bvit_s")
     p.add_argument("--t-max", type=int, default=8)
+    p.add_argument("--n-blocks", type=int, default=1,
+                   help="distinct blocks cycled over steps: 1 = bViT (shared), t_max = standard ViT with exits")
     p.add_argument("--patch-size", type=int, default=4)
     p.add_argument("--norm", default="layernorm", choices=["layernorm", "rmsnorm"])
     p.add_argument("--step-embed-in", action="store_true", help="bViT-TE input time embedding")
@@ -145,8 +152,10 @@ def main(argv=None):
     args = parse_args(argv)
     rank, world, local = setup_dist()
     is_main = rank == 0
+    n_cpus = limit_cpus(args.max_cpus, local, int(os.environ.get("LOCAL_WORLD_SIZE", world)))
+    args.workers = default_workers(n_cpus, args.workers)
     device = torch.device(f"cuda:{local}" if torch.cuda.is_available() else "cpu")
-    amp = args.amp if args.amp != "auto" else ("fp16" if device.type == "cuda" else "none")
+    amp = args.amp if args.amp != "auto" else auto_amp(device)
     torch.manual_seed(args.seed + rank)
     np.random.seed(args.seed + rank)  # Mixup / CutMix sampling
     if device.type == "cuda":
@@ -170,10 +179,12 @@ def main(argv=None):
     train_loader = DataLoader(splits["train"], batch_size=per_gpu_bs, shuffle=sampler is None, sampler=sampler,
                               num_workers=args.workers, pin_memory=device.type == "cuda", drop_last=True,
                               persistent_workers=args.workers > 0)
-    holdout_loader = DataLoader(splits["holdout"], batch_size=512, shuffle=False, num_workers=args.workers)
+    holdout_loader = DataLoader(splits["holdout"], batch_size=512, shuffle=False, num_workers=args.workers,
+                                persistent_workers=args.workers > 0)
 
     num_classes = NUM_CLASSES[args.dataset]
-    model = build_model(args.model, num_classes=num_classes, t_max=args.t_max, patch_size=args.patch_size,
+    model = build_model(args.model, num_classes=num_classes, t_max=args.t_max, n_blocks=args.n_blocks,
+                        patch_size=args.patch_size,
                         norm=args.norm, step_embed_in=args.step_embed_in,
                         layerscale_init=args.layerscale_init).to(device)
     n_params = sum(p.numel() for p in model.parameters())
@@ -206,7 +217,8 @@ def main(argv=None):
                 "amp": amp, "device": torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu",
                 "torch": torch.__version__}
         (out / "config.json").write_text(json.dumps(meta, indent=2))
-        print(f"[train] params={n_params / 1e6:.2f}M world={world} amp={amp} iters/epoch={iters_per_epoch}",
+        print(f"[train] params={n_params / 1e6:.2f}M world={world} amp={amp} iters/epoch={iters_per_epoch} "
+              f"cpus/rank={n_cpus} workers/rank={args.workers}",
               flush=True)
 
     t_start = time.time()

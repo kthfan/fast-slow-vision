@@ -25,8 +25,9 @@ from torch.utils.data import DataLoader, Subset
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fsv.calibration import fit_step_temperatures  # noqa: E402
+from fsv.cpu import default_workers, limit_cpus  # noqa: E402
 from fsv.data import build_splits  # noqa: E402
-from fsv.engine import collect_outputs, step_latency  # noqa: E402
+from fsv.engine import auto_amp, collect_outputs, step_latency  # noqa: E402
 from fsv.flops import model_flops  # noqa: E402
 from fsv.halting import curve_auc, fixed_depth_curve, oracle_point, threshold_curve  # noqa: E402
 from fsv.metrics import per_step_metrics  # noqa: E402
@@ -39,7 +40,8 @@ def parse_args(argv=None):
     p.add_argument("--out", default=None, help="output dir (default: checkpoint dir)")
     p.add_argument("--data-dir", default="data")
     p.add_argument("--fake-data", action="store_true")
-    p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--workers", type=int, default=None, help="DataLoader workers (default: max-cpus - 1)")
+    p.add_argument("--max-cpus", type=int, default=None, help="hard CPU-core cap (default: $FSV_MAX_CPUS or 8)")
     p.add_argument("--batch-size", type=int, default=500)
     p.add_argument("--amp", default="auto", choices=["auto", "fp16", "bf16", "none"])
     p.add_argument("--latency", action="store_true", help="measure per-step latency")
@@ -55,8 +57,10 @@ def fmt_row(name, rows, key, scale=1.0, prec=1):
 
 def main(argv=None):
     args = parse_args(argv)
+    n_cpus = limit_cpus(args.max_cpus)
+    args.workers = default_workers(n_cpus, args.workers)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    amp = args.amp if args.amp != "auto" else ("fp16" if device.type == "cuda" else "none")
+    amp = args.amp if args.amp != "auto" else auto_amp(device)
     ck = torch.load(args.ckpt, map_location="cpu", weights_only=False)
     model = RecurrentViT(BViTConfig(**ck["model_cfg"]))
     model.load_state_dict(ck["model"])

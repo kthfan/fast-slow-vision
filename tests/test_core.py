@@ -34,8 +34,8 @@ def test_forward_shapes_and_step_interface(model):
 
 def test_weights_are_shared_across_steps(model):
     # Only one block: parameter count does not grow with t_max.
-    a = sum(p.numel() for p in build_model("bvit_tiny", num_classes=10, t_max=4).block.parameters())
-    b = sum(p.numel() for p in build_model("bvit_tiny", num_classes=10, t_max=12).block.parameters())
+    a = sum(p.numel() for p in build_model("bvit_tiny", num_classes=10, t_max=4).blocks.parameters())
+    b = sum(p.numel() for p in build_model("bvit_tiny", num_classes=10, t_max=12).blocks.parameters())
     assert a == b
 
 
@@ -56,7 +56,7 @@ def test_stage_a_loss_finite_and_backprop(model):
     loss.backward()
     assert torch.isfinite(loss)
     assert {"ce", "brier", "conf", "self_distill", "total"} <= parts.keys()
-    assert model.block.attn.qkv.weight.grad is not None
+    assert model.blocks[0].attn.qkv.weight.grad is not None
     assert model.step_out.grad is not None
 
 
@@ -131,3 +131,25 @@ def test_mixup_targets_sum_to_one():
     for _ in range(10):
         _, t = Mixup(10)(x, y)
         torch.testing.assert_close(t.sum(-1), torch.ones(8))
+
+
+def test_non_shared_blocks_baseline():
+    shared = build_model("bvit_tiny", num_classes=10, t_max=4)
+    full = build_model("bvit_tiny", num_classes=10, t_max=4, n_blocks=4)
+    per_block = sum(p.numel() for p in shared.blocks.parameters())
+    assert sum(p.numel() for p in full.blocks.parameters()) == 4 * per_block
+    assert model_flops(full)["cumulative"] == model_flops(shared)["cumulative"]
+    assert full(torch.randn(2, 3, 32, 32)).shape == (4, 2, 10)
+
+
+def test_limit_cpus_in_subprocess():
+    import subprocess
+    import sys
+
+    code = ("import os, torch; from fsv.cpu import limit_cpus, default_workers; n = limit_cpus(2); "
+            "print(n, len(os.sched_getaffinity(0)), torch.get_num_threads(), os.environ['OMP_NUM_THREADS'], "
+            "default_workers(n))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout.split()
+    n = int(out[0])
+    assert n <= 2 and int(out[1]) == n and int(out[2]) == n and int(out[3]) == n
+    assert int(out[4]) == max(0, n - 1) or (n == 1 and int(out[4]) == 0)

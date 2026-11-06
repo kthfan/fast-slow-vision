@@ -8,6 +8,13 @@ from contextlib import nullcontext
 import torch
 
 
+def auto_amp(device: torch.device) -> str:
+    """bf16 on Ampere/Hopper (e.g. H100, no loss scaling needed), fp16 on older GPUs, none on CPU."""
+    if device.type != "cuda":
+        return "none"
+    return "bf16" if torch.cuda.get_device_capability(device)[0] >= 8 else "fp16"
+
+
 def autocast_ctx(device: torch.device, amp: str):
     if device.type != "cuda" or amp == "none":
         return nullcontext()

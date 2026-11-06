@@ -1,7 +1,9 @@
 """bViT-style recurrent Vision Transformer with per-step readout.
 
 One Transformer block is applied T_max times with shared weights (Byra et al.,
-2026, "Investigating Single-Block Recurrence in Vision Transformers"). After
+2026, "Investigating Single-Block Recurrence in Vision Transformers").
+``n_blocks > 1`` cycles several distinct blocks; ``n_blocks = t_max`` is a
+standard (non-shared) ViT with an exit after every block, used as a baseline. After
 every step a shared linear head reads out class logits from
 ``LN(CLS_t) + step_emb(t)`` (TODO.md section 2.2).
 
@@ -31,6 +33,7 @@ class BViTConfig:
     heads: int = 6
     mlp_ratio: float = 4.0
     t_max: int = 8
+    n_blocks: int = 1  # distinct blocks, cycled: step t uses block t % n_blocks (1 = bViT)
     norm: str = "layernorm"  # "layernorm" | "rmsnorm"
     qkv_bias: bool = True
     step_embed_in: bool = False  # bViT-TE: add a learned per-step vector before the block
@@ -114,7 +117,8 @@ class RecurrentViT(nn.Module):
         self.patch_embed = nn.Conv2d(cfg.in_chans, d, cfg.patch_size, cfg.patch_size)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d))
         self.pos_embed = nn.Parameter(torch.zeros(1, cfg.num_patches + 1, d))
-        self.block = Block(cfg)
+        assert 1 <= cfg.n_blocks <= cfg.t_max
+        self.blocks = nn.ModuleList(Block(cfg) for _ in range(cfg.n_blocks))
         # Optional bViT-TE input time embedding (zero-init: starts identical to plain bViT).
         self.step_in = nn.Parameter(torch.zeros(cfg.t_max, d)) if cfg.step_embed_in else None
         # Shared readout: head(LN(CLS_t) + step_emb(t)).
@@ -136,6 +140,12 @@ class RecurrentViT(nn.Module):
         nn.init.trunc_normal_(w.view(w.shape[0], -1), std=0.02)
         nn.init.zeros_(self.patch_embed.bias)
 
+    def load_state_dict(self, state_dict, strict: bool = True, assign: bool = False):
+        # Checkpoints from before n_blocks existed store the shared block as "block.*".
+        state_dict = {("blocks.0." + k[len("block."):] if k.startswith("block.") else k): v
+                      for k, v in state_dict.items()}
+        return super().load_state_dict(state_dict, strict=strict, assign=assign)
+
     def no_weight_decay(self) -> set[str]:
         return {"cls_token", "pos_embed", "step_in", "step_out"}
 
@@ -148,7 +158,7 @@ class RecurrentViT(nn.Module):
     def forward_step(self, tokens: torch.Tensor, t: int) -> torch.Tensor:
         if self.step_in is not None:
             tokens = tokens + self.step_in[t]
-        return self.block(tokens)
+        return self.blocks[t % len(self.blocks)](tokens)
 
     def readout(self, tokens: torch.Tensor, t: int) -> torch.Tensor:
         """Logits at step t (before any temperature scaling)."""
