@@ -2,6 +2,7 @@ import math
 
 import pytest
 import torch
+from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.utils.flop_counter import FlopCounterMode
 
 from fsv.calibration import fit_temperature
@@ -91,7 +92,8 @@ def test_temperature_fixes_overconfidence():
 
 def test_analytic_flops_match_counter(model):
     fl = model_flops(model)
-    with FlopCounterMode(display=False) as fc:
+    # Force the math SDPA backend: some torch builds do not register FLOPs for fused CPU attention kernels.
+    with sdpa_kernel(SDPBackend.MATH), FlopCounterMode(display=False) as fc:
         model(torch.randn(1, 3, 32, 32))
     counted = fc.get_total_flops()
     assert math.isclose(fl["cumulative"][-1], counted, rel_tol=0.05), (fl["cumulative"][-1], counted)
