@@ -45,11 +45,14 @@ def collect_outputs(model, loader, device, amp: str = "none", feats: bool = Fals
 
 
 @torch.no_grad()
-def step_latency(model, device, batch_size: int, amp: str = "none", warmup: int = 5, iters: int = 20) -> dict:
+def step_latency(model, device, batch_size: int, amp: str = "none", warmup: int = 10, iters: int = 20,
+                 repeats: int = 7) -> dict:
     """Wall-clock latency (ms) of embed + t steps + readout at each t, for one batch size.
 
     Measures the cumulative time to reach and read out step t, i.e. the
     latency of a sample that stops after step t (no halting-policy cost yet).
+    Each value is the median of ``repeats`` timings of ``iters`` iterations;
+    ``max_over_min`` (slowest / fastest repeat) flags interference from other GPU jobs.
     """
     model.eval()
     c = model.cfg
@@ -58,20 +61,25 @@ def step_latency(model, device, batch_size: int, amp: str = "none", warmup: int 
 
     def run(T):
         with autocast_ctx(device, amp):
-            tok = model.embed(x)
+            x0 = tok = model.embed(x)
             for t in range(T):
-                tok = model.forward_step(tok, t)
+                tok = model.forward_step(tok, t, x0)
                 model.readout(tok, t)
 
-    res = []
+    res, spread = [], []
     for T in range(1, c.t_max + 1):
         for _ in range(warmup):
             run(T)
-        sync()
-        t0 = time.perf_counter()
-        for _ in range(iters):
-            run(T)
-        sync()
-        res.append((time.perf_counter() - t0) / iters * 1e3)
-    return {"batch_size": batch_size, "ms_cumulative": res,
+        reps = []
+        for _ in range(repeats):  # median over repeats is robust to other jobs on a shared GPU
+            sync()
+            t0 = time.perf_counter()
+            for _ in range(iters):
+                run(T)
+            sync()
+            reps.append((time.perf_counter() - t0) / iters * 1e3)
+        reps.sort()
+        res.append(reps[len(reps) // 2])
+        spread.append(reps[-1] / reps[0])
+    return {"batch_size": batch_size, "ms_cumulative": res, "max_over_min": spread,
             "throughput_full_img_per_s": batch_size / (res[-1] / 1e3)}

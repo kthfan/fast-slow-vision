@@ -33,6 +33,27 @@ EXPERIMENTS: dict[str, dict] = {
                 "bViT paper: width closes most of the gap to a non-shared ViT.",
         "train": [*_BASE[:3], "bvit_b", *_BASE[4:]],
     },
+    # ---- round 3: precision check and attempts to make later recurrent steps useful
+    "c100_bvit_s_fp16": {
+        "desc": "bViT-S baseline trained in fp16 (+GradScaler) instead of bf16; the Kaggle fp16 run was ~2 points higher.",
+        "train": _BASE + ["--amp", "fp16"],
+    },
+    "c100_bvit_s_te": {
+        "desc": "bViT-S + learned per-step input time embedding (bViT-TE), so the shared block knows which step it is.",
+        "train": _BASE + ["--step-embed-in"],
+    },
+    "c100_bvit_s_inject": {
+        "desc": "bViT-S + gated re-injection of the patch embeddings before every step (zero-init gate).",
+        "train": _BASE + ["--input-inject"],
+    },
+    "c100_bvit_s_linw": {
+        "desc": "bViT-S with per-step loss weights growing linearly with t (later steps weigh more).",
+        "train": _BASE + ["--step-weights", "linear"],
+    },
+    "c100_bvit_s_nosd": {
+        "desc": "bViT-S without last-step self-distillation (delta = 0).",
+        "train": _BASE + ["--delta", "0"],
+    },
     "c100_vit_s_8blk": {
         "desc": "Non-shared baseline: 8 distinct blocks with an exit after each (same FLOPs, ~8x block params); "
                 "measures the cost of weight sharing.",

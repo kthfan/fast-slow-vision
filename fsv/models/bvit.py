@@ -37,6 +37,7 @@ class BViTConfig:
     norm: str = "layernorm"  # "layernorm" | "rmsnorm"
     qkv_bias: bool = True
     step_embed_in: bool = False  # bViT-TE: add a learned per-step vector before the block
+    input_inject: bool = False  # add g * x0 (patch embeddings) before every step t > 0; g zero-init per channel
     layerscale_init: float = 0.0  # 0 disables LayerScale (paper default)
 
     @property
@@ -121,6 +122,8 @@ class RecurrentViT(nn.Module):
         self.blocks = nn.ModuleList(Block(cfg) for _ in range(cfg.n_blocks))
         # Optional bViT-TE input time embedding (zero-init: starts identical to plain bViT).
         self.step_in = nn.Parameter(torch.zeros(cfg.t_max, d)) if cfg.step_embed_in else None
+        # Optional input injection (zero-init gate: starts identical to plain bViT).
+        self.inject_gate = nn.Parameter(torch.zeros(d)) if cfg.input_inject else None
         # Shared readout: head(LN(CLS_t) + step_emb(t)).
         self.head_norm = make_norm(cfg.norm, d)
         self.step_out = nn.Parameter(torch.zeros(cfg.t_max, d))
@@ -147,7 +150,7 @@ class RecurrentViT(nn.Module):
         return super().load_state_dict(state_dict, strict=strict, assign=assign)
 
     def no_weight_decay(self) -> set[str]:
-        return {"cls_token", "pos_embed", "step_in", "step_out"}
+        return {"cls_token", "pos_embed", "step_in", "step_out", "inject_gate"}
 
     # ------------------------------------------------------- step interface
     def embed(self, x: torch.Tensor) -> torch.Tensor:
@@ -155,7 +158,11 @@ class RecurrentViT(nn.Module):
         cls = self.cls_token.expand(x.shape[0], -1, -1)
         return torch.cat([cls, x], dim=1) + self.pos_embed
 
-    def forward_step(self, tokens: torch.Tensor, t: int) -> torch.Tensor:
+    def forward_step(self, tokens: torch.Tensor, t: int, x0: torch.Tensor | None = None) -> torch.Tensor:
+        """One recurrent step. ``x0`` (the output of ``embed``) is required when input_inject is on."""
+        if self.inject_gate is not None and t > 0:
+            assert x0 is not None, "input_inject needs x0 = model.embed(x)"
+            tokens = tokens + self.inject_gate * x0
         if self.step_in is not None:
             tokens = tokens + self.step_in[t]
         return self.blocks[t % len(self.blocks)](tokens)
@@ -176,10 +183,10 @@ class RecurrentViT(nn.Module):
         """Run all steps. Returns logits [T, B, C] (and per-step features if asked)."""
         T = t_max or self.cfg.t_max
         assert T <= self.cfg.t_max
-        tokens = self.embed(x)
+        x0 = tokens = self.embed(x)
         logits, feats = [], {"cls": [], "pool": []}
         for t in range(T):
-            tokens = self.forward_step(tokens, t)
+            tokens = self.forward_step(tokens, t, x0)
             logits.append(self.readout(tokens, t))
             if return_feats:
                 for k, v in self.features(tokens).items():

@@ -56,6 +56,7 @@ def parse_args(argv=None):
     p.add_argument("--patch-size", type=int, default=4)
     p.add_argument("--norm", default="layernorm", choices=["layernorm", "rmsnorm"])
     p.add_argument("--step-embed-in", action="store_true", help="bViT-TE input time embedding")
+    p.add_argument("--input-inject", action="store_true", help="re-inject gated patch embeddings at every step")
     p.add_argument("--layerscale-init", type=float, default=0.0)
     # optimisation
     p.add_argument("--epochs", type=int, default=200)
@@ -185,7 +186,7 @@ def main(argv=None):
     num_classes = NUM_CLASSES[args.dataset]
     model = build_model(args.model, num_classes=num_classes, t_max=args.t_max, n_blocks=args.n_blocks,
                         patch_size=args.patch_size,
-                        norm=args.norm, step_embed_in=args.step_embed_in,
+                        norm=args.norm, step_embed_in=args.step_embed_in, input_inject=args.input_inject,
                         layerscale_init=args.layerscale_init).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     opt = torch.optim.AdamW(param_groups(model, args.wd), lr=args.lr, betas=(0.9, 0.999))
@@ -287,7 +288,7 @@ def main(argv=None):
             torch.save(state, out / "last.pt")
             if last:
                 final = {"model": (ema.model if ema else model).state_dict(), "model_name": args.model,
-                         "model_cfg": config_dict(model), "epoch": epoch, "args": vars(args)}
+                         "model_cfg": config_dict(model), "epoch": epoch, "args": vars(args), "amp": amp}
                 torch.save(final, out / "model.pt")
         barrier(world)
         if stop:

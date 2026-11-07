@@ -78,6 +78,9 @@ def summarize(runs_by_exp: dict[str, list[dict]]) -> str:
         hold = [r["hist"][-1]["holdout"] for r in done if r["hist"] and "holdout" in r["hist"][-1]]
         if hold:
             out.append("  holdout%   " + row(hold, lambda h: [x["acc"] for x in h], 1, 100))
+        last_loss = [r["hist"][-1].get("train_total") for r in done if r["hist"]]
+        if last_loss:
+            out.append(f"  final train loss {ms(last_loss, 3)} | AMP {cfg.get('amp', '?')}")
         best = [max(x["acc"] for x in r["test_raw"]) for r in res]
         out.append(f"  best-step acc {ms(best, 2, 100)} | last-step acc "
                    f"{ms([r['test_raw'][-1]['acc'] for r in res], 2, 100)}")

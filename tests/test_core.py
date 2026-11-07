@@ -153,3 +153,23 @@ def test_limit_cpus_in_subprocess():
     n = int(out[0])
     assert n <= 2 and int(out[1]) == n and int(out[2]) == n and int(out[3]) == n
     assert int(out[4]) == max(0, n - 1) or (n == 1 and int(out[4]) == 0)
+
+
+def test_input_injection_starts_as_plain_bvit_and_uses_x0():
+    torch.manual_seed(0)
+    plain = build_model("bvit_tiny", num_classes=10, t_max=3).eval()
+    inj = build_model("bvit_tiny", num_classes=10, t_max=3, input_inject=True).eval()
+    inj.load_state_dict(plain.state_dict(), strict=False)  # gate stays zero-initialised
+    x = torch.randn(2, 3, 32, 32)
+    torch.testing.assert_close(inj(x), plain(x))
+    with torch.no_grad():
+        inj.inject_gate.fill_(0.5)
+    x0 = tok = inj.embed(x)
+    outs = []
+    for t in range(3):
+        tok = inj.forward_step(tok, t, x0)
+        outs.append(inj.readout(tok, t))
+    torch.testing.assert_close(torch.stack(outs), inj(x))
+    assert not torch.allclose(inj(x)[1:], plain(x)[1:])
+    with pytest.raises(AssertionError):
+        inj.forward_step(x0, 1)
