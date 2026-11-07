@@ -1,0 +1,118 @@
+"""Print one compact, paste-friendly summary of finished runs.
+
+    python scripts/summarize.py                      # every run under reports/
+    python scripts/summarize.py c100_bvit_s c100_bvit_b   # only these experiments (all seeds)
+
+Runs of the same experiment with different seeds are aggregated as
+mean ± std (sample std; "±" omitted for a single seed). Copy the whole output,
+including the BEGIN/END lines, into the conversation.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import statistics as st
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def load(d: Path):
+    def j(name):
+        p = d / name
+        return json.loads(p.read_text()) if p.exists() else None
+
+    hist = d / "history.jsonl"
+    return {"dir": d.name, "env": j("env.json") or {}, "cfg": j("config.json") or {}, "res": j("results.json"),
+            "hist": [json.loads(x) for x in hist.read_text().splitlines() if x.strip()] if hist.exists() else []}
+
+
+def ms(vals, prec=1, scale=1.0):
+    vals = [v * scale for v in vals if v is not None]
+    if not vals:
+        return "-"
+    m = st.mean(vals)
+    return f"{m:.{prec}f}" if len(vals) == 1 else f"{m:.{prec}f}±{st.stdev(vals):.{prec}f}"
+
+
+def row(runs, getter, prec=1, scale=1.0):
+    per_run = [getter(r) for r in runs]
+    T = max(len(x) for x in per_run)
+    return " ".join(ms([x[t] for x in per_run if t < len(x)], prec, scale) for t in range(T))
+
+
+def summarize(runs_by_exp: dict[str, list[dict]]) -> str:
+    any_run = next(r for rs in runs_by_exp.values() for r in rs)
+    e = any_run["env"]
+    out = ["===== BEGIN FSV SUMMARY =====",
+           f"code {e.get('code_version', '?')} | {e.get('gpu', '?')} | torch {e.get('torch', '?')} "
+           f"| cpus {e.get('max_cpus', '?')}/{e.get('machine_cpus', '?')}"]
+    versions = {r["env"].get("code_version") for rs in runs_by_exp.values() for r in rs}
+    if len(versions) > 1:
+        out.append(f"NOTE: runs use different code versions: {sorted(map(str, versions))}")
+    for exp, runs in runs_by_exp.items():
+        done = [r for r in runs if r["res"]]
+        seeds = ",".join(str(r["env"].get("seed", 0)) for r in runs)
+        failed = [r["dir"] for r in runs if not r["res"]]
+        cfg = runs[0]["cfg"]
+        out.append("")
+        out.append(f"[{exp}] seeds {seeds} | params {cfg.get('params', 0) / 1e6:.2f}M | "
+                   f"train {ms([r['env'].get('train_minutes') for r in runs])} min | "
+                   f"epoch {ms([st.mean(h['epoch_time_s'] for h in r['hist']) for r in runs if r['hist']])}s"
+                   + (f" | FAILED/unfinished: {failed}" if failed else ""))
+        if not done:
+            continue
+        res = [r["res"] for r in done]
+        out.append("  test acc%  " + row(res, lambda r: [x["acc"] for x in r["test_raw"]], 2, 100))
+        out.append("  ECE raw%   " + row(res, lambda r: [x["ece"] for x in r["test_raw"]], 2, 100))
+        out.append("  ECE TS%    " + row(res, lambda r: [x["ece"] for x in r["test_ts"]], 2, 100))
+        out.append("  NLL TS     " + row(res, lambda r: [x["nll"] for x in r["test_ts"]], 3))
+        out.append("  AURC TS%   " + row(res, lambda r: [x["aurc"] for x in r["test_ts"]], 2, 100))
+        out.append("  temp       " + row(res, lambda r: r["temperatures"], 3))
+        out.append("  GFLOPs     " + " ".join(f"{c / 1e9:.3f}" for c in res[0]["flops"]["cumulative"]))
+        lat = [r.get("latency", {}) for r in res]
+        for k in [k for k in lat[0] if k.startswith("bs")]:
+            out.append(f"  lat {k} ms " + row(lat, lambda x: x[k]["ms_cumulative"], 2))
+        hold = [r["hist"][-1]["holdout"] for r in done if r["hist"] and "holdout" in r["hist"][-1]]
+        if hold:
+            out.append("  holdout%   " + row(hold, lambda h: [x["acc"] for x in h], 1, 100))
+        best = [max(x["acc"] for x in r["test_raw"]) for r in res]
+        out.append(f"  best-step acc {ms(best, 2, 100)} | last-step acc "
+                   f"{ms([r['test_raw'][-1]['acc'] for r in res], 2, 100)}")
+        out.append("  AUC " + " ".join(f"{k} {ms([r['curve_auc_acc'][k] for r in res], 2, 100)}"
+                                        for k in res[0]["curve_auc_acc"]))
+        out.append("  oracle " + " | ".join(
+            f"{k} {ms([r['oracle'][k]['acc'] for r in res], 2, 100)}% @ "
+            f"{ms([r['oracle'][k]['gflops'] for r in res], 3)} GFLOPs" for k in res[0]["oracle"]))
+    out.append("===== END FSV SUMMARY =====")
+    return "\n".join(out)
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("experiments", nargs="*", help="experiment names (default: all under reports/)")
+    p.add_argument("--reports", default=str(ROOT / "reports"))
+    args = p.parse_args(argv)
+
+    runs_by_exp: dict[str, list[dict]] = {}
+    for d in sorted(Path(args.reports).iterdir() if Path(args.reports).exists() else []):
+        if not (d / "env.json").exists():
+            continue
+        r = load(d)
+        exp = r["env"].get("experiment", d.name)
+        if exp == "smoke" and not args.experiments:
+            continue
+        if args.experiments and exp not in args.experiments:
+            continue
+        runs_by_exp.setdefault(exp, []).append(r)
+    if not runs_by_exp:
+        sys.exit(f"no finished runs found under {args.reports}")
+    for runs in runs_by_exp.values():
+        runs.sort(key=lambda r: r["env"].get("seed", 0))
+    print(summarize(runs_by_exp))
+
+
+if __name__ == "__main__":
+    main()

@@ -29,13 +29,14 @@ def render_report(report_dir: str | Path) -> str:
     hist = _load(d / "history.jsonl") or []
     res = _load(d / "results.json")
 
-    lines = [f"# Report: {env.get('experiment', d.name)}", ""]
+    lines = [f"# Report: {env.get('run', env.get('experiment', d.name))}", ""]
     if env.get("description"):
         lines += [env["description"], ""]
     lines += [
         "## Environment",
         "",
-        f"- git: `{env.get('git_commit', '?')}` on `{env.get('git_branch', '?')}`"
+        f"- code: `{env.get('code_version', '?')}`"
+        + (f", git `{env['git_commit'][:12]}` on `{env.get('git_branch')}`" if env.get("git_commit") else "")
         + (" (**uncommitted changes**)" if env.get("git_dirty") else ""),
         f"- GPU: {env.get('gpu', '?')} | torch {env.get('torch', '?')} (CUDA {env.get('cuda', '?')}) "
         f"| Python {env.get('python', '?')}",

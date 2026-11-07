@@ -26,7 +26,8 @@ def test_train_then_evaluate(tmp_path):
 
 
 def test_run_experiment_writes_report(tmp_path):
-    cmd = [sys.executable, str(ROOT / "scripts/run_experiment.py"), "smoke", "--fake-data", "--max-cpus", "2",
+    cmd = [sys.executable, str(ROOT / "scripts/run_experiment.py"), "smoke", "--seeds", "0", "1",
+           "--fake-data", "--max-cpus", "2",
            "--out-root", str(tmp_path), "--gpu", "",
            "--extra", "--model bvit_tiny --t-max 3 --max-steps 3 --batch-size 16 --holdout 64"]
     subprocess.run(cmd, check=True, cwd=ROOT)
@@ -39,3 +40,11 @@ def test_run_experiment_writes_report(tmp_path):
     assert cfg["args"]["max_cpus"] <= 2 and cfg["args"]["workers"] <= 2
     text = (rep / "report.md").read_text()
     assert "Test set, per step" in text and "ECE TS %" in text
+    assert env["code_version"].startswith("0.") and len(env["code_hash"]) == 12
+    seed1 = json.loads((tmp_path / "reports" / "smoke_s1" / "env.json").read_text())
+    assert seed1["seed"] == 1 and seed1["train_exit"] == 0
+    summary = subprocess.run([sys.executable, str(ROOT / "scripts/summarize.py"), "smoke",
+                              "--reports", str(tmp_path / "reports")], check=True, capture_output=True,
+                             text=True, cwd=ROOT).stdout
+    assert "BEGIN FSV SUMMARY" in summary and "[smoke] seeds 0,1" in summary and "test acc%" in summary
+    assert "±" in summary

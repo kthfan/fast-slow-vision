@@ -28,6 +28,11 @@ EXPERIMENTS: dict[str, dict] = {
                 "tests whether the baseline underfits because of over-regularisation.",
         "train": _BASE + ["--mixup", "0.2", "--cutmix", "0", "--erase", "0"],
     },
+    "c100_bvit_b": {
+        "desc": "Wider shared block (bViT-B: dim 768, 12 heads, ~7.2M params, ~4x FLOPs per step); "
+                "bViT paper: width closes most of the gap to a non-shared ViT.",
+        "train": [*_BASE[:3], "bvit_b", *_BASE[4:]],
+    },
     "c100_vit_s_8blk": {
         "desc": "Non-shared baseline: 8 distinct blocks with an exit after each (same FLOPs, ~8x block params); "
                 "measures the cost of weight sharing.",
