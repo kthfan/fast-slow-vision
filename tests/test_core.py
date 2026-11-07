@@ -173,3 +173,27 @@ def test_input_injection_starts_as_plain_bvit_and_uses_x0():
     assert not torch.allclose(inj(x)[1:], plain(x)[1:])
     with pytest.raises(AssertionError):
         inj.forward_step(x0, 1)
+
+
+def test_step_weight_schedules():
+    from fsv.losses import step_weights
+
+    for kind in ("uniform", "linear", "quadratic"):
+        w = step_weights(8, kind)
+        torch.testing.assert_close(w.sum(), torch.tensor(1.0))
+        assert (w[1:] >= w[:-1]).all()
+    q = step_weights(4, "quadratic")
+    torch.testing.assert_close(q, torch.tensor([1.0, 4.0, 9.0, 16.0]) / 30)
+
+
+def test_mixup_groups_are_independent():
+    import numpy as np
+
+    np.random.seed(0)
+    x, y = torch.randn(16, 3, 32, 32), torch.arange(16) % 10
+    _, t = Mixup(10, mixup_alpha=0.8, cutmix_alpha=0.0, groups=2)(x, y)
+    torch.testing.assert_close(t.sum(-1), torch.ones(16))
+    # pairing stays inside each half: sample 0 is mixed with 7 (not 15), sample 8 with 15
+    assert t[0, y[7]] > 0 and t[0, y[15]] == 0 and t[8, y[15]] > 0
+    lam_a, lam_b = t[0, y[0]].item(), t[8, y[8]].item()
+    assert abs(lam_a - lam_b) > 1e-6

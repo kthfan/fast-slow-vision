@@ -27,7 +27,7 @@ class StageALossConfig:
     delta: float = 0.5  # last-step self-distillation weight
     eta: float = 0.0  # teacher distillation weight (not used on CIFAR yet)
     gk_alpha: float = 0.5  # Gatekeeper: alpha * correct-CE + (1 - alpha) * incorrect-KL(U||p)
-    step_weights: str = "uniform"  # "uniform" | "linear" (later steps weigh more)
+    step_weights: str = "uniform"  # "uniform" | "linear" | "quadratic": w_t ∝ 1, t+1, (t+1)^2
     label_smoothing: float = 0.0
 
 
@@ -36,6 +36,8 @@ def step_weights(T: int, kind: str, device=None) -> torch.Tensor:
         w = torch.ones(T, device=device)
     elif kind == "linear":
         w = torch.arange(1, T + 1, device=device, dtype=torch.float32)
+    elif kind == "quadratic":
+        w = torch.arange(1, T + 1, device=device, dtype=torch.float32) ** 2
     else:
         raise ValueError(f"unknown step weighting {kind!r}")
     return w / w.sum()

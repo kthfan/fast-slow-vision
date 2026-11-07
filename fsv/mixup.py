@@ -9,18 +9,25 @@ import torch.nn.functional as F
 
 class Mixup:
     def __init__(self, num_classes: int, mixup_alpha: float = 0.8, cutmix_alpha: float = 1.0,
-                 prob: float = 1.0, switch_prob: float = 0.5):
+                 prob: float = 1.0, switch_prob: float = 0.5, groups: int = 1):
         self.num_classes = num_classes
         self.mixup_alpha = mixup_alpha
         self.cutmix_alpha = cutmix_alpha
         self.prob = prob
         self.switch_prob = switch_prob
+        self.groups = groups  # independent lambda / mix type / pairing per chunk (DDP-like when > 1)
 
     @property
     def enabled(self) -> bool:
         return self.prob > 0 and (self.mixup_alpha > 0 or self.cutmix_alpha > 0)
 
     def __call__(self, x: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.groups > 1 and x.shape[0] >= 2 * self.groups:
+            parts = [self._mix(xc, yc) for xc, yc in zip(x.chunk(self.groups), y.chunk(self.groups))]
+            return torch.cat([p[0] for p in parts]), torch.cat([p[1] for p in parts])
+        return self._mix(x, y)
+
+    def _mix(self, x: torch.Tensor, y: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         target = F.one_hot(y, self.num_classes).float()
         if not self.enabled or np.random.rand() > self.prob:
             return x, target

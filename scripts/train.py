@@ -73,12 +73,14 @@ def parse_args(argv=None):
     p.add_argument("--mixup", type=float, default=0.8)
     p.add_argument("--cutmix", type=float, default=1.0)
     p.add_argument("--mix-prob", type=float, default=1.0)
+    p.add_argument("--mix-groups", type=int, default=1,
+                   help="split each per-GPU batch into this many chunks with independent mixup/cutmix draws")
     # loss (TODO.md section 3, Stage A)
     p.add_argument("--beta", type=float, default=1.0)
     p.add_argument("--gamma", type=float, default=0.5)
     p.add_argument("--delta", type=float, default=0.5)
     p.add_argument("--gk-alpha", type=float, default=0.5)
-    p.add_argument("--step-weights", default="uniform", choices=["uniform", "linear"])
+    p.add_argument("--step-weights", default="uniform", choices=["uniform", "linear", "quadratic"])
     p.add_argument("--label-smoothing", type=float, default=0.0)
     # bookkeeping
     p.add_argument("--out", default="runs/debug")
@@ -194,7 +196,7 @@ def main(argv=None):
     ema = EMA(model, args.ema) if args.ema > 0 else None
     loss_cfg = StageALossConfig(beta=args.beta, gamma=args.gamma, delta=args.delta, gk_alpha=args.gk_alpha,
                                 step_weights=args.step_weights, label_smoothing=args.label_smoothing)
-    mixup = Mixup(num_classes, args.mixup, args.cutmix, args.mix_prob)
+    mixup = Mixup(num_classes, args.mixup, args.cutmix, args.mix_prob, groups=args.mix_groups)
 
     start_epoch = 0
     if args.resume and (out / "last.pt").exists():

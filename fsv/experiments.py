@@ -54,6 +54,23 @@ EXPERIMENTS: dict[str, dict] = {
         "desc": "bViT-S without last-step self-distillation (delta = 0).",
         "train": _BASE + ["--delta", "0"],
     },
+    # ---- round 4: build on linear step weights (round 3: +2.8 points); explain the Kaggle gap
+    "c100_bvit_s_quadw": {
+        "desc": "bViT-S with quadratic per-step loss weights, w_t ∝ (t+1)^2 (even more weight on late steps).",
+        "train": _BASE + ["--step-weights", "quadratic"],
+    },
+    "c100_bvit_s_linw_te_inject": {
+        "desc": "bViT-S with linear step weights + time embedding + input injection (stacks the round-3 gains).",
+        "train": _BASE + ["--step-weights", "linear", "--step-embed-in", "--input-inject"],
+    },
+    "c100_vit_s_8blk_linw": {
+        "desc": "Non-shared 8-block ViT with linear step weights (fair comparison with c100_bvit_s_linw).",
+        "train": _BASE + ["--n-blocks", "8", "--step-weights", "linear"],
+    },
+    "c100_bvit_s_mix2": {
+        "desc": "bViT-S baseline with 2 independent mixup/CutMix groups per batch, emulating the 2-GPU Kaggle run.",
+        "train": _BASE + ["--mix-groups", "2"],
+    },
     "c100_vit_s_8blk": {
         "desc": "Non-shared baseline: 8 distinct blocks with an exit after each (same FLOPs, ~8x block params); "
                 "measures the cost of weight sharing.",
