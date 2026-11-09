@@ -213,6 +213,10 @@ def test_halting_features_and_policies():
     temps = torch.ones(T)
     x0, x3 = build_features(cache, temps, "S0"), build_features(cache, temps, "S3")
     assert x0.shape == (T, N, 10 + T) and x3.shape == (T, N, 16 + T)
+    assert build_features(cache, temps, "S2").shape == (T, N, 10 + T + D)
+    x5 = build_features(cache, temps, "S5")
+    assert x5.shape == (T, N, 10 + T + 64)
+    torch.testing.assert_close(x5, build_features(cache, temps, "S5"))  # fixed projection
     assert torch.isfinite(x3).all()
     pi = halting_distribution(torch.rand(T, N))
     torch.testing.assert_close(pi.sum(0), torch.ones(N))

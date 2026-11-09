@@ -27,7 +27,7 @@ def test_train_then_evaluate(tmp_path):
 
 def test_run_experiment_writes_report(tmp_path):
     cmd = [sys.executable, str(ROOT / "scripts/run_experiment.py"), "smoke", "--seeds", "0", "1",
-           "--fake-data", "--max-cpus", "2", "--halting",
+           "--fake-data", "--max-cpus", "2", "--halting", "--cache-train", "64",
            "--out-root", str(tmp_path), "--gpu", "",
            "--extra", "--model bvit_tiny --t-max 3 --max-steps 3 --batch-size 16 --holdout 64"]
     subprocess.run(cmd, check=True, cwd=ROOT)
@@ -49,6 +49,19 @@ def test_run_experiment_writes_report(tmp_path):
     assert "BEGIN FSV SUMMARY" in summary and "[smoke] seeds 0,1" in summary and "test acc%" in summary
     assert "±" in summary
     assert (rep / "halting.json").exists() and "[halting smoke]" in summary and "S3-reward" in summary
+    # halting-only on existing caches adds policies and keeps the earlier ones
+    subprocess.run(cmd[:2] + ["smoke", "--fake-data", "--max-cpus", "2", "--out-root", str(tmp_path), "--gpu", "",
+                              "--halting-only", "--halting-args",
+                              "--feature-sets S2 S5 --objectives reward_acc --iters 30 --policy-seeds 2"],
+                   check=True, cwd=ROOT)
+    subprocess.run(cmd[:2] + ["smoke", "--fake-data", "--max-cpus", "2", "--out-root", str(tmp_path), "--gpu", "",
+                              "--halting-only", "--halting-args",
+                              "--feature-sets S0 --objectives reward_acc --iters 30 --policy-seeds 1 --policy-train train"],
+                   check=True, cwd=ROOT)
+    halt = json.loads((rep / "halting.json").read_text())
+    pol = halt["policies"]
+    assert {"S2-reward_acc", "S5-reward_acc", "S0-reward", "S3-oracle_any", "S0-reward_acc@train"} <= pol.keys()
+    assert halt["policy_train"]["split"] == "train"
     # re-evaluating with --skip-train keeps the training record
     subprocess.run(cmd[:2] + ["smoke", "--fake-data", "--max-cpus", "2", "--out-root", str(tmp_path), "--gpu", "",
                               "--skip-train"], check=True, cwd=ROOT)

@@ -76,6 +76,15 @@ EXPERIMENTS: dict[str, dict] = {
         "desc": "bViT-S, linear step weights, learning rate 5e-4 instead of 1e-3 (is the seed variance an optimisation issue?).",
         "train": _BASE + ["--step-weights", "linear", "--lr", "5e-4"],
     },
+    # ---- round 6: lr 5e-4 stabilised linear weights (61.25±0.36); controls for the learning rate
+    "c100_bvit_s_lr5e4": {
+        "desc": "bViT-S baseline (uniform step weights) at learning rate 5e-4: control for c100_bvit_s_linw_lr5e4.",
+        "train": _BASE + ["--lr", "5e-4"],
+    },
+    "c100_bvit_s_quadw_lr5e4": {
+        "desc": "bViT-S, quadratic step weights, learning rate 5e-4 (quadw had the best mean but high variance at 1e-3).",
+        "train": _BASE + ["--step-weights", "quadratic", "--lr", "5e-4"],
+    },
     "c100_vit_s_8blk": {
         "desc": "Non-shared baseline: 8 distinct blocks with an exit after each (same FLOPs, ~8x block params); "
                 "measures the cost of weight sharing.",

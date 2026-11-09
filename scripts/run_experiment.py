@@ -51,9 +51,15 @@ def parse_args(argv=None):
     p.add_argument("--data-dir", default=str(ROOT / "data"))
     p.add_argument("--fresh", action="store_true", help="delete runs/<name> and reports/<name> first")
     p.add_argument("--cache", action="store_true", help="also save per-step logits/features (stays in runs/)")
+    p.add_argument("--cache-train", type=int, default=None,
+                   help="training images to cache (evaluate.py default 10000; 0 = none); implies --cache")
     p.add_argument("--skip-train", action="store_true", help="only (re)evaluate runs/<name>/model.pt")
     p.add_argument("--halting", action="store_true",
                    help="after evaluation, run the TODO-1 halting-policy study on cached outputs")
+    p.add_argument("--halting-only", action="store_true",
+                   help="only run the halting study on existing caches in runs/<name> (no training or evaluation)")
+    p.add_argument("--halting-args", default="",
+                   help='extra halting_study.py flags, e.g. "--feature-sets S2 S5 --objectives reward_acc"')
     p.add_argument("--out-root", default=str(ROOT), help="where runs/ and reports/ are created")
     p.add_argument("--fake-data", action="store_true", help=argparse.SUPPRESS)  # tests only
     p.add_argument("--extra", default="", help="extra train.py flags, recorded in the report (avoid for final runs)")
@@ -104,18 +110,31 @@ def run_one(args, exp_name: str, seed: int, n_cpus: int, machine_cpus: int, tinf
                  "--data-dir", args.data_dir, "--out", str(run_dir), "--max-cpus", str(n_cpus), "--resume"]
     eval_cmd = [py, "scripts/evaluate.py", "--ckpt", str(run_dir / "model.pt"), "--data-dir", args.data_dir,
                 "--max-cpus", str(n_cpus), "--latency"]
-    if args.cache:
+    if args.cache or args.cache_train is not None:
         eval_cmd.append("--cache")
+        if args.cache_train is not None:
+            eval_cmd += ["--cache-train", str(args.cache_train)]
     elif args.halting:  # the study only needs the held-out and test caches
         eval_cmd += ["--cache", "--cache-train", "0"]
     halt_cmd = [py, "scripts/halting_study.py", "--run-dir", str(run_dir), "--out", str(report_dir),
-                "--max-cpus", str(n_cpus)]
+                "--max-cpus", str(n_cpus), *shlex.split(args.halting_args)]
     if args.fake_data:
         train_cmd.append("--fake-data")
         eval_cmd += ["--fake-data", "--latency-batch", "8"]
         halt_cmd += ["--iters", "50", "--policy-seeds", "2"]
 
     env_path = report_dir / "env.json"
+    if args.halting_only:
+        if not ((run_dir / "cache_holdout.pt").exists() and (run_dir / "cache_test.pt").exists()):
+            print(f"[run_experiment] {name}: no caches in {run_dir}; run with --skip-train --halting first")
+            return False
+        info = json.loads(env_path.read_text()) if env_path.exists() else {"experiment": exp_name, "seed": seed}
+        print(f"\n[run_experiment] ===== {name}: halting study only")
+        rc = run_logged(halt_cmd, report_dir / "halting.log", env)
+        info.setdefault("halting_runs", []).append({"code_version": cinfo["code_version"], "exit": rc,
+                                                    "args": args.halting_args})
+        env_path.write_text(json.dumps(info, indent=2))
+        return rc == 0
     if args.skip_train and env_path.exists():
         # keep the training record (code version, times, exit code); only evaluation fields change
         info = json.loads(env_path.read_text())

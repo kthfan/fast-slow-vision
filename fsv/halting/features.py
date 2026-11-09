@@ -6,6 +6,9 @@ question (S0): probability statistics of the temperature-scaled p_t
     one-hot step index.
 state (S3): representation convergence, for both the CLS and the pooled patch feature
     cos(h_t, h_{t-1}), ||h_t - h_{t-1}|| / ||h_t||, cos(h_t, h_0).
+state (S2): S0 + the CLS feature h_t itself (D dims); the MLP's first layer is then a
+    learned projection D -> 64, i.e. the S6 "learned linear reduction" of TODO-1b.
+state (S5): S0 + a fixed Gaussian random projection of h_t to 64 dims (no training).
 
 The price lambda is appended by the policy itself (it is not a property of the image).
 All features are causal: step t only uses steps <= t.
@@ -18,7 +21,9 @@ import math
 import torch
 import torch.nn.functional as F
 
-FEATURE_SETS = ("S0", "S3")
+FEATURE_SETS = ("S0", "S3")  # default grid; "S2" and "S5" are available on request
+ALL_FEATURE_SETS = ("S0", "S2", "S3", "S5")
+RP_DIM = 64
 
 
 def prob_features(probs: torch.Tensor) -> torch.Tensor:
@@ -59,8 +64,14 @@ def build_features(cache: dict, temps: torch.Tensor, feature_set: str) -> torch.
     parts = [prob_features(probs)]
     if feature_set == "S3":
         parts += [convergence_features(cache["cls"]), convergence_features(cache["pool"])]
+    elif feature_set == "S2":
+        parts.append(cache["cls"].float())
+    elif feature_set == "S5":
+        D = cache["cls"].shape[-1]
+        proj = torch.randn(D, RP_DIM, generator=torch.Generator().manual_seed(1234)) / math.sqrt(RP_DIM)
+        parts.append(cache["cls"].float() @ proj)
     elif feature_set != "S0":
-        raise ValueError(f"unknown feature set {feature_set!r}; choose from {FEATURE_SETS}")
+        raise ValueError(f"unknown feature set {feature_set!r}; choose from {ALL_FEATURE_SETS}")
     return torch.cat(parts, -1)
 
 
@@ -69,4 +80,6 @@ def feature_flops(feature_set: str, T: int, C: int, D: int) -> int:
     flops = 10 * C + T  # top-5, entropy, KL, margin, bookkeeping
     if feature_set == "S3":
         flops += 2 * 3 * 4 * D  # 2 feature types x 3 similarity terms x ~4 ops per dim
+    elif feature_set == "S5":
+        flops += 2 * D * RP_DIM  # the projection (S2's projection is counted in the MLP)
     return flops

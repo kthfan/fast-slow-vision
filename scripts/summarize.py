@@ -76,8 +76,8 @@ def halting_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
 
 
 def summarize(runs_by_exp: dict[str, list[dict]]) -> str:
-    any_run = next(r for rs in runs_by_exp.values() for r in rs)
-    e = any_run["env"]
+    all_runs = [r for rs in runs_by_exp.values() for r in rs]
+    e = max(all_runs, key=lambda r: (r["env"].get("code_version") is not None, r["env"].get("started", "")))["env"]
     out = ["===== BEGIN FSV SUMMARY =====",
            f"code {e.get('code_version', '?')} | {e.get('gpu', '?')} | torch {e.get('torch', '?')} "
            f"| cpus {e.get('max_cpus', '?')}/{e.get('machine_cpus', '?')}"]

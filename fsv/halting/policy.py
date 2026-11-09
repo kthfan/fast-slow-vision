@@ -85,20 +85,30 @@ def stop_steps(logits: torch.Tensor, threshold: float = 0.5) -> torch.Tensor:
 
 def train_policy(x: torch.Tensor, probs: torch.Tensor, labels: torch.Tensor, objective: str,
                  seed: int = 0, iters: int = 1500, lr: float = 3e-3, val_frac: float = 0.2,
-                 lam_range: tuple[float, float] = LAM_RANGE) -> tuple[HaltMLP, dict]:
-    """Full-batch training on the held-out split; the best validation-loss state is kept."""
+                 lam_range: tuple[float, float] = LAM_RANGE, n_val_last: int | None = None,
+                 weight_decay: float = 1e-4, device: str = "cpu") -> tuple[HaltMLP, dict]:
+    """Full-batch training; the state with the best validation loss is kept.
+
+    By default a random ``val_frac`` of the samples is the validation set. With
+    ``n_val_last`` the last ``n_val_last`` samples are (e.g. held-out images
+    appended after training-set images).
+    """
     if objective not in OBJECTIVES:
         raise ValueError(objective)
     g = torch.Generator().manual_seed(seed)
     torch.manual_seed(seed)
     T, N, _ = x.shape
-    perm = torch.randperm(N, generator=g)
-    n_val = int(N * val_frac)
-    idx_val, idx_tr = perm[:n_val], perm[n_val:]
+    if n_val_last:
+        idx_tr, idx_val = torch.arange(N - n_val_last), torch.arange(N - n_val_last, N)
+        idx_tr = idx_tr[torch.randperm(len(idx_tr), generator=g)]
+    else:
+        perm = torch.randperm(N, generator=g)
+        idx_val, idx_tr = perm[:int(N * val_frac)], perm[int(N * val_frac):]
+    n_val = len(idx_val)
     use_lambda = objective in REWARD_OBJECTIVES
     model = HaltMLP(x.shape[-1], use_lambda=use_lambda, lam_range=lam_range)
     model.set_normalization(x[:, idx_tr])
-    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
+    opt = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
     if objective == "reward":
         step_loss = per_step_brier(probs, labels)
     elif objective == "reward_acc":
@@ -107,7 +117,15 @@ def train_policy(x: torch.Tensor, probs: torch.Tensor, labels: torch.Tensor, obj
         t_star = oracle_steps(probs, labels, objective.split("_")[1])
         target = (torch.arange(T)[:, None] >= t_star[None]).float()
     lo, hi = math.log(lam_range[0]), math.log(lam_range[1])
-    steps_cost = (torch.arange(T, dtype=torch.float32)[:, None] + 1) / T
+    steps_cost = ((torch.arange(T, dtype=torch.float32)[:, None] + 1) / T).to(device)
+    # full-batch training: put everything on the device once
+    x = x.to(device)
+    idx_tr, idx_val = idx_tr.to(device), idx_val.to(device)
+    model.to(device)
+    if use_lambda:
+        step_loss = step_loss.to(device)
+    else:
+        target = target.to(device)
 
     def loss_on(idx, lam=None):
         logits = model(x[:, idx], lam)
@@ -116,11 +134,11 @@ def train_policy(x: torch.Tensor, probs: torch.Tensor, labels: torch.Tensor, obj
             return (pi * (step_loss[:, idx] + lam[None] * steps_cost)).sum(0).mean()
         return F.binary_cross_entropy_with_logits(logits, target[:, idx])
 
-    lam_val = torch.exp(torch.empty(n_val).uniform_(lo, hi, generator=g)) if use_lambda else None
+    lam_val = torch.exp(torch.empty(n_val).uniform_(lo, hi, generator=g)).to(device) if use_lambda else None
     best, best_state, history = float("inf"), None, []
     for it in range(iters):
         model.train()
-        lam = torch.exp(torch.empty(len(idx_tr)).uniform_(lo, hi, generator=g)) if use_lambda else None
+        lam = torch.exp(torch.empty(len(idx_tr)).uniform_(lo, hi, generator=g)).to(device) if use_lambda else None
         loss = loss_on(idx_tr, lam)
         opt.zero_grad()
         loss.backward()
@@ -134,21 +152,24 @@ def train_policy(x: torch.Tensor, probs: torch.Tensor, labels: torch.Tensor, obj
                 best, best_state = v, {k: t.clone() for k, t in model.state_dict().items()}
     model.load_state_dict(best_state)
     model.eval()
-    return model, {"best_val_loss": best, "history": history[-5:]}
+    return model.cpu(), {"best_val_loss": best, "history": history[-5:]}
 
 
 @torch.no_grad()
 def policy_curve(model: HaltMLP, x: torch.Tensor, probs: torch.Tensor, labels: torch.Tensor, cum_flops,
-                 extra_flops_per_step: float, n: int = 41, lam_range=LAM_RANGE) -> list[dict]:
+                 extra_flops_per_step: float, n: int = 41, lam_range=LAM_RANGE, device: str = "cpu") -> list[dict]:
     """Accuracy-compute points: sweep lambda (reward policy) or the threshold (supervised)."""
     T, N = x.shape[:2]
+    model = model.to(device)
+    xd = x.to(device)
     cum = torch.as_tensor(cum_flops, dtype=torch.float64)
     pred = probs.argmax(-1)
     if model.use_lambda:
         grid = np.exp(np.linspace(math.log(lam_range[0]), math.log(lam_range[1]), n))
-        settings = [("lam", float(l), model(x, torch.full((N,), float(l))), 0.5) for l in grid]
+        settings = [("lam", float(l), model(xd, torch.full((N,), float(l), device=device)).cpu(), 0.5)
+                    for l in grid]
     else:
-        logits = model(x)
+        logits = model(xd).cpu()
         settings = [("tau", float(t), logits, float(t)) for t in np.linspace(0.02, 0.98, n)]
     out = []
     for key, val, logits, thr in settings:
