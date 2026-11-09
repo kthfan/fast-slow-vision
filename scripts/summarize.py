@@ -26,6 +26,7 @@ def load(d: Path):
 
     hist = d / "history.jsonl"
     return {"dir": d.name, "env": j("env.json") or {}, "cfg": j("config.json") or {}, "res": j("results.json"),
+            "halt": j("halting.json"),
             "hist": [json.loads(x) for x in hist.read_text().splitlines() if x.strip()] if hist.exists() else []}
 
 
@@ -41,6 +42,37 @@ def row(runs, getter, prec=1, scale=1.0):
     per_run = [getter(r) for r in runs]
     T = max(len(x) for x in per_run)
     return " ".join(ms([x[t] for x in per_run if t < len(x)], prec, scale) for t in range(T))
+
+
+def halting_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
+    """TODO-1 study: AUC and accuracy at the compute of fixed depth t=1..3, averaged over backbone seeds."""
+    out = []
+    for exp, runs in runs_by_exp.items():
+        halts = [r["halt"] for r in runs if r.get("halt")]
+        if not halts:
+            continue
+        keys = list(halts[0]["matched_compute_gflops"])
+        out += ["", f"[halting {exp}] backbone seeds {len(halts)} | test set, policies trained on held-out | "
+                    f"AUC and acc@<fixed-depth compute> in %"]
+        out.append("  " + "method".ljust(20) + "AUC".rjust(12) + "".join(f"acc@{k}".rjust(12) for k in keys))
+        names = list(halts[0]["baselines"]) + list(halts[0]["policies"])
+        for name in names:
+            def val(h, k):
+                v = h["baselines"].get(name) or h["policies"].get(name)
+                v = v[k]
+                return v["mean"] if isinstance(v, dict) else v
+            out.append("  " + name.ljust(20) + ms([val(h, "auc") for h in halts], 2, 100).rjust(12)
+                       + "".join(ms([val(h, f"acc@{k}") for h in halts], 2, 100).rjust(12) for k in keys))
+        pol = halts[0]["policies"]
+        rw = [k for k in pol if "reward" in k]
+        if rw:
+            viol = [h["policies"][k]["lambda_monotone_violations"]["mean"] for h in halts for k in rw]
+            out.append(f"  lambda sweep: mean steps non-monotone in {st.mean(viol):.1f} of 40 adjacent pairs (reward policies)")
+        cost = max(v["policy_cost_fraction_of_step"] for v in pol.values())
+        out.append(f"  policy cost <= {cost * 100:.4f}% of one recurrent step; oracle any "
+                   f"{ms([h['oracle']['any']['acc'] for h in halts], 2, 100)}% @ "
+                   f"{ms([h['oracle']['any']['gflops'] for h in halts], 3)} GFLOPs")
+    return out
 
 
 def summarize(runs_by_exp: dict[str, list[dict]]) -> str:
@@ -89,6 +121,7 @@ def summarize(runs_by_exp: dict[str, list[dict]]) -> str:
         out.append("  oracle " + " | ".join(
             f"{k} {ms([r['oracle'][k]['acc'] for r in res], 2, 100)}% @ "
             f"{ms([r['oracle'][k]['gflops'] for r in res], 3)} GFLOPs" for k in res[0]["oracle"]))
+    out += halting_lines(runs_by_exp)
     out.append("===== END FSV SUMMARY =====")
     return "\n".join(out)
 

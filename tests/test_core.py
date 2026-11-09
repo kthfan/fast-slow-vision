@@ -197,3 +197,32 @@ def test_mixup_groups_are_independent():
     assert t[0, y[7]] > 0 and t[0, y[15]] == 0 and t[8, y[15]] > 0
     lam_a, lam_b = t[0, y[0]].item(), t[8, y[8]].item()
     assert abs(lam_a - lam_b) > 1e-6
+
+
+def test_halting_features_and_policies():
+    from fsv.halting.features import build_features
+    from fsv.halting.policy import halting_distribution, policy_curve, train_policy
+
+    torch.manual_seed(0)
+    T, N, C, D = 4, 300, 5, 8
+    labels = torch.randint(0, C, (N,))
+    logits = torch.randn(T, N, C)
+    for t in range(T):
+        logits[t, torch.arange(N), labels] += 1.0 * t
+    cache = {"logits": logits, "cls": torch.randn(T, N, D), "pool": torch.randn(T, N, D)}
+    temps = torch.ones(T)
+    x0, x3 = build_features(cache, temps, "S0"), build_features(cache, temps, "S3")
+    assert x0.shape == (T, N, 10 + T) and x3.shape == (T, N, 16 + T)
+    assert torch.isfinite(x3).all()
+    pi = halting_distribution(torch.rand(T, N))
+    torch.testing.assert_close(pi.sum(0), torch.ones(N))
+    probs = logits.softmax(-1)
+    cum = [1e9 * (t + 1) for t in range(T)]
+    for obj in ("reward", "oracle_full"):
+        model, info = train_policy(x0, probs, labels, obj, iters=100)
+        pts = policy_curve(model, x0, probs, labels, cum, extra_flops_per_step=0.0, n=9)
+        assert len(pts) == 9 and all(1 <= p["mean_steps"] <= T for p in pts)
+    # reward policy: a high compute price should not use more steps than a low one
+    model, _ = train_policy(x0, probs, labels, "reward", iters=300)
+    pts = policy_curve(model, x0, probs, labels, cum, 0.0, n=5)
+    assert pts[-1]["mean_steps"] <= pts[0]["mean_steps"]

@@ -71,6 +71,11 @@ EXPERIMENTS: dict[str, dict] = {
         "desc": "bViT-S baseline with 2 independent mixup/CutMix groups per batch, emulating the 2-GPU Kaggle run.",
         "train": _BASE + ["--mix-groups", "2"],
     },
+    # ---- round 5: linear step weights help on average (+1.6) but one seed in three gained nothing
+    "c100_bvit_s_linw_lr5e4": {
+        "desc": "bViT-S, linear step weights, learning rate 5e-4 instead of 1e-3 (is the seed variance an optimisation issue?).",
+        "train": _BASE + ["--step-weights", "linear", "--lr", "5e-4"],
+    },
     "c100_vit_s_8blk": {
         "desc": "Non-shared baseline: 8 distinct blocks with an exit after each (same FLOPs, ~8x block params); "
                 "measures the cost of weight sharing.",

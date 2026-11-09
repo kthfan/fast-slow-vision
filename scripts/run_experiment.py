@@ -4,6 +4,7 @@
     python scripts/run_experiment.py smoke
     python scripts/run_experiment.py c100_bvit_s --seeds 0 1 2
     python scripts/run_experiment.py c100_bvit_s c100_vit_s_8blk --seeds 1 2
+    python scripts/run_experiment.py c100_bvit_s_linw --seeds 0 1 2 --skip-train --halting
 
 Each (experiment, seed) pair writes
     runs/<name>[_s<seed>]/      checkpoints (model.pt, last.pt): large, stay on your machine
@@ -51,6 +52,8 @@ def parse_args(argv=None):
     p.add_argument("--fresh", action="store_true", help="delete runs/<name> and reports/<name> first")
     p.add_argument("--cache", action="store_true", help="also save per-step logits/features (stays in runs/)")
     p.add_argument("--skip-train", action="store_true", help="only (re)evaluate runs/<name>/model.pt")
+    p.add_argument("--halting", action="store_true",
+                   help="after evaluation, run the TODO-1 halting-policy study on cached outputs")
     p.add_argument("--out-root", default=str(ROOT), help="where runs/ and reports/ are created")
     p.add_argument("--fake-data", action="store_true", help=argparse.SUPPRESS)  # tests only
     p.add_argument("--extra", default="", help="extra train.py flags, recorded in the report (avoid for final runs)")
@@ -100,17 +103,30 @@ def run_one(args, exp_name: str, seed: int, n_cpus: int, machine_cpus: int, tinf
     train_cmd = [py, "scripts/train.py", *exp["train"], *shlex.split(args.extra), "--seed", str(seed),
                  "--data-dir", args.data_dir, "--out", str(run_dir), "--max-cpus", str(n_cpus), "--resume"]
     eval_cmd = [py, "scripts/evaluate.py", "--ckpt", str(run_dir / "model.pt"), "--data-dir", args.data_dir,
-                "--max-cpus", str(n_cpus), "--latency"] + (["--cache"] if args.cache else [])
+                "--max-cpus", str(n_cpus), "--latency"]
+    if args.cache:
+        eval_cmd.append("--cache")
+    elif args.halting:  # the study only needs the held-out and test caches
+        eval_cmd += ["--cache", "--cache-train", "0"]
+    halt_cmd = [py, "scripts/halting_study.py", "--run-dir", str(run_dir), "--out", str(report_dir),
+                "--max-cpus", str(n_cpus)]
     if args.fake_data:
         train_cmd.append("--fake-data")
         eval_cmd += ["--fake-data", "--latency-batch", "8"]
+        halt_cmd += ["--iters", "50", "--policy-seeds", "2"]
 
-    info = {"experiment": exp_name, "run": name, "seed": seed, "description": exp["desc"], **cinfo, **tinfo,
-            "python": platform.python_version(), "max_cpus": n_cpus, "machine_cpus": machine_cpus,
-            "started": dt.datetime.now().isoformat(timespec="seconds"), "extra": args.extra,
-            "train_cmd": shlex.join(train_cmd[1:]), "eval_cmd": shlex.join(eval_cmd[1:])}
-    print(f"\n[run_experiment] ===== {name}: {exp['desc']}")
     env_path = report_dir / "env.json"
+    if args.skip_train and env_path.exists():
+        # keep the training record (code version, times, exit code); only evaluation fields change
+        info = json.loads(env_path.read_text())
+        info.update({"eval_code_version": cinfo["code_version"], "eval_cmd": shlex.join(eval_cmd[1:]),
+                     "eval_started": dt.datetime.now().isoformat(timespec="seconds")})
+    else:
+        info = {"experiment": exp_name, "run": name, "seed": seed, "description": exp["desc"], **cinfo, **tinfo,
+                "python": platform.python_version(), "max_cpus": n_cpus, "machine_cpus": machine_cpus,
+                "started": dt.datetime.now().isoformat(timespec="seconds"), "extra": args.extra,
+                "train_cmd": shlex.join(train_cmd[1:]), "eval_cmd": shlex.join(eval_cmd[1:])}
+    print(f"\n[run_experiment] ===== {name}: {exp['desc']}")
 
     def save_env():
         env_path.write_text(json.dumps(info, indent=2))
@@ -127,6 +143,10 @@ def run_one(args, exp_name: str, seed: int, n_cpus: int, machine_cpus: int, tinf
         t0 = time.time()
         info["eval_exit"] = run_logged(eval_cmd, report_dir / "eval.log", env)
         info["eval_minutes"] = (time.time() - t0) / 60
+        if args.halting and info["eval_exit"] == 0:
+            t0 = time.time()
+            info["halting_exit"] = run_logged(halt_cmd, report_dir / "halting.log", env)
+            info["halting_minutes"] = (time.time() - t0) / 60
     info["finished"] = dt.datetime.now().isoformat(timespec="seconds")
     save_env()
 
@@ -134,7 +154,7 @@ def run_one(args, exp_name: str, seed: int, n_cpus: int, machine_cpus: int, tinf
         if (run_dir / f).exists():
             shutil.copy2(run_dir / f, report_dir / f)
     report = write_report(report_dir)
-    ok = info.get("train_exit", 0) == 0 and info.get("eval_exit") == 0
+    ok = info.get("train_exit", 0) == 0 and info.get("eval_exit") == 0 and info.get("halting_exit", 0) == 0
     print(f"[run_experiment] {name}: {'done' if ok else 'FINISHED WITH ERRORS'}; report: {report}")
     return ok
 

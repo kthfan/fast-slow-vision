@@ -71,18 +71,33 @@ def oracle_point(probs: torch.Tensor, labels: torch.Tensor, cum_flops, never_cor
     return _point(oracle_steps(probs, labels, never_correct), probs, labels, cum_flops)
 
 
-def curve_auc(points: list[dict], lo: float, hi: float) -> float:
-    """Normalised area under the Pareto envelope of accuracy vs GFLOPs on [lo, hi].
+def curve_auc(points: list[dict], lo: float, hi: float, anchor: dict | None = None) -> float:
+    """Mean accuracy over [lo, hi] GFLOPs under the Pareto envelope of a method's points.
 
-    Accuracy is held flat outside the measured range, so curves are comparable
-    on a fixed compute interval. Returns the mean accuracy over that interval.
+    ``anchor`` (normally "stop everything at step 0") is added to the points: it is
+    always available, and any point between it and the method's cheapest point is
+    reachable by randomly mixing the two settings, so the envelope is linear there.
+    Above the most expensive point accuracy is held flat (spending less is allowed).
+    Without an anchor the cheapest point is extended flat to the left, which
+    over-credits methods that cannot reach low compute.
     """
-    pts = sorted((p["gflops"], p["acc"]) for p in points)
-    xs, ys, best = [], [], -1.0
-    for x, y in pts:  # upper envelope: best accuracy achievable at <= x compute
-        best = max(best, y)
-        xs.append(x)
-        ys.append(best)
+    xs, ys = envelope(points + ([anchor] if anchor else []))
     grid = np.linspace(lo, hi, 512)
     vals = np.interp(grid, xs, ys, left=ys[0], right=ys[-1])
     return float(np.trapezoid(vals, grid) / (hi - lo)) if hi > lo else float(vals[0])
+
+
+def envelope(points: list[dict]) -> tuple[list[float], list[float]]:
+    """Pareto envelope (best accuracy at <= compute) as sorted (gflops, acc) lists."""
+    xs, ys, best = [], [], -1.0
+    for x, y in sorted((p["gflops"], p["acc"]) for p in points):
+        best = max(best, y)
+        xs.append(x)
+        ys.append(best)
+    return xs, ys
+
+
+def acc_at_compute(points: list[dict], gflops: float, anchor: dict | None = None) -> float:
+    """Best accuracy reachable at a given mean compute (see ``curve_auc`` for ``anchor``)."""
+    xs, ys = envelope(points + ([anchor] if anchor else []))
+    return float(np.interp(gflops, xs, ys, left=ys[0], right=ys[-1]))

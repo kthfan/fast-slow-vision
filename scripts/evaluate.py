@@ -96,7 +96,7 @@ def main(argv=None):
         "fixed_depth": fixed_depth_curve(probs, labels, cum),
     }
     lo, hi = cum[0] / 1e9, cum[-1] / 1e9
-    auc = {k: curve_auc(v, lo, hi) for k, v in curves.items()}
+    auc = {k: curve_auc(v, lo, hi, anchor=curves["fixed_depth"][0]) for k, v in curves.items()}
     oracle = {k: oracle_point(probs, labels, cum, k) for k in ("full", "any")}
 
     results = {
