@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+MISSING = object()  # metric absent from a result file (older code), as opposed to None = "never reached"
 
 
 def load(d: Path):
@@ -52,26 +53,33 @@ def benchmark_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
         if not bs:
             continue
         b0 = bs[0]
+        modes = b0.get("modes") or {"eager-naive": {"fixed": b0["fixed"], "adaptive": b0["adaptive"]}}  # <= 0.7.0
         out += ["", f"[benchmark {exp}] seeds {len(bs)} | {b0['device']} | AMP {b0['amp']} | policy {b0['policy']} | "
-                    f"batch {b0['batch_size']} throughput (compaction), batch-1 latency on {b0['bs1_images']} images"]
-        out.append("  setting        acc%          steps   img/s           bs1 ms        speed-up vs fixed (bs/bs1)")
-        T = len(b0["fixed"])
-        for t in range(T):
-            rows = [b["fixed"][t] for b in bs]
-            out.append(f"  fixed t={t:<6}" + ms([r["acc"] for r in rows], 2, 100).rjust(12) + f"{t + 1:8.2f}"
-                       + ms([r["img_per_s"] for r in rows], 0).rjust(14) + ms([r["bs1_ms"] for r in rows], 3).rjust(14))
-        for i, a0 in enumerate(b0["adaptive"]):
-            rows = [b["adaptive"][i] for b in bs]
-            ratios_b, ratios_1 = [], []
-            for b, r in zip(bs, rows):  # cheapest fixed depth with accuracy >= this setting
-                ok = [f for f in b["fixed"] if f["acc"] >= r["acc"]]
-                f = ok[0] if ok else b["fixed"][-1]
-                ratios_b.append(r["img_per_s"] / f["img_per_s"])
-                ratios_1.append(f["bs1_ms"] / r["bs1_ms"])
-            out.append(f"  lam={str(a0['lam']):<9}" + ms([r["acc"] for r in rows], 2, 100).rjust(12)
-                       + ms([r["mean_steps"] for r in rows], 2).rjust(8) + ms([r["img_per_s"] for r in rows], 0).rjust(14)
-                       + ms([r["bs1_ms"] for r in rows], 3).rjust(14)
-                       + f"   {ms(ratios_b, 2)}x / {ms(ratios_1, 2)}x")
+                    f"batch {b0['batch_size']} throughput with compaction, batch-1 latency on {b0['bs1_images']} images"]
+        if b0.get("compile_error"):
+            out.append(f"  torch.compile failed: {b0['compile_error'][:200]}")
+        for mode in modes:
+            ms_ = [(b.get("modes") or {"eager-naive": b})[mode] for b in bs if mode in (b.get("modes") or {"eager-naive": b})]
+            out.append(f"  [{mode}]  setting      acc%           steps         img/s            bs1 ms        "
+                       "speed-up vs fixed (bs256 / bs1)")
+            T = len(ms_[0]["fixed"])
+            for t in range(T):
+                rows = [m["fixed"][t] for m in ms_]
+                out.append(f"  fixed t={t:<12}" + ms([r["acc"] for r in rows], 2, 100).rjust(13) + f"{t + 1:15.2f}"
+                           + ms([r["img_per_s"] for r in rows], 0).rjust(16) + ms([r["bs1_ms"] for r in rows], 3).rjust(16))
+            for i, a0 in enumerate(ms_[0]["adaptive"]):
+                rows = [m["adaptive"][i] for m in ms_]
+                ratios_b, ratios_1 = [], []
+                for m, r in zip(ms_, rows):  # cheapest fixed depth with accuracy >= this setting
+                    ok = [f for f in m["fixed"] if f["acc"] >= r["acc"]]
+                    f = ok[0] if ok else m["fixed"][-1]
+                    ratios_b.append(r["img_per_s"] / f["img_per_s"])
+                    ratios_1.append(f["bs1_ms"] / r["bs1_ms"])
+                out.append(f"  lam={str(a0['lam']):<16}" + ms([r["acc"] for r in rows], 2, 100).rjust(13)
+                           + ms([r["mean_steps"] for r in rows], 2).rjust(15)
+                           + ms([r["img_per_s"] for r in rows], 0).rjust(16)
+                           + ms([r["bs1_ms"] for r in rows], 3).rjust(16)
+                           + f"   {ms(ratios_b, 2)}x / {ms(ratios_1, 2)}x")
     return out
 
 
@@ -87,20 +95,27 @@ def halting_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
                     f"AUC and acc@<fixed-depth compute> in %"]
         has_cost = "cost@full" in halts[0]["baselines"]["fixed_depth"]
         ckeys = ["cost@full", "cost@best"] if has_cost else []
-        out.append("  " + "method".ljust(20) + "AUC".rjust(12) + "".join(f"acc@{k}".rjust(12) for k in keys)
-                   + "".join(k.rjust(12) for k in ckeys))
+        out.append("  " + "method".ljust(22) + "AUC".rjust(13) + "".join(f"acc@{k}".rjust(13) for k in keys)
+                   + "".join(k.rjust(13) for k in ckeys))
         names = list(halts[0]["baselines"]) + list(dict.fromkeys(k for h in halts for k in h["policies"]))
         if "cost@full" in halts[0]["baselines"]["fixed_depth"]:
             out.append("  cost@full / cost@best = compute needed to match the full-depth / best fixed-depth accuracy, "
-                       "% of full-depth compute ('-' = never)")
+                       "% of full-depth compute ('-' = never reached, blank = not computed for that policy)")
         for name in names:
             def val(h, k):
                 v = h["baselines"].get(name) or h["policies"].get(name) or {}
-                v = v.get(k)
+                if k not in v:
+                    return MISSING
+                v = v[k]
                 return v["mean"] if isinstance(v, dict) else v
-            out.append("  " + name.ljust(20) + ms([val(h, "auc") for h in halts], 2, 100).rjust(12)
-                       + "".join(ms([val(h, f"acc@{k}") for h in halts], 2, 100).rjust(12) for k in keys)
-                       + "".join(ms([val(h, k) for h in halts], 1, 100).rjust(12) for k in ckeys))
+
+            def cell(vals, prec, scale):
+                if all(v is MISSING for v in vals):
+                    return ""  # not computed (policy trained before this metric existed)
+                return ms([v for v in vals if v is not MISSING], prec, scale)
+            out.append("  " + name.ljust(22) + cell([val(h, "auc") for h in halts], 2, 100).rjust(13)
+                       + "".join(cell([val(h, f"acc@{k}") for h in halts], 2, 100).rjust(13) for k in keys)
+                       + "".join(cell([val(h, k) for h in halts], 1, 100).rjust(13) for k in ckeys))
         pol = halts[0]["policies"]
         rw = [k for k in pol if "reward" in k]
         if rw:
@@ -114,7 +129,7 @@ def halting_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
     return out
 
 
-def summarize(runs_by_exp: dict[str, list[dict]]) -> str:
+def summarize(runs_by_exp: dict[str, list[dict]], sections=("train", "halting", "bench")) -> str:
     all_runs = [r for rs in runs_by_exp.values() for r in rs]
     e = max(all_runs, key=lambda r: (r["env"].get("code_version") is not None, r["env"].get("started", "")))["env"]
     out = ["===== BEGIN FSV SUMMARY =====",
@@ -123,7 +138,7 @@ def summarize(runs_by_exp: dict[str, list[dict]]) -> str:
     versions = {r["env"].get("code_version") for rs in runs_by_exp.values() for r in rs}
     if len(versions) > 1:
         out.append(f"NOTE: runs use different code versions: {sorted(map(str, versions))}")
-    for exp, runs in runs_by_exp.items():
+    for exp, runs in (runs_by_exp.items() if "train" in sections else []):
         done = [r for r in runs if r["res"]]
         seeds = ",".join(str(r["env"].get("seed", 0)) for r in runs)
         failed = [r["dir"] for r in runs if not r["res"]]
@@ -160,8 +175,10 @@ def summarize(runs_by_exp: dict[str, list[dict]]) -> str:
         out.append("  oracle " + " | ".join(
             f"{k} {ms([r['oracle'][k]['acc'] for r in res], 2, 100)}% @ "
             f"{ms([r['oracle'][k]['gflops'] for r in res], 3)} GFLOPs" for k in res[0]["oracle"]))
-    out += halting_lines(runs_by_exp)
-    out += benchmark_lines(runs_by_exp)
+    if "halting" in sections:
+        out += halting_lines(runs_by_exp)
+    if "bench" in sections:
+        out += benchmark_lines(runs_by_exp)
     out.append("===== END FSV SUMMARY =====")
     return "\n".join(out)
 
@@ -170,6 +187,8 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("experiments", nargs="*", help="experiment names (default: all under reports/)")
     p.add_argument("--reports", default=str(ROOT / "reports"))
+    p.add_argument("--sections", nargs="+", default=["train", "halting", "bench"], choices=["train", "halting", "bench"],
+                   help="which parts to print (default: all)")
     args = p.parse_args(argv)
 
     runs_by_exp: dict[str, list[dict]] = {}
@@ -187,7 +206,7 @@ def main(argv=None):
         sys.exit(f"no finished runs found under {args.reports}")
     for runs in runs_by_exp.values():
         runs.sort(key=lambda r: r["env"].get("seed", 0))
-    print(summarize(runs_by_exp))
+    print(summarize(runs_by_exp, args.sections))
 
 
 if __name__ == "__main__":

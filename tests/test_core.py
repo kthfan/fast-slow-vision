@@ -263,7 +263,8 @@ def test_online_features_and_runner_match_offline():
     for lam in (1e-3, 0.3, 3.0):
         with torch.no_grad():
             stop = stop_steps(policy(feats, torch.full((N,), lam)))
-        preds, steps = runner.run(x, lam)
-        assert torch.equal(steps, stop)
-        assert torch.equal(preds, p_off.argmax(-1)[stop, torch.arange(N)])
+        for fn in (runner.run, runner.run_naive):
+            preds, steps = fn(x, lam)
+            assert torch.equal(steps, stop)
+            assert torch.equal(preds, p_off.argmax(-1)[stop, torch.arange(N)])
     assert torch.equal(runner.run_fixed(x, 2), logits[2].argmax(-1))

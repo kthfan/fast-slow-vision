@@ -215,7 +215,8 @@ AUC = 在 [第 0 步, 第 7 步] GFLOPs 區間的平均 top-1（溫度縮放後�
 第 3 輪 [`results/round3_h100/summary.md`](results/round3_h100/summary.md)，
 第 4 輪 [`results/round4_h100/summary.md`](results/round4_h100/summary.md)，
 第 5 輪 [`results/round5_h100/summary.md`](results/round5_h100/summary.md)，
-第 6 輪 [`results/round6_h100/summary.md`](results/round6_h100/summary.md)。
+第 6 輪 [`results/round6_h100/summary.md`](results/round6_h100/summary.md)，
+第 7 輪 [`results/round7_h100/summary.md`](results/round7_h100/summary.md)。
 
 觀察（第 1–6 輪）：
 
@@ -316,3 +317,22 @@ Kaggle checkpoint（[`results/kaggle_c100_bvit_s/halting.json`](results/kaggle_c
   測試集預先載入 GPU；量測固定深度 t = 0…7 與多個 λ 的 batch 256 吞吐量、batch 1 延遲、準確率與平均步數。
 - `halting_study.py` 會把每種策略（種子 0）存成 `reports/<名稱>/policies/<策略>.pt`，並新增
   `cost@full` / `cost@best`：達到全深度 / 最佳固定深度準確率所需的計算量（全深度計算量的 %）。
+
+第 7 輪（3 個骨幹種子）：
+
+**計算量（FLOPs）**：達到全深度準確率所需的計算量（全深度的 %）
+
+| 骨幹 | 固定深度 | max-prob 門檻 | S0-reward_acc |
+|---|---|---|---|
+| `c100_bvit_s_lr5e4` | 48.6±6.4 | 83.2±3.9 | 41.3±11.6 |
+| `c100_bvit_s_quadw_lr5e4` | 62.0±8.4 | 83.4±6.9 | **43.2±0.2** |
+| `c100_vit_s_8blk` | 95.3±8.1 | 72.4±2.4 | **53.8±2.5** |
+
+**實際時間：第一版線上推論器在 GPU 上比固定深度慢 2–4 倍**（batch 256 與 batch 1 皆然）。
+例：`c100_bvit_s_quadw_lr5e4`、λ = 0.03：準確率 61.95%、平均 3.70 步，batch 256 吞吐量 37,770 img/s，
+同準確率的固定深度 t=4（61.97%，5 步）為 102,911 img/s；batch 1 延遲 4.35 ms vs 1.36 ms。
+原因：每一步約 9 次 GPU→CPU 同步（每個布林遮罩索引都會同步），讓 kernel 啟動延遲完全暴露；
+batch 256 時每步額外開銷約 0.7–1.2 ms，大於一個遞迴步本身（約 0.49 ms）。
+0.7.1 的 `AdaptiveRunner.run` 改為每步只同步一次（一次 `nonzero`，其餘用 `index_select` / `index_copy_`），
+並提供 `torch.compile` 版本（每步模型呼叫與特徵 + 策略計算都編譯；固定深度用同一個編譯過的模型步，比較公平）；
+舊版保留為 `run_naive`，benchmark 用 `--naive` 一併量測。

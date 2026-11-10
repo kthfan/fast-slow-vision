@@ -65,9 +65,13 @@ def test_run_experiment_writes_report(tmp_path):
     assert (rep / "policies" / "S0-reward_acc.pt").exists() and "cost@full" in pol["S0-reward_acc"]
     subprocess.run([sys.executable, str(ROOT / "scripts/benchmark_adaptive.py"), "smoke", "--fake-data",
                     "--out-root", str(tmp_path), "--repeats", "1", "--bs1-images", "3", "--batch-size", "64",
-                    "--lams", "0.01", "1.0", "--max-cpus", "2"], check=True, cwd=ROOT)
+                    "--lams", "0.01", "1.0", "--max-cpus", "2", "--no-compile", "--naive"], check=True, cwd=ROOT)
     bench = json.loads((rep / "benchmark.json").read_text())
-    assert len(bench["fixed"]) == 3 and len(bench["adaptive"]) == 2
+    assert set(bench["modes"]) == {"eager", "eager-naive"}
+    assert len(bench["modes"]["eager"]["fixed"]) == 3 and len(bench["modes"]["eager"]["adaptive"]) == 2
+    # both runners make the same decisions
+    assert [a["acc"] for a in bench["modes"]["eager"]["adaptive"]] == \
+        [a["acc"] for a in bench["modes"]["eager-naive"]["adaptive"]]
     summary = subprocess.run([sys.executable, str(ROOT / "scripts/summarize.py"), "smoke",
                               "--reports", str(tmp_path / "reports")], check=True, capture_output=True,
                              text=True, cwd=ROOT).stdout
