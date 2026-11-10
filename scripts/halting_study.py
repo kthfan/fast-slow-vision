@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import statistics as st
 import sys
 import time
@@ -27,8 +28,8 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fsv.cpu import limit_cpus  # noqa: E402
-from fsv.halting import (acc_at_compute, curve_auc, fixed_depth_curve, oracle_point,  # noqa: E402
-                         threshold_curve)
+from fsv.halting import (acc_at_compute, compute_at_acc, curve_auc, fixed_depth_curve,  # noqa: E402
+                         oracle_point, threshold_curve)
 from fsv.halting.features import ALL_FEATURE_SETS, FEATURE_SETS, build_features, feature_flops  # noqa: E402
 from fsv.halting.policy import OBJECTIVES, policy_curve, train_policy  # noqa: E402
 
@@ -50,7 +51,10 @@ def parse_args(argv=None):
 
 
 def mean_sd(v):
-    return {"mean": st.mean(v), "sd": st.stdev(v) if len(v) > 1 else 0.0, "values": v}
+    vals = [x for x in v if x is not None]  # None = target accuracy never reached
+    if not vals:
+        return {"mean": None, "sd": None, "values": v}
+    return {"mean": st.mean(vals), "sd": st.stdev(vals) if len(vals) > 1 else 0.0, "values": v}
 
 
 def main(argv=None):
@@ -74,12 +78,20 @@ def main(argv=None):
 
     anchor = fixed[0]  # "stop everything at step 0" is always available
 
+    # iso-accuracy targets: the full-depth accuracy and the best fixed-depth accuracy
+    targets = {"full": fixed[-1]["acc"], "best": max(p["acc"] for p in fixed)}
+
     def summarize_curve(points):
-        return {"auc": curve_auc(points, lo, hi, anchor),
-                **{f"acc@{k}": acc_at_compute(points, g, anchor) for k, g in match.items()}}
+        out = {"auc": curve_auc(points, lo, hi, anchor),
+               **{f"acc@{k}": acc_at_compute(points, g, anchor) for k, g in match.items()}}
+        for k, acc in targets.items():  # compute needed to match, as a fraction of full-depth compute
+            g = compute_at_acc(points, acc, anchor)
+            out[f"cost@{k}"] = None if g is None else g / (cum[-1] / 1e9)
+        return out
 
     t0 = time.time()
     res = {"run": run.name, "T": T, "range_gflops": [lo, hi], "matched_compute_gflops": match,
+           "iso_accuracy_targets": targets,
            "auc_anchor": "step-0 fixed-depth point; linear (random-mixing) interpolation below each curve",
            "baselines": {}, "policies": {}, "step_gflops": step_flops / 1e9}
     for name, pts in (("fixed_depth", fixed),
@@ -128,7 +140,15 @@ def main(argv=None):
                     summary["lambda_monotone_violations"] = sum(b > a + 1e-9 for a, b in zip(steps, steps[1:]))
                 runs.append({**summary, "curve": pts, "val_loss": info["best_val_loss"],
                              "policy_flops_per_step": extra})
+                if seed == 0:
+                    first_model = model
             name = f"{fs}-{obj}{suffix}"
+            (out / "policies").mkdir(exist_ok=True)
+            torch.save({"state_dict": first_model.state_dict(), "in_dim": x_te.shape[-1],
+                        "use_lambda": first_model.use_lambda,
+                        "lam_range": [math.exp(first_model.log_lo), math.exp(first_model.log_hi)],
+                        "feature_set": fs, "objective": obj, "policy_train": args.policy_train,
+                        "temperatures": temps, "run": run.name}, out / "policies" / f"{name}.pt")
             agg = {k: mean_sd([r[k] for r in runs]) for k in runs[0] if k not in ("curve",)}
             agg["policy_cost_fraction_of_step"] = runs[0]["policy_flops_per_step"] / step_flops
             agg["curve"] = runs[0]["curve"]

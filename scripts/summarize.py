@@ -26,7 +26,7 @@ def load(d: Path):
 
     hist = d / "history.jsonl"
     return {"dir": d.name, "env": j("env.json") or {}, "cfg": j("config.json") or {}, "res": j("results.json"),
-            "halt": j("halting.json"),
+            "halt": j("halting.json"), "bench": j("benchmark.json"),
             "hist": [json.loads(x) for x in hist.read_text().splitlines() if x.strip()] if hist.exists() else []}
 
 
@@ -44,6 +44,37 @@ def row(runs, getter, prec=1, scale=1.0):
     return " ".join(ms([x[t] for x in per_run if t < len(x)], prec, scale) for t in range(T))
 
 
+def benchmark_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
+    """TODO-4 wall-clock results; speed-ups are against the cheapest fixed depth at least as accurate."""
+    out = []
+    for exp, runs in runs_by_exp.items():
+        bs = [r["bench"] for r in runs if r.get("bench")]
+        if not bs:
+            continue
+        b0 = bs[0]
+        out += ["", f"[benchmark {exp}] seeds {len(bs)} | {b0['device']} | AMP {b0['amp']} | policy {b0['policy']} | "
+                    f"batch {b0['batch_size']} throughput (compaction), batch-1 latency on {b0['bs1_images']} images"]
+        out.append("  setting        acc%          steps   img/s           bs1 ms        speed-up vs fixed (bs/bs1)")
+        T = len(b0["fixed"])
+        for t in range(T):
+            rows = [b["fixed"][t] for b in bs]
+            out.append(f"  fixed t={t:<6}" + ms([r["acc"] for r in rows], 2, 100).rjust(12) + f"{t + 1:8.2f}"
+                       + ms([r["img_per_s"] for r in rows], 0).rjust(14) + ms([r["bs1_ms"] for r in rows], 3).rjust(14))
+        for i, a0 in enumerate(b0["adaptive"]):
+            rows = [b["adaptive"][i] for b in bs]
+            ratios_b, ratios_1 = [], []
+            for b, r in zip(bs, rows):  # cheapest fixed depth with accuracy >= this setting
+                ok = [f for f in b["fixed"] if f["acc"] >= r["acc"]]
+                f = ok[0] if ok else b["fixed"][-1]
+                ratios_b.append(r["img_per_s"] / f["img_per_s"])
+                ratios_1.append(f["bs1_ms"] / r["bs1_ms"])
+            out.append(f"  lam={str(a0['lam']):<9}" + ms([r["acc"] for r in rows], 2, 100).rjust(12)
+                       + ms([r["mean_steps"] for r in rows], 2).rjust(8) + ms([r["img_per_s"] for r in rows], 0).rjust(14)
+                       + ms([r["bs1_ms"] for r in rows], 3).rjust(14)
+                       + f"   {ms(ratios_b, 2)}x / {ms(ratios_1, 2)}x")
+    return out
+
+
 def halting_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
     """TODO-1 study: AUC and accuracy at the compute of fixed depth t=1..3, averaged over backbone seeds."""
     out = []
@@ -54,21 +85,29 @@ def halting_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
         keys = list(halts[0]["matched_compute_gflops"])
         out += ["", f"[halting {exp}] backbone seeds {len(halts)} | test set, policies trained on held-out | "
                     f"AUC and acc@<fixed-depth compute> in %"]
-        out.append("  " + "method".ljust(20) + "AUC".rjust(12) + "".join(f"acc@{k}".rjust(12) for k in keys))
-        names = list(halts[0]["baselines"]) + list(halts[0]["policies"])
+        has_cost = "cost@full" in halts[0]["baselines"]["fixed_depth"]
+        ckeys = ["cost@full", "cost@best"] if has_cost else []
+        out.append("  " + "method".ljust(20) + "AUC".rjust(12) + "".join(f"acc@{k}".rjust(12) for k in keys)
+                   + "".join(k.rjust(12) for k in ckeys))
+        names = list(halts[0]["baselines"]) + list(dict.fromkeys(k for h in halts for k in h["policies"]))
+        if "cost@full" in halts[0]["baselines"]["fixed_depth"]:
+            out.append("  cost@full / cost@best = compute needed to match the full-depth / best fixed-depth accuracy, "
+                       "% of full-depth compute ('-' = never)")
         for name in names:
             def val(h, k):
-                v = h["baselines"].get(name) or h["policies"].get(name)
-                v = v[k]
+                v = h["baselines"].get(name) or h["policies"].get(name) or {}
+                v = v.get(k)
                 return v["mean"] if isinstance(v, dict) else v
             out.append("  " + name.ljust(20) + ms([val(h, "auc") for h in halts], 2, 100).rjust(12)
-                       + "".join(ms([val(h, f"acc@{k}") for h in halts], 2, 100).rjust(12) for k in keys))
+                       + "".join(ms([val(h, f"acc@{k}") for h in halts], 2, 100).rjust(12) for k in keys)
+                       + "".join(ms([val(h, k) for h in halts], 1, 100).rjust(12) for k in ckeys))
         pol = halts[0]["policies"]
         rw = [k for k in pol if "reward" in k]
         if rw:
-            viol = [h["policies"][k]["lambda_monotone_violations"]["mean"] for h in halts for k in rw]
+            viol = [h["policies"][k]["lambda_monotone_violations"]["mean"] for h in halts for k in rw
+                    if k in h["policies"]]
             out.append(f"  lambda sweep: mean steps non-monotone in {st.mean(viol):.1f} of 40 adjacent pairs (reward policies)")
-        cost = max(v["policy_cost_fraction_of_step"] for v in pol.values())
+        cost = max(v["policy_cost_fraction_of_step"] for h in halts for v in h["policies"].values())
         out.append(f"  policy cost <= {cost * 100:.4f}% of one recurrent step; oracle any "
                    f"{ms([h['oracle']['any']['acc'] for h in halts], 2, 100)}% @ "
                    f"{ms([h['oracle']['any']['gflops'] for h in halts], 3)} GFLOPs")
@@ -122,6 +161,7 @@ def summarize(runs_by_exp: dict[str, list[dict]]) -> str:
             f"{k} {ms([r['oracle'][k]['acc'] for r in res], 2, 100)}% @ "
             f"{ms([r['oracle'][k]['gflops'] for r in res], 3)} GFLOPs" for k in res[0]["oracle"]))
     out += halting_lines(runs_by_exp)
+    out += benchmark_lines(runs_by_exp)
     out.append("===== END FSV SUMMARY =====")
     return "\n".join(out)
 

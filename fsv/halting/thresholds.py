@@ -101,3 +101,15 @@ def acc_at_compute(points: list[dict], gflops: float, anchor: dict | None = None
     """Best accuracy reachable at a given mean compute (see ``curve_auc`` for ``anchor``)."""
     xs, ys = envelope(points + ([anchor] if anchor else []))
     return float(np.interp(gflops, xs, ys, left=ys[0], right=ys[-1]))
+
+
+def compute_at_acc(points: list[dict], target: float, anchor: dict | None = None) -> float | None:
+    """Least mean GFLOPs at which the envelope reaches ``target`` accuracy (None if never)."""
+    xs, ys = envelope(points + ([anchor] if anchor else []))
+    for i, (x, y) in enumerate(zip(xs, ys)):
+        if y >= target - 1e-12:
+            if i == 0 or ys[i - 1] >= y:
+                return float(x)
+            x0, y0 = xs[i - 1], ys[i - 1]  # linear (random-mixing) interpolation
+            return float(x0 + (target - y0) / (y - y0) * (x - x0))
+    return None

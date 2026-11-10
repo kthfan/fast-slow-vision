@@ -230,3 +230,40 @@ def test_halting_features_and_policies():
     model, _ = train_policy(x0, probs, labels, "reward", iters=300)
     pts = policy_curve(model, x0, probs, labels, cum, 0.0, n=5)
     assert pts[-1]["mean_steps"] <= pts[0]["mean_steps"]
+
+
+def test_online_features_and_runner_match_offline():
+    from fsv.halting.features import build_features, prob_features
+    from fsv.halting.online import AdaptiveRunner, online_s0
+    from fsv.halting.policy import policy_curve, stop_steps, train_policy
+
+    torch.manual_seed(0)
+    T, N, C = 4, 64, 10
+    probs = torch.randn(T, N, C).mul(2).softmax(-1)
+    offline = prob_features(probs)
+    p_all = probs.clamp_min(1e-12)
+    prev_logp = prev_pred = run = None
+    for t in range(T):
+        f, prev_pred, run = online_s0(p_all[t], p_all[t].log(), prev_logp, prev_pred, run, t, T)
+        prev_logp = p_all[t].log()
+        torch.testing.assert_close(f, offline[t])
+
+    # end to end: the step-by-step runner with compaction reproduces the offline decisions
+    model = build_model("bvit_tiny", num_classes=C, t_max=T).eval()
+    x = torch.randn(N, 3, 32, 32)
+    labels = torch.randint(0, C, (N,))
+    temps = torch.tensor([1.2, 1.0, 0.9, 0.8])
+    with torch.no_grad():
+        logits = model(x)
+    cache = {"logits": logits}
+    feats = build_features(cache, temps, "S0")
+    p_off = (logits / temps[:, None, None]).softmax(-1)
+    policy, _ = train_policy(feats, p_off, labels, "reward_acc", iters=60)
+    runner = AdaptiveRunner(model, policy, temps, torch.device("cpu"))
+    for lam in (1e-3, 0.3, 3.0):
+        with torch.no_grad():
+            stop = stop_steps(policy(feats, torch.full((N,), lam)))
+        preds, steps = runner.run(x, lam)
+        assert torch.equal(steps, stop)
+        assert torch.equal(preds, p_off.argmax(-1)[stop, torch.arange(N)])
+    assert torch.equal(runner.run_fixed(x, 2), logits[2].argmax(-1))

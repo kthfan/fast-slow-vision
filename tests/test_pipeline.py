@@ -62,6 +62,16 @@ def test_run_experiment_writes_report(tmp_path):
     pol = halt["policies"]
     assert {"S2-reward_acc", "S5-reward_acc", "S0-reward", "S3-oracle_any", "S0-reward_acc@train"} <= pol.keys()
     assert halt["policy_train"]["split"] == "train"
+    assert (rep / "policies" / "S0-reward_acc.pt").exists() and "cost@full" in pol["S0-reward_acc"]
+    subprocess.run([sys.executable, str(ROOT / "scripts/benchmark_adaptive.py"), "smoke", "--fake-data",
+                    "--out-root", str(tmp_path), "--repeats", "1", "--bs1-images", "3", "--batch-size", "64",
+                    "--lams", "0.01", "1.0", "--max-cpus", "2"], check=True, cwd=ROOT)
+    bench = json.loads((rep / "benchmark.json").read_text())
+    assert len(bench["fixed"]) == 3 and len(bench["adaptive"]) == 2
+    summary = subprocess.run([sys.executable, str(ROOT / "scripts/summarize.py"), "smoke",
+                              "--reports", str(tmp_path / "reports")], check=True, capture_output=True,
+                             text=True, cwd=ROOT).stdout
+    assert "[benchmark smoke]" in summary and "cost@full" in summary
     # re-evaluating with --skip-train keeps the training record
     subprocess.run(cmd[:2] + ["smoke", "--fake-data", "--max-cpus", "2", "--out-root", str(tmp_path), "--gpu", "",
                               "--skip-train"], check=True, cwd=ROOT)
