@@ -105,7 +105,8 @@ def measure_cudagraph(res, model, policy, pc, o3_loaded, device, amp, T, X, n1, 
         for i, lam in enumerate(lam_list):
             sec1, out = timed(single(lambda xb: fn(xb, lam)), reps, sync)
             pred = torch.cat([o[0] for o in out])
-            ref_pred, _ = ref_runner.run(X[:n1], lam)
+            # same batch size (1) as the graph, so the same kernels: decisions should match exactly
+            ref_pred = torch.cat([ref_runner.run(X[i:i + 1], lam)[0] for i in range(n1)])
             rows.append({"lam": lam, "acc": ref_rows[i]["acc"], "mean_steps": ref_rows[i]["mean_steps"],
                          "img_per_s": None, "bs1_ms": sec1 / n1 * 1e3,
                          "agree_with_eager": float((pred == ref_pred).float().mean())})

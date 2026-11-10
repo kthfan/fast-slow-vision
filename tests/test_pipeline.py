@@ -1,6 +1,7 @@
 """End-to-end smoke test: a few training iterations on fake data, then evaluation."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -69,11 +70,12 @@ def test_run_experiment_writes_report(tmp_path):
     assert (rep / "policies" / "S0-reward_acc.pt").exists() and "cost@full" in pol["S0-reward_acc"]
     subprocess.run([sys.executable, str(ROOT / "scripts/benchmark_adaptive.py"), "smoke", "--fake-data",
                     "--out-root", str(tmp_path), "--repeats", "1", "--bs1-images", "3", "--batch-size", "64",
-                    "--lams", "0.01", "1.0", "--max-cpus", "2", "--no-compile", "--naive"], check=True, cwd=ROOT)
+                    "--lams", "0.01", "1.0", "--max-cpus", "2", "--no-compile", "--naive"], check=True, cwd=ROOT,
+                   env={**os.environ, "CUDA_VISIBLE_DEVICES": ""})  # CPU: deterministic logic check
     bench = json.loads((rep / "benchmark.json").read_text())
     assert set(bench["modes"]) == {"eager", "eager-naive", "o3k0-eager", "o3k1-eager", "cudagraph-bs1",
                                    "o3k0-cudagraph-bs1", "o3k1-cudagraph-bs1"}
-    assert bench["cudagraph_captured"] is False  # CPU: logic only
+    assert bench["cudagraph_captured"] is False  # CPU: logic only (GPU capture: test_cudagraph_bs1_on_gpu)
     assert all(a["agree_with_eager"] == 1.0 for m in bench["modes"] if "cudagraph" in m
                for a in bench["modes"][m]["adaptive"])
     assert all(1 <= a["mean_steps"] <= 3 for a in bench["modes"]["o3k1-eager"]["adaptive"])
