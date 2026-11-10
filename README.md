@@ -216,7 +216,8 @@ AUC = 在 [第 0 步, 第 7 步] GFLOPs 區間的平均 top-1（溫度縮放後�
 第 4 輪 [`results/round4_h100/summary.md`](results/round4_h100/summary.md)，
 第 5 輪 [`results/round5_h100/summary.md`](results/round5_h100/summary.md)，
 第 6 輪 [`results/round6_h100/summary.md`](results/round6_h100/summary.md)，
-第 7 輪 [`results/round7_h100/summary.md`](results/round7_h100/summary.md)。
+第 7 輪 [`results/round7_h100/summary.md`](results/round7_h100/summary.md)，
+第 8 輪 [`results/round8_h100/summary.md`](results/round8_h100/summary.md)。
 
 觀察（第 1–6 輪）：
 
@@ -336,3 +337,25 @@ batch 256 時每步額外開銷約 0.7–1.2 ms，大於一個遞迴步本身（
 0.7.1 的 `AdaptiveRunner.run` 改為每步只同步一次（一次 `nonzero`，其餘用 `index_select` / `index_copy_`），
 並提供 `torch.compile` 版本（每步模型呼叫與特徵 + 策略計算都編譯；固定深度用同一個編譯過的模型步，比較公平）；
 舊版保留為 `run_naive`，benchmark 用 `--naive` 一併量測。
+
+第 8 輪（`c100_bvit_s_quadw_lr5e4`，λ = 0.03：61.95%、3.70 步；同準確率的固定深度 t=4 為 61.97%、5 步）：
+
+| 版本 | batch 256 吞吐量 | batch 1 延遲 |
+|---|---|---|
+| 固定深度 t=4（eager） | 98,931 img/s | 1.71 ms |
+| 自適應，第一版（eager-naive） | 37,647 | 4.37 ms |
+| 自適應，每步一次同步（eager） | 45,112 | 3.59 ms |
+| 自適應，+ torch.compile | 52,315 | 3.02 ms |
+
+- 改善了 20–40%，但仍比同準確率的固定深度慢（0.5–0.65 倍）。8 層 ViT compile 後 batch 1 為 0.90 倍。
+- 根本原因：只要每步同步一次，GPU 佇列就清空，下一步約 55 個小 kernel 的 CPU 發送延遲（每個約 10 µs）全部暴露；
+  這個模型每步本身很短（batch 256 約 0.5 ms），發送延遲與計算同一量級。
+
+**O3（TODO-1d，0.8.0）**：在第 k 步一次預測每張圖的停止步數（`StepMLP`，輸入第 0…k 步的 S0 特徵與 λ，
+以精確期望獎勵訓練）。整個 batch 只同步一次；之後依預測步數由深到淺排序，第 t 步只算 batch 的前 n_t 張（n_t 已知，不需同步）。
+`halting_study.py --o3-ks 0 1` 離線評估並存檔，`O3Runner` 線上執行（與離線決策逐位元相同，有測試），
+benchmark 以 `o3k0-eager`、`o3k1-compiled` 等模式量測。
+
+Kaggle checkpoint 的離線結果（AUC %，2 個策略種子）：固定深度 58.38、O1 S0-reward_acc 58.80、
+O3 k=0 58.37、k=1 58.19、k=2 56.83；S5 特徵的 O3 更差（過擬合）。提早決定會失去 O1 大部分的 FLOPs 優勢；
+O3 的價值要看它能否把剩下的優勢轉成實際時間。

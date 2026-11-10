@@ -31,7 +31,8 @@ from fsv.cpu import limit_cpus  # noqa: E402
 from fsv.halting import (acc_at_compute, compute_at_acc, curve_auc, fixed_depth_curve,  # noqa: E402
                          oracle_point, threshold_curve)
 from fsv.halting.features import ALL_FEATURE_SETS, FEATURE_SETS, build_features, feature_flops  # noqa: E402
-from fsv.halting.policy import OBJECTIVES, policy_curve, train_policy  # noqa: E402
+from fsv.halting.policy import (OBJECTIVES, policy_curve, step_predictor_curve, train_policy,  # noqa: E402
+                                train_step_predictor)
 
 
 def parse_args(argv=None):
@@ -41,7 +42,10 @@ def parse_args(argv=None):
     p.add_argument("--policy-seeds", type=int, default=3)
     p.add_argument("--iters", type=int, default=1500)
     p.add_argument("--feature-sets", nargs="+", default=list(FEATURE_SETS), choices=list(ALL_FEATURE_SETS))
-    p.add_argument("--objectives", nargs="+", default=list(OBJECTIVES))
+    p.add_argument("--objectives", nargs="*", default=list(OBJECTIVES),
+                   help="O1 (per-step) objectives; pass the flag with no value to skip O1")
+    p.add_argument("--o3-ks", type=int, nargs="*", default=[],
+                   help="also train O3 step predictors that decide the depth once after step k (e.g. 0 1)")
     p.add_argument("--policy-train", default="holdout", choices=["holdout", "train", "both"],
                    help="data the policy is trained on: held-out outputs (default), training-image outputs "
                         "(needs cache_train.pt; validated on held-out), or both. Non-default runs are named <set>-<obj>@<split>")
@@ -155,6 +159,34 @@ def main(argv=None):
             res["policies"][name] = agg
             print(f"[halting] {name:<18} AUC {agg['auc']['mean'] * 100:.2f}±{agg['auc']['sd'] * 100:.2f}  "
                   + "  ".join(f"{k} {agg[k]['mean'] * 100:.2f}" for k in agg if k.startswith("acc@")), flush=True)
+        for k_dec in args.o3_ks:  # O3: decide the stop step once, after step k_dec
+            obj = "reward_acc"
+            runs = []
+            for seed in range(args.policy_seeds):
+                model, info = train_step_predictor(x_fit, p_fit, y_fit, k_dec, obj, seed=seed, iters=args.iters,
+                                                   n_val_last=n_val_last, device=device)
+                pts = step_predictor_curve(model, x_te, probs["te"], labels_te, cum, feature_flops(fs, T, C, D),
+                                           device=device)
+                summary = summarize_curve(pts)
+                steps = [p["mean_steps"] for p in pts]
+                summary["lambda_monotone_violations"] = sum(b > a + 1e-9 for a, b in zip(steps, steps[1:]))
+                extra = feature_flops(fs, T, C, D) * (k_dec + 1) + model.flops()
+                runs.append({**summary, "curve": pts, "val_loss": info["best_val_loss"],
+                             "policy_flops_per_step": extra / T})
+                if seed == 0:
+                    first_model = model
+            name = f"{fs}-o3k{k_dec}-{obj}{suffix}"
+            (out / "policies").mkdir(exist_ok=True)
+            torch.save({"kind": "o3", "state_dict": first_model.state_dict(), "step_dim": x_te.shape[-1],
+                        "T": T, "k": k_dec, "lam_range": [math.exp(first_model.log_lo), math.exp(first_model.log_hi)],
+                        "feature_set": fs, "objective": obj, "policy_train": args.policy_train,
+                        "temperatures": temps, "run": run.name}, out / "policies" / f"{name}.pt")
+            agg = {kk: mean_sd([r[kk] for r in runs]) for kk in runs[0] if kk != "curve"}
+            agg["policy_cost_fraction_of_step"] = runs[0]["policy_flops_per_step"] / step_flops
+            agg["curve"] = runs[0]["curve"]
+            res["policies"][name] = agg
+            print(f"[halting] {name:<18} AUC {agg['auc']['mean'] * 100:.2f}±{agg['auc']['sd'] * 100:.2f}  "
+                  + "  ".join(f"{kk} {agg[kk]['mean'] * 100:.2f}" for kk in agg if kk.startswith("acc@")), flush=True)
     res["minutes"] = (time.time() - t0) / 60
     res["device"] = device
     path = out / "halting.json"
@@ -163,6 +195,8 @@ def main(argv=None):
         if old.get("run") == res["run"]:
             res["policies"] = {**{k: v for k, v in old.get("policies", {}).items() if k not in res["policies"]},
                                **res["policies"]}
+            for k, v in old.items():  # e.g. policy_train info from an earlier --policy-train train study
+                res.setdefault(k, v)
     path.write_text(json.dumps(res, indent=2))
 
     print(f"\nhalting study: {run.name} (test set; policies trained on held-out; AUC over [{lo:.3f}, {hi:.3f}] GFLOPs)")

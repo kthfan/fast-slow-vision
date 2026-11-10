@@ -12,6 +12,9 @@ Measured on the test set, preloaded on the GPU (no data-loading time):
   * adaptive, for several prices lambda: the policy decides after each step and
     finished images are removed from the batch ("compaction"), so later steps
     run on fewer images. Batch-1 latency uses the same code with one image.
+O3 modes ("o3k0-eager", "o3k1-compiled", ...) time step predictors that decide every
+image's depth once after step k (one host sync per batch); they need the O3 policy
+files written by ``halting_study.py --o3-ks``.
 Modes: "eager" (always), "compiled" (torch.compile of the per-step model call and
 of the feature + policy computation, for both fixed and adaptive; skipped with
 --no-compile or if compilation fails) and "eager-naive" (--naive: the first
@@ -36,8 +39,8 @@ sys.path.insert(0, str(ROOT))
 from fsv.cpu import limit_cpus  # noqa: E402
 from fsv.data import build_splits  # noqa: E402
 from fsv.engine import auto_amp  # noqa: E402
-from fsv.halting.online import AdaptiveRunner  # noqa: E402
-from fsv.halting.policy import HaltMLP  # noqa: E402
+from fsv.halting.online import AdaptiveRunner, O3Runner  # noqa: E402
+from fsv.halting.policy import HaltMLP, StepMLP  # noqa: E402
 from fsv.models import BViTConfig, RecurrentViT  # noqa: E402
 from fsv.version import code_info  # noqa: E402
 
@@ -55,6 +58,8 @@ def parse_args(argv=None):
     p.add_argument("--no-compile", dest="compile", action="store_false",
                    help="skip the torch.compile variant (measured by default; eager is always measured)")
     p.add_argument("--naive", action="store_true", help="also time the first runner (several syncs per step)")
+    p.add_argument("--o3-policies", nargs="*", default=["S0-o3k0-reward_acc", "S0-o3k1-reward_acc"],
+                   help="O3 step predictors to time (decide the depth once; skipped if the file is missing)")
     p.add_argument("--out-root", default=str(ROOT))
     p.add_argument("--data-dir", default=str(ROOT / "data"))
     p.add_argument("--fake-data", action="store_true", help=argparse.SUPPRESS)
@@ -119,18 +124,20 @@ def main(argv=None):
 
             lams = args.lams if policy.use_lambda else [None]
 
-            def measure(runner, method: str) -> dict:
-                fixed, adaptive = [], []
-                for t in range(T):
+            def measure(runner, method: str, fixed=None) -> dict:
+                adaptive = []
+                for t in range(T) if fixed is None else []:
                     sec, out = timed(batched(lambda xb, t=t: runner.run_fixed(xb, t)), args.repeats, sync)
                     acc = float((torch.cat(out) == Y).float().mean())
                     sec1, _ = timed(single(lambda xb, t=t: runner.run_fixed(xb, t)), max(1, args.repeats // 2), sync)
-                    fixed.append({"step": t, "acc": acc, "img_per_s": N / sec, "bs1_ms": sec1 / n1 * 1e3})
-                fn = getattr(runner, method)
-                for lam in lams:
+                    fixed = (fixed or []) + [{"step": t, "acc": acc, "img_per_s": N / sec, "bs1_ms": sec1 / n1 * 1e3}]
+                fn = runner.run if method == "o3" else getattr(runner, method)
+                for lam in (lams if method != "o3" else args.lams):
                     sec, out = timed(batched(lambda xb: fn(xb, lam)), args.repeats, sync)
                     pred = torch.cat([o[0] for o in out])
                     steps = torch.cat([o[1] for o in out]).float()
+                    if method == "o3":  # steps <= k reuse readouts that were computed anyway
+                        steps = steps.clamp(min=runner.k)
                     sec1, _ = timed(single(lambda xb: fn(xb, lam)), max(1, args.repeats // 2), sync)
                     adaptive.append({"lam": lam, "acc": float((pred == Y).float().mean()),
                                      "mean_steps": float(steps.mean()) + 1, "img_per_s": N / sec,
@@ -145,13 +152,33 @@ def main(argv=None):
             res["modes"]["eager"] = measure(eager, "run")
             if args.naive:  # the first runner: boolean-mask indexing, several host syncs per step
                 res["modes"]["eager-naive"] = measure(eager, "run_naive")
+            compiled = None
             if args.compile:
                 try:
-                    res["modes"]["compiled"] = measure(
-                        AdaptiveRunner(model, policy, pc["temperatures"], device, amp, compile=True), "run")
+                    compiled = AdaptiveRunner(model, policy, pc["temperatures"], device, amp, compile=True)
+                    res["modes"]["compiled"] = measure(compiled, "run")
                 except Exception as e:  # keep the eager numbers if compilation is unavailable
+                    compiled = None
                     res["compile_error"] = repr(e)[:500]
                     print(f"[benchmark] torch.compile failed, skipped: {res['compile_error']}")
+            for o3_name in args.o3_policies:  # decide the depth once: one sync per batch
+                o3_path = rep / "policies" / f"{o3_name}.pt"
+                if not o3_path.exists():
+                    continue
+                oc = torch.load(o3_path, map_location="cpu", weights_only=False)
+                if oc.get("feature_set") != "S0":
+                    print(f"[benchmark] {o3_name}: only S0 O3 policies are supported online; skipped")
+                    continue
+                sp = StepMLP(oc["step_dim"], oc["T"], oc["k"], lam_range=tuple(oc["lam_range"]))
+                sp.load_state_dict(oc["state_dict"])
+                sp.to(device)
+                tag = o3_name.split("-")[1]  # e.g. o3k1
+                res["modes"][f"{tag}-eager"] = measure(O3Runner(model, sp, oc["temperatures"], device, amp), "o3",
+                                                       fixed=res["modes"]["eager"]["fixed"])
+                if compiled is not None:
+                    res["modes"][f"{tag}-compiled"] = measure(
+                        O3Runner(model, sp, oc["temperatures"], device, amp, step_fn=compiled._step), "o3",
+                        fixed=res["modes"]["compiled"]["fixed"])
             rep.mkdir(parents=True, exist_ok=True)
             (rep / "benchmark.json").write_text(json.dumps(res, indent=2))
             print(f"\n[benchmark] {run} (AMP {amp}, policy {args.policy})")

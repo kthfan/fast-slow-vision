@@ -58,6 +58,10 @@ def test_run_experiment_writes_report(tmp_path):
                               "--halting-only", "--halting-args",
                               "--feature-sets S0 --objectives reward_acc --iters 30 --policy-seeds 1 --policy-train train"],
                    check=True, cwd=ROOT)
+    subprocess.run(cmd[:2] + ["smoke", "--fake-data", "--max-cpus", "2", "--out-root", str(tmp_path), "--gpu", "",
+                              "--halting-only", "--halting-args",
+                              "--feature-sets S0 --objectives --o3-ks 0 1 --iters 30 --policy-seeds 1"],
+                   check=True, cwd=ROOT)
     halt = json.loads((rep / "halting.json").read_text())
     pol = halt["policies"]
     assert {"S2-reward_acc", "S5-reward_acc", "S0-reward", "S3-oracle_any", "S0-reward_acc@train"} <= pol.keys()
@@ -67,7 +71,8 @@ def test_run_experiment_writes_report(tmp_path):
                     "--out-root", str(tmp_path), "--repeats", "1", "--bs1-images", "3", "--batch-size", "64",
                     "--lams", "0.01", "1.0", "--max-cpus", "2", "--no-compile", "--naive"], check=True, cwd=ROOT)
     bench = json.loads((rep / "benchmark.json").read_text())
-    assert set(bench["modes"]) == {"eager", "eager-naive"}
+    assert set(bench["modes"]) == {"eager", "eager-naive", "o3k0-eager", "o3k1-eager"}
+    assert all(1 <= a["mean_steps"] <= 3 for a in bench["modes"]["o3k1-eager"]["adaptive"])
     assert len(bench["modes"]["eager"]["fixed"]) == 3 and len(bench["modes"]["eager"]["adaptive"]) == 2
     # both runners make the same decisions
     assert [a["acc"] for a in bench["modes"]["eager"]["adaptive"]] == \

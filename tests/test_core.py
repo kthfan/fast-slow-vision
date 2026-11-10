@@ -268,3 +268,31 @@ def test_online_features_and_runner_match_offline():
             assert torch.equal(steps, stop)
             assert torch.equal(preds, p_off.argmax(-1)[stop, torch.arange(N)])
     assert torch.equal(runner.run_fixed(x, 2), logits[2].argmax(-1))
+
+
+def test_o3_step_predictor_and_runner_match_offline():
+    from fsv.halting.features import build_features
+    from fsv.halting.online import O3Runner
+    from fsv.halting.policy import o3_inputs, step_predictor_curve, train_step_predictor
+
+    torch.manual_seed(0)
+    T, N, C = 4, 64, 10
+    model = build_model("bvit_tiny", num_classes=C, t_max=T).eval()
+    x = torch.randn(N, 3, 32, 32)
+    labels = torch.randint(0, C, (N,))
+    temps = torch.tensor([1.2, 1.0, 0.9, 0.8])
+    with torch.no_grad():
+        logits = model(x)
+    feats = build_features({"logits": logits}, temps, "S0")
+    p_off = (logits / temps[:, None, None]).softmax(-1)
+    for k in (0, 1):
+        pol, _ = train_step_predictor(feats, p_off, labels, k, iters=80)
+        pts = step_predictor_curve(pol, feats, p_off, labels, [1e9 * (t + 1) for t in range(T)], 0.0, n=5)
+        assert all(min(k + 1, T) <= p["mean_steps"] <= T for p in pts)
+        runner = O3Runner(model, pol, temps, torch.device("cpu"))
+        for lam in (1e-3, 0.1, 3.0):
+            with torch.no_grad():
+                s_off = pol(o3_inputs(feats, k), torch.full((N,), lam)).argmax(-1)
+            preds, s = runner.run(x, lam)
+            assert torch.equal(s, s_off)
+            assert torch.equal(preds, p_off.argmax(-1)[s_off, torch.arange(N)])

@@ -157,3 +157,61 @@ class AdaptiveRunner:
         for t in range(t_stop + 1):
             tok, z = self._step(tok, x0, t)
         return z.argmax(-1)
+
+
+class O3Runner:
+    """O3 inference: run steps 0..k on the whole batch, predict every image's stop step once
+    (one host synchronisation), sort the batch deepest-first and run each later step on a
+    prefix of known size, so no further synchronisation is needed."""
+
+    def __init__(self, model, step_policy, temps: torch.Tensor, device, amp: str = "none", step_fn=None):
+        self.model, self.policy = model.eval(), step_policy.eval()
+        self.temps = temps.float().to(device)
+        self.device, self.amp = device, amp
+        self.T, self.k = model.cfg.t_max, step_policy.k
+        self._step = step_fn or self._step_impl  # e.g. AdaptiveRunner(compile=True)._step
+
+    def _step_impl(self, tok, x0, t: int):
+        with autocast_ctx(self.device, self.amp):
+            tok = self.model.forward_step(tok, t, x0)
+            z = self.model.readout(tok, t)
+        return tok, z
+
+    @torch.no_grad()
+    def run(self, x: torch.Tensor, lam: float) -> tuple[torch.Tensor, torch.Tensor]:
+        B, T, k = x.shape[0], self.T, self.k
+        with autocast_ctx(self.device, self.amp):
+            x0 = tok = self.model.embed(x)
+        feats, preds_hist = [], []
+        prev_logp = prev_pred = run = None
+        for t in range(k + 1):
+            tok, z = self._step(tok, x0, t)
+            p = (z.float() / self.temps[t]).softmax(-1).clamp_min(1e-12)
+            logp = p.log()
+            f, prev_pred, run = online_s0(p, logp, prev_logp, prev_pred, run, t, T)
+            prev_logp = logp
+            feats.append(f)
+            preds_hist.append(prev_pred)
+        lam_vec = torch.full((B,), float(lam), device=x.device)
+        s = self.policy(torch.cat(feats, -1), lam_vec).argmax(-1)  # stop step per image
+        preds = torch.stack(preds_hist)[s.clamp(max=k), torch.arange(B, device=x.device)]
+        if k == T - 1:
+            return preds, s
+        counts = torch.bincount(s, minlength=T).tolist()  # the one synchronisation
+        alive = [sum(counts[t:]) for t in range(T)] + [0]  # images with stop step >= t
+        n = alive[k + 1]
+        if n == 0:
+            return preds, s
+        sel = torch.argsort(s, descending=True)[:n]  # deepest first; rows [alive[t+1], alive[t]) stop at t
+        tok, x0 = tok.index_select(0, sel), x0.index_select(0, sel)
+        out = torch.empty(n, dtype=torch.long, device=x.device)
+        for t in range(k + 1, T):
+            m = alive[t]
+            if m == 0:
+                break
+            tok, z = self._step(tok[:m], x0[:m], t)
+            lo = alive[t + 1]
+            if m > lo:
+                out[lo:m] = z[lo:m].argmax(-1)
+        preds.index_copy_(0, sel, out)
+        return preds, s
