@@ -71,7 +71,11 @@ def test_run_experiment_writes_report(tmp_path):
                     "--out-root", str(tmp_path), "--repeats", "1", "--bs1-images", "3", "--batch-size", "64",
                     "--lams", "0.01", "1.0", "--max-cpus", "2", "--no-compile", "--naive"], check=True, cwd=ROOT)
     bench = json.loads((rep / "benchmark.json").read_text())
-    assert set(bench["modes"]) == {"eager", "eager-naive", "o3k0-eager", "o3k1-eager"}
+    assert set(bench["modes"]) == {"eager", "eager-naive", "o3k0-eager", "o3k1-eager", "cudagraph-bs1",
+                                   "o3k0-cudagraph-bs1", "o3k1-cudagraph-bs1"}
+    assert bench["cudagraph_captured"] is False  # CPU: logic only
+    assert all(a["agree_with_eager"] == 1.0 for m in bench["modes"] if "cudagraph" in m
+               for a in bench["modes"][m]["adaptive"])
     assert all(1 <= a["mean_steps"] <= 3 for a in bench["modes"]["o3k1-eager"]["adaptive"])
     assert len(bench["modes"]["eager"]["fixed"]) == 3 and len(bench["modes"]["eager"]["adaptive"]) == 2
     # both runners make the same decisions

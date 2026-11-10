@@ -56,6 +56,13 @@ def benchmark_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
         modes = b0.get("modes") or {"eager-naive": {"fixed": b0["fixed"], "adaptive": b0["adaptive"]}}  # <= 0.7.0
         out += ["", f"[benchmark {exp}] seeds {len(bs)} | {b0['device']} | AMP {b0['amp']} | policy {b0['policy']} | "
                     f"batch {b0['batch_size']} throughput with compaction, batch-1 latency on {b0['bs1_images']} images"]
+        if "cudagraph_captured" in b0:
+            agree = [a.get("agree_with_eager") for b in bs for m, v in b["modes"].items() if "cudagraph" in m
+                     for a in v["adaptive"]]
+            out.append(f"  CUDA graphs captured: {b0['cudagraph_captured']}; decisions agree with eager on "
+                       f"{min(x for x in agree if x is not None) * 100:.1f}%+ of timed images" if agree else "")
+        if b0.get("cudagraph_error"):
+            out.append(f"  CUDA-graph modes failed: {b0['cudagraph_error'][:200]}")
         if b0.get("compile_error"):
             out.append(f"  torch.compile failed: {b0['compile_error'][:200]}")
         for mode in modes:
@@ -73,7 +80,8 @@ def benchmark_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
                 for m, r in zip(ms_, rows):  # cheapest fixed depth with accuracy >= this setting
                     ok = [f for f in m["fixed"] if f["acc"] >= r["acc"]]
                     f = ok[0] if ok else m["fixed"][-1]
-                    ratios_b.append(r["img_per_s"] / f["img_per_s"])
+                    if r.get("img_per_s") and f.get("img_per_s"):  # batch-1-only modes have no throughput
+                        ratios_b.append(r["img_per_s"] / f["img_per_s"])
                     ratios_1.append(f["bs1_ms"] / r["bs1_ms"])
                 out.append(f"  lam={str(a0['lam']):<16}" + ms([r["acc"] for r in rows], 2, 100).rjust(13)
                            + ms([r["mean_steps"] for r in rows], 2).rjust(15)

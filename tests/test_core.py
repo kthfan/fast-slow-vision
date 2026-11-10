@@ -296,3 +296,38 @@ def test_o3_step_predictor_and_runner_match_offline():
             preds, s = runner.run(x, lam)
             assert torch.equal(s, s_off)
             assert torch.equal(preds, p_off.argmax(-1)[s_off, torch.arange(N)])
+
+
+def test_cudagraph_bs1_logic_matches_eager_runners():
+    # On CPU nothing is captured: this checks that the static-buffer step functions reproduce
+    # the eager runners exactly (on a GPU the same functions are replayed as CUDA graphs).
+    from fsv.halting.features import build_features
+    from fsv.halting.online import AdaptiveRunner, CudaGraphBS1, O3Runner
+    from fsv.halting.policy import train_policy, train_step_predictor
+
+    torch.manual_seed(0)
+    T, N, C = 4, 24, 10
+    model = build_model("bvit_tiny", num_classes=C, t_max=T).eval()
+    x = torch.randn(N, 3, 32, 32)
+    labels = torch.randint(0, C, (N,))
+    temps = torch.tensor([1.2, 1.0, 0.9, 0.8])
+    with torch.no_grad():
+        logits = model(x)
+    feats = build_features({"logits": logits}, temps, "S0")
+    p_off = (logits / temps[:, None, None]).softmax(-1)
+    pol, _ = train_policy(feats, p_off, labels, "reward_acc", iters=60)
+    o3, _ = train_step_predictor(feats, p_off, labels, 1, iters=60)
+    dev = torch.device("cpu")
+    cg = CudaGraphBS1(model, temps, dev, policy=pol, o3_policy=o3)
+    assert not cg.captured
+    eager, o3_eager = AdaptiveRunner(model, pol, temps, dev), O3Runner(model, o3, temps, dev)
+    for lam in (1e-3, 0.3):
+        pe, se = eager.run(x, lam)
+        po, so = o3_eager.run(x, lam)
+        for i in range(N):
+            p1, s1 = cg.run(x[i:i + 1], lam)
+            assert int(p1) == int(pe[i]) and s1 == int(se[i])
+            p3, s3 = cg.run_o3(x[i:i + 1], lam)
+            assert int(p3) == int(po[i]) and s3 == int(so[i])
+    for t in range(T):
+        assert int(cg.run_fixed(x[:1], t)) == int(logits[t, 0].argmax())

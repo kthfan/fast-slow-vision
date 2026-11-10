@@ -12,6 +12,10 @@ Measured on the test set, preloaded on the GPU (no data-loading time):
   * adaptive, for several prices lambda: the policy decides after each step and
     finished images are removed from the batch ("compaction"), so later steps
     run on fewer images. Batch-1 latency uses the same code with one image.
+CUDA-graph modes ("cudagraph-bs1", "o3k1-cudagraph-bs1"; skip with --no-cudagraph) time batch 1
+with every per-step computation captured as a graph: fixed depth = one graph for the whole
+forward pass, O1 = one graph per step + one host read of the stop flag, O3 = two graphs +
+one host read. They report latency only (accuracy is taken from the eager modes).
 O3 modes ("o3k0-eager", "o3k1-compiled", ...) time step predictors that decide every
 image's depth once after step k (one host sync per batch); they need the O3 policy
 files written by ``halting_study.py --o3-ks``.
@@ -39,7 +43,7 @@ sys.path.insert(0, str(ROOT))
 from fsv.cpu import limit_cpus  # noqa: E402
 from fsv.data import build_splits  # noqa: E402
 from fsv.engine import auto_amp  # noqa: E402
-from fsv.halting.online import AdaptiveRunner, O3Runner  # noqa: E402
+from fsv.halting.online import AdaptiveRunner, CudaGraphBS1, O3Runner  # noqa: E402
 from fsv.halting.policy import HaltMLP, StepMLP  # noqa: E402
 from fsv.models import BViTConfig, RecurrentViT  # noqa: E402
 from fsv.version import code_info  # noqa: E402
@@ -58,6 +62,8 @@ def parse_args(argv=None):
     p.add_argument("--no-compile", dest="compile", action="store_false",
                    help="skip the torch.compile variant (measured by default; eager is always measured)")
     p.add_argument("--naive", action="store_true", help="also time the first runner (several syncs per step)")
+    p.add_argument("--no-cudagraph", dest="cudagraph", action="store_false",
+                   help="skip the batch-1 CUDA-graph modes (measured by default)")
     p.add_argument("--o3-policies", nargs="*", default=["S0-o3k0-reward_acc", "S0-o3k1-reward_acc"],
                    help="O3 step predictors to time (decide the depth once; skipped if the file is missing)")
     p.add_argument("--out-root", default=str(ROOT))
@@ -78,6 +84,41 @@ def timed(fn, repeats: int, sync) -> tuple[float, object]:
         sync()
         times.append(time.perf_counter() - t0)
     return st.median(times), out
+
+
+def measure_cudagraph(res, model, policy, pc, o3_loaded, device, amp, T, X, n1, single, sync, args, lams):
+    """Modes "cudagraph-bs1" (fixed depth + O1) and "<o3k>-cudagraph-bs1": batch-1 latency only.
+    Accuracy and mean steps are copied from the eager modes (full test set, same decisions);
+    ``agree_with_eager`` checks the decisions on the timed images."""
+    reps = max(1, args.repeats // 2)
+    cg = CudaGraphBS1(model, pc["temperatures"], device, amp, policy=policy)
+    res["cudagraph_captured"] = cg.captured
+    eager = AdaptiveRunner(model, policy, pc["temperatures"], device, amp)
+    fixed = []
+    for t in range(T):
+        sec1, _ = timed(single(lambda xb, t=t: cg.run_fixed(xb, t)), reps, sync)
+        ref = res["modes"]["eager"]["fixed"][t]
+        fixed.append({"step": t, "acc": ref["acc"], "img_per_s": None, "bs1_ms": sec1 / n1 * 1e3})
+
+    def adaptive_rows(fn, ref_rows, ref_runner, lam_list):
+        rows = []
+        for i, lam in enumerate(lam_list):
+            sec1, out = timed(single(lambda xb: fn(xb, lam)), reps, sync)
+            pred = torch.cat([o[0] for o in out])
+            ref_pred, _ = ref_runner.run(X[:n1], lam)
+            rows.append({"lam": lam, "acc": ref_rows[i]["acc"], "mean_steps": ref_rows[i]["mean_steps"],
+                         "img_per_s": None, "bs1_ms": sec1 / n1 * 1e3,
+                         "agree_with_eager": float((pred == ref_pred).float().mean())})
+        return rows
+
+    res["modes"]["cudagraph-bs1"] = {"fixed": fixed, "adaptive": adaptive_rows(
+        cg.run, res["modes"]["eager"]["adaptive"], eager, lams)}
+    for tag, (sp, oc) in o3_loaded.items():
+        cg3 = CudaGraphBS1(model, oc["temperatures"], device, amp, o3_policy=sp)
+        cg3.g_fixed = cg.g_fixed  # same fixed-depth graphs
+        res["modes"][f"{tag}-cudagraph-bs1"] = {"fixed": fixed, "adaptive": adaptive_rows(
+            cg3.run_o3, res["modes"][f"{tag}-eager"]["adaptive"], O3Runner(model, sp, oc["temperatures"], device, amp),
+            args.lams)}
 
 
 def main(argv=None):
@@ -161,6 +202,7 @@ def main(argv=None):
                     compiled = None
                     res["compile_error"] = repr(e)[:500]
                     print(f"[benchmark] torch.compile failed, skipped: {res['compile_error']}")
+            o3_loaded = {}
             for o3_name in args.o3_policies:  # decide the depth once: one sync per batch
                 o3_path = rep / "policies" / f"{o3_name}.pt"
                 if not o3_path.exists():
@@ -173,12 +215,20 @@ def main(argv=None):
                 sp.load_state_dict(oc["state_dict"])
                 sp.to(device)
                 tag = o3_name.split("-")[1]  # e.g. o3k1
+                o3_loaded[tag] = (sp, oc)
                 res["modes"][f"{tag}-eager"] = measure(O3Runner(model, sp, oc["temperatures"], device, amp), "o3",
                                                        fixed=res["modes"]["eager"]["fixed"])
                 if compiled is not None:
                     res["modes"][f"{tag}-compiled"] = measure(
                         O3Runner(model, sp, oc["temperatures"], device, amp, step_fn=compiled._step), "o3",
                         fixed=res["modes"]["compiled"]["fixed"])
+            if args.cudagraph:  # batch 1 with CUDA graphs: launch overhead removed for every method
+                try:
+                    measure_cudagraph(res, model, policy, pc, o3_loaded, device, amp, T, X, n1, single, sync, args,
+                                      lams)
+                except Exception as e:
+                    res["cudagraph_error"] = repr(e)[:500]
+                    print(f"[benchmark] CUDA-graph modes failed, skipped: {res['cudagraph_error']}")
             rep.mkdir(parents=True, exist_ok=True)
             (rep / "benchmark.json").write_text(json.dumps(res, indent=2))
             print(f"\n[benchmark] {run} (AMP {amp}, policy {args.policy})")
@@ -186,10 +236,10 @@ def main(argv=None):
                 print(f"  [{mode}] setting   acc %   steps   img/s (bs {bs})   bs1 ms")
                 for r in m["fixed"]:
                     print(f"  fixed t={r['step']}      {r['acc'] * 100:6.2f}  {r['step'] + 1:6.2f}  "
-                          f"{r['img_per_s']:14.0f}  {r['bs1_ms']:7.3f}")
+                          f"{(r['img_per_s'] or float('nan')):14.0f}  {r['bs1_ms']:7.3f}")
                 for r in m["adaptive"]:
                     print(f"  lam={r['lam']!s:<10}  {r['acc'] * 100:6.2f}  {r['mean_steps']:6.2f}  "
-                          f"{r['img_per_s']:14.0f}  {r['bs1_ms']:7.3f}")
+                          f"{(r['img_per_s'] or float('nan')):14.0f}  {r['bs1_ms']:7.3f}")
 
 
 if __name__ == "__main__":

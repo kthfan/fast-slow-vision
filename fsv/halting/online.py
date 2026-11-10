@@ -215,3 +215,164 @@ class O3Runner:
                 out[lo:m] = z[lo:m].argmax(-1)
         preds.index_copy_(0, sel, out)
         return preds, s
+
+
+# --------------------------------------------------------------------------- batch 1 with CUDA graphs
+class _Replay:
+    """A function captured as a CUDA graph (``capture=True``) or simply called (CPU, tests)."""
+
+    def __init__(self, fn, capture: bool):
+        self.fn, self.graph = fn, None
+        if capture:
+            side = torch.cuda.Stream()
+            side.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(side):  # warm-up outside the capture, as CUDA graphs require
+                for _ in range(3):
+                    fn()
+            torch.cuda.current_stream().wait_stream(side)
+            self.graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(self.graph):
+                fn()
+
+    def __call__(self):
+        if self.graph is None:
+            self.fn()
+        else:
+            self.graph.replay()
+
+
+class CudaGraphBS1:
+    """Batch-1 inference with the kernel-launch overhead removed by CUDA graphs.
+
+    * fixed depth t: the whole forward pass (embed + steps 0..t) is ONE graph;
+    * O1 policy: one graph per step (model step + features + policy), then one host read of
+      the stop flag per step;
+    * O3 policy: one graph for steps 0..k and the depth decision, one host read of the
+      chosen depth s, then one graph that runs steps k+1..s.
+    All inputs and outputs live in static buffers. On a CPU device nothing is captured and
+    the same functions are called directly, which is how the logic is tested.
+    """
+
+    def __init__(self, model, temps: torch.Tensor, device, amp: str = "none", policy=None, o3_policy=None):
+        cfg = model.cfg
+        self.model, self.device, self.amp, self.T = model.eval(), device, amp, cfg.t_max
+        self.temps = temps.float().to(device)
+        self.policy = policy.eval() if policy is not None else None
+        self.o3 = o3_policy.eval() if o3_policy is not None else None
+        self.captured = device.type == "cuda"
+        C = cfg.num_classes
+        with torch.no_grad():
+            self.x = torch.zeros(1, cfg.in_chans, cfg.img_size, cfg.img_size, device=device)
+            with autocast_ctx(device, amp, cache_enabled=False):
+                probe = model.forward_step(model.embed(self.x), 0, model.embed(self.x))
+            self.x0, self.tok = torch.zeros_like(probe), torch.zeros_like(probe)
+            self.pred = torch.zeros(1, dtype=torch.long, device=device)
+            self.s = torch.zeros(1, dtype=torch.long, device=device)
+            self.stop = torch.zeros(1, dtype=torch.bool, device=device)
+            self.prev_logp = torch.zeros(1, C, device=device)
+            self.prev_pred = torch.zeros(1, dtype=torch.long, device=device)
+            self.run_ = torch.zeros(1, device=device)
+            self.lam = torch.ones(1, device=device)
+            cap = self.captured
+            self.g_fixed = [_Replay(lambda t=t: self._fixed_fn(t), cap) for t in range(self.T)]
+            if self.policy is not None:
+                self.g_embed = _Replay(self._embed_fn, cap)
+                self.g_step = [_Replay(lambda t=t: self._step_fn(t), cap) for t in range(self.T)]
+            if self.o3 is not None:
+                k = self.o3.k
+                self.g_o3_head = _Replay(self._o3_head_fn, cap)
+                self.g_o3_tail = {j: _Replay(lambda j=j: self._o3_tail_fn(j), cap) for j in range(k + 1, self.T)}
+
+    # ---- captured pieces (they read and write only the static buffers)
+    def _model_step(self, tok, x0, t):
+        with autocast_ctx(self.device, self.amp, cache_enabled=False):
+            tok = self.model.forward_step(tok, t, x0)
+            z = self.model.readout(tok, t)
+        return tok, z
+
+    def _probs(self, z, t):
+        p = (z.float() / self.temps[t]).softmax(-1).clamp_min(1e-12)
+        return p, p.log()
+
+    def _fixed_fn(self, t_stop: int):
+        with autocast_ctx(self.device, self.amp, cache_enabled=False):
+            x0 = tok = self.model.embed(self.x)
+        for t in range(t_stop + 1):
+            tok, z = self._model_step(tok, x0, t)
+        self.pred.copy_(z.argmax(-1))
+
+    def _embed_fn(self):
+        with autocast_ctx(self.device, self.amp, cache_enabled=False):
+            x0 = self.model.embed(self.x)
+        self.x0.copy_(x0)
+        self.tok.copy_(x0)
+
+    def _step_fn(self, t: int):
+        tok, z = self._model_step(self.tok, self.x0, t)
+        self.tok.copy_(tok)
+        if t == self.T - 1:
+            self.pred.copy_(z.argmax(-1))
+            return
+        p, logp = self._probs(z, t)
+        prev = (self.prev_logp, self.prev_pred, self.run_) if t > 0 else (None, None, None)
+        feats, pred, run = online_s0(p, logp, *prev, t, self.T)
+        stop = self.policy(feats[None], self.lam if self.policy.use_lambda else None)[0] > 0
+        self.prev_logp.copy_(logp)
+        self.prev_pred.copy_(pred)
+        self.run_.copy_(run)
+        self.stop.copy_(stop)
+        self.pred.copy_(pred)
+
+    def _o3_head_fn(self):
+        k = self.o3.k
+        with autocast_ctx(self.device, self.amp, cache_enabled=False):
+            x0 = tok = self.model.embed(self.x)
+        feats, preds = [], []
+        prev_logp = prev_pred = run = None
+        for t in range(k + 1):
+            tok, z = self._model_step(tok, x0, t)
+            p, logp = self._probs(z, t)
+            f, prev_pred, run = online_s0(p, logp, prev_logp, prev_pred, run, t, self.T)
+            prev_logp = logp
+            feats.append(f)
+            preds.append(prev_pred)
+        s = self.o3(torch.cat(feats, -1), self.lam).argmax(-1)
+        self.s.copy_(s)
+        self.pred.copy_(torch.stack(preds)[s.clamp(max=k), torch.zeros_like(s)])
+        self.x0.copy_(x0)
+        self.tok.copy_(tok)
+
+    def _o3_tail_fn(self, j: int):
+        tok = self.tok
+        for t in range(self.o3.k + 1, j + 1):
+            tok, z = self._model_step(tok, self.x0, t)
+        self.pred.copy_(z.argmax(-1))
+
+    # ---- runners (x: [1, C, H, W] on the device)
+    @torch.no_grad()
+    def run_fixed(self, x: torch.Tensor, t_stop: int) -> torch.Tensor:
+        self.x.copy_(x)
+        self.g_fixed[t_stop]()
+        return self.pred.clone()
+
+    @torch.no_grad()
+    def run(self, x: torch.Tensor, lam: float | None = None) -> tuple[torch.Tensor, int]:
+        self.x.copy_(x)
+        if lam is not None:
+            self.lam.fill_(float(lam))
+        self.g_embed()
+        for t in range(self.T):
+            self.g_step[t]()
+            if t < self.T - 1 and bool(self.stop.item()):  # one host read per step
+                return self.pred.clone(), t
+        return self.pred.clone(), self.T - 1
+
+    @torch.no_grad()
+    def run_o3(self, x: torch.Tensor, lam: float) -> tuple[torch.Tensor, int]:
+        self.x.copy_(x)
+        self.lam.fill_(float(lam))
+        self.g_o3_head()
+        s = int(self.s.item())  # the one host read
+        if s > self.o3.k:
+            self.g_o3_tail[s]()
+        return self.pred.clone(), s

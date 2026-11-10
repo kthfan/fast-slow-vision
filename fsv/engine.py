@@ -15,10 +15,12 @@ def auto_amp(device: torch.device) -> str:
     return "bf16" if torch.cuda.get_device_capability(device)[0] >= 8 else "fp16"
 
 
-def autocast_ctx(device: torch.device, amp: str):
+def autocast_ctx(device: torch.device, amp: str, cache_enabled: bool = True):
+    """cache_enabled=False is required inside CUDA-graph capture (the weight-cast cache would be stale)."""
     if device.type != "cuda" or amp == "none":
         return nullcontext()
-    return torch.autocast("cuda", dtype=torch.float16 if amp == "fp16" else torch.bfloat16)
+    return torch.autocast("cuda", dtype=torch.float16 if amp == "fp16" else torch.bfloat16,
+                          cache_enabled=cache_enabled)
 
 
 @torch.no_grad()
