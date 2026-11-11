@@ -217,7 +217,8 @@ AUC = 在 [第 0 步, 第 7 步] GFLOPs 區間的平均 top-1（溫度縮放後�
 第 5 輪 [`results/round5_h100/summary.md`](results/round5_h100/summary.md)，
 第 6 輪 [`results/round6_h100/summary.md`](results/round6_h100/summary.md)，
 第 7 輪 [`results/round7_h100/summary.md`](results/round7_h100/summary.md)，
-第 8 輪 [`results/round8_h100/summary.md`](results/round8_h100/summary.md)。
+第 8 輪 [`results/round8_h100/summary.md`](results/round8_h100/summary.md)，
+第 9 輪 [`results/round9_h100/summary.md`](results/round9_h100/summary.md)。
 
 觀察（第 1–6 輪）：
 
@@ -364,6 +365,23 @@ O3 的價值要看它能否把剩下的優勢轉成實際時間。
 固定深度 = 整個前向一張圖；O1 = 每步一張圖 + 每步讀一次停止旗標；O3 = 兩張圖 + 讀一次深度。
 benchmark 預設量測（`cudagraph-bs1`、`o3k*-cudagraph-bs1`；`--no-cudagraph` 關閉），只報延遲，
 準確率沿用 eager 模式（決策相同，並記錄 `agree_with_eager` 檢查）。錄製期間 autocast 關閉權重快取（`cache_enabled=False`）。
+
+### TODO-4 在 CIFAR 上的結論（第 7–9 輪）
+
+同準確率下對固定深度的實際速度比（> 1 才是真的加速；3 個骨幹種子，c100_bvit_b 為 1 個；λ = 0.03 附近的最佳設定）：
+
+| 骨幹（每步計算量） | batch 256，O1 | batch 256，O3 | batch 1，CUDA graphs，O1 | batch 1，CUDA graphs，O3 |
+|---|---|---|---|---|
+| `c100_bvit_s_quadw_lr5e4`（0.24 GFLOPs） | 0.48× | 0.83×（k=0） | 0.69× | 0.91×（k=0） |
+| `c100_vit_s_8blk`（0.24 GFLOPs） | 0.48× | 0.74×（k=0） | 0.88× | 0.89×（k=1） |
+| `c100_bvit_b`（0.93 GFLOPs） | 0.89× | 0.97～1.08×（k=0/1） | 0.74× | 0.85×（k=1） |
+
+- CUDA graphs 讓 batch 1 的所有方法快 3–4 倍（固定深度跑滿 8 步 2.8 → 0.71 ms），但自適應仍比同準確率的固定深度慢。
+- O1 在 FLOPs 上達到全深度準確率只需 43–54% 的計算量，但每步一次的同步 + 策略 kernel 抵銷了節省；
+  O3 只同步一次，實際時間較好，但它的 FLOPs 優勢幾乎為零（AUC ≈ 固定深度），所以最多打平。
+- 每步計算量越大，額外開銷的佔比越小：bViT-S → bViT-B 時 batch 256 的 O1 從 0.48× 升到 0.89×、O3 首次略超過 1×。
+- 結論：在 32×32 輸入、單步 < 1 GFLOPs 的設定下，H100 上無法把 FLOPs 節省轉成實際加速；
+  實際延遲的主張需要每步計算量更大的設定（224×224 輸入、更寬的模型）或受計算量限制的硬體（CPU / 邊緣裝置）。
 
 ## 下一階段方向（討論中）
 
