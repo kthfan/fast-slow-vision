@@ -1,0 +1,996 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>校準式快慢視覺實驗報告</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600&display=swap">
+<style>
+/* Layout: lab-report column with a sticky contents rail on wide screens; charts sit on white plates. */
+:root{
+  --bg:#f4f6f9; --surface:#ffffff; --sunk:#eef1f5;
+  --ink:#141820; --ink-2:#4a5262; --muted:#7a8293;
+  --grid:#e4e8ee; --axis:#c3c9d3; --line:rgba(20,24,32,.10);
+  --accent:#2a78d6; --accent-soft:#e3eefb;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a;
+  --good:#0a7d0a; --good-bg:#e5f4e5; --warn:#8a5a00; --warn-bg:#fbf0d9; --none:#5b6474; --none-bg:#eceff3;
+  --f-head:"IBM Plex Sans","Noto Sans TC",system-ui,sans-serif;
+  --f-body:"IBM Plex Sans","Noto Sans TC",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1115; --surface:#171a20; --sunk:#1d2129;
+  --ink:#eceff4; --ink-2:#b8bfcb; --muted:#8a92a0;
+  --grid:#272c35; --axis:#3a404b; --line:rgba(255,255,255,.10);
+  --accent:#5b9cec; --accent-soft:#1c2a3d;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70;
+  --good:#5cc95c; --good-bg:#16301a; --warn:#e8b14a; --warn-bg:#33270f; --none:#a3abb8; --none-bg:#232832;
+  color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f1115; --surface:#171a20; --sunk:#1d2129;
+  --ink:#eceff4; --ink-2:#b8bfcb; --muted:#8a92a0;
+  --grid:#272c35; --axis:#3a404b; --line:rgba(255,255,255,.10);
+  --accent:#5b9cec; --accent-soft:#1c2a3d;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70;
+  --good:#5cc95c; --good-bg:#16301a; --warn:#e8b14a; --warn-bg:#33270f; --none:#a3abb8; --none-bg:#232832;
+  color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.75;margin:0;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 64px}
+.page{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr);gap:40px}
+@media (min-width:1100px){.page{grid-template-columns:210px minmax(0,1fr)}}
+header.cover{max-width:1180px;margin:0 auto;padding-block:48px 28px;border-bottom:1px solid var(--line);margin-bottom:32px}
+.eyebrow{font-family:var(--f-mono);font-size:12.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+h1{font-family:var(--f-head);font-weight:600;font-size:clamp(28px,4.2vw,42px);line-height:1.25;margin:0 0 12px;text-wrap:balance;letter-spacing:-.01em}
+.lede{font-size:18px;color:var(--ink-2);max-width:62ch;margin:0 0 24px}
+.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.meta div{background:var(--surface);padding:10px 14px;min-width:0}
+.meta dt{font-size:12px;color:var(--muted);letter-spacing:.04em}
+.meta dd{margin:0;font-family:var(--f-mono);font-size:13.5px;overflow-wrap:anywhere}
+nav.toc{font-size:14px;line-height:1.5}
+@media (min-width:1100px){nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 24px);align-self:start;max-height:calc(100vh - 48px);overflow:auto}}
+nav.toc p{font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin:0 0 8px}
+nav.toc ol{list-style:none;margin:0;padding:0;display:grid;gap:2px}
+nav.toc a{display:block;color:var(--ink-2);text-decoration:none;padding:4px 10px;border-left:2px solid var(--grid)}
+nav.toc a:hover{color:var(--ink);border-left-color:var(--accent)}
+nav.toc a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+nav.toc .sub a{padding-left:22px;font-size:13px}
+main{min-width:0;max-width:880px}
+section{margin-bottom:56px;scroll-margin-top:24px}
+h2{font-family:var(--f-head);font-weight:600;font-size:26px;line-height:1.35;margin:0 0 16px;text-wrap:balance;display:flex;gap:12px;align-items:baseline}
+h2 .sn{font-family:var(--f-mono);font-size:15px;color:var(--accent);font-weight:500}
+h3{font-family:var(--f-head);font-weight:600;font-size:19px;margin:32px 0 10px;text-wrap:balance}
+p{margin:0 0 14px;max-width:72ch}
+a{color:var(--accent)}
+code,.mono{font-family:var(--f-mono);font-size:.88em;background:var(--sunk);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+ul.list,ol.list{margin:0 0 16px;padding-left:1.3em;max-width:72ch}
+ul.list li,ol.list li{margin-bottom:6px}
+b,strong{font-weight:600}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:20px 0 24px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px;display:flex;flex-direction:column;gap:4px;min-width:0}
+.tile .lab{font-size:13px;color:var(--ink-2);line-height:1.45}
+.tile .val{font-family:var(--f-head);font-weight:600;font-size:30px;line-height:1.15;letter-spacing:-.01em}
+.tile .val small{font-size:15px;font-weight:500;color:var(--ink-2)}
+.tile .ctx{font-size:12.5px;color:var(--muted);line-height:1.45}
+.fig{margin:24px 0 32px;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px 18px 14px}
+.fig figcaption{font-family:var(--f-head);font-weight:600;font-size:15.5px;margin-bottom:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:baseline}
+.fig-n{font-family:var(--f-mono);font-size:12.5px;color:var(--accent);font-weight:500;letter-spacing:.04em}
+.fig-note{font-size:14px;color:var(--ink-2);margin:10px 0 0;max-width:none}
+.chart-wrap{overflow-x:auto}
+svg.chart{display:block;width:100%;min-width:560px;height:auto;font-family:var(--f-body)}
+svg.arch{min-width:720px}
+.grid{stroke:var(--grid);stroke-width:1}
+.axis{stroke:var(--axis);stroke-width:1}
+.rowsep{stroke:var(--grid);stroke-width:1}
+.refline{stroke:var(--ink-2);stroke-width:1.5;stroke-dasharray:4 3}
+.tk{fill:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.axl{fill:var(--ink-2);font-size:12.5px}
+.rl{fill:var(--ink);font-size:13px;font-weight:500}
+.rs{fill:var(--muted);font-size:11.5px}
+.dl{fill:var(--ink-2);font-size:12px;font-weight:500}
+.ln{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.ln.s1{stroke:var(--s1)} .ln.s2{stroke:var(--s2)} .ln.s3{stroke:var(--s3)}
+.dot{stroke:var(--surface);stroke-width:2}
+.dot.s1{fill:var(--s1)} .dot.s2{fill:var(--s2)} .dot.s3{fill:var(--s3)}
+.err{stroke-width:2;stroke-linecap:round}
+.err.s1{stroke:var(--s1)} .err.s2{stroke:var(--s2)} .err.s3{stroke:var(--s3)}
+.span{stroke:var(--axis);stroke-width:1.5}
+.ref-mark{fill:var(--ink);stroke:var(--surface);stroke-width:2}
+.hit{fill:transparent;cursor:crosshair}
+.hit:hover{fill:var(--ink);fill-opacity:.06}
+.abox{fill:var(--sunk);stroke:var(--axis);stroke-width:1}
+.abox.hl{fill:var(--accent-soft);stroke:var(--s1)}
+.abox.hl2{fill:var(--sunk);stroke:var(--s2)}
+.at1{fill:var(--ink);font-size:13.5px;font-weight:600}
+.at2{fill:var(--ink-2);font-size:11.5px;font-family:var(--f-mono)}
+.aline{fill:none;stroke:var(--ink-2);stroke-width:1.5}
+.ahead{fill:var(--ink-2)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin:0 0 6px;font-size:13px;color:var(--ink-2)}
+.key{display:inline-flex;align-items:center;gap:7px}
+.sw{width:14px;height:4px;border-radius:2px;display:inline-block}
+.sw.s1{background:var(--s1)} .sw.s2{background:var(--s2)} .sw.s3{background:var(--s3)}
+details.data{margin-top:10px;border-top:1px solid var(--grid);padding-top:8px}
+details.data summary{cursor:pointer;font-size:13px;color:var(--accent);width:max-content}
+details.data summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tbl-wrap{overflow-x:auto;margin:12px 0 18px;max-width:100%}
+table{border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums}
+caption{text-align:left;font-size:13px;color:var(--muted);padding-bottom:6px}
+th,td{padding:7px 10px;border-bottom:1px solid var(--grid);text-align:left;vertical-align:top}
+th{font-weight:600;font-size:12.5px;color:var(--ink-2);letter-spacing:.02em;background:var(--sunk);white-space:nowrap}
+td.n,th.n{text-align:right;font-family:var(--f-mono);font-size:13px;white-space:nowrap}
+tr.em td{background:var(--accent-soft);font-weight:600}
+.chip{display:inline-block;font-size:12px;font-weight:600;padding:1px 9px;border-radius:999px;white-space:nowrap;line-height:1.7}
+.chip.good{color:var(--good);background:var(--good-bg)} .chip.warn{color:var(--warn);background:var(--warn-bg)} .chip.none{color:var(--none);background:var(--none-bg)}
+.callout{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:6px;padding:14px 18px;margin:18px 0}
+.callout p:last-child{margin-bottom:0}
+pre{background:var(--sunk);border-radius:6px;padding:12px 14px;overflow-x:auto;font-family:var(--f-mono);font-size:13px;line-height:1.6;margin:0 0 16px}
+pre code{background:none;padding:0}
+.timeline{list-style:none;padding:0;margin:0 0 16px;display:grid;gap:0}
+.timeline li{display:grid;grid-template-columns:64px minmax(0,1fr);gap:14px;padding:10px 0;border-bottom:1px solid var(--grid)}
+.timeline .r{font-family:var(--f-mono);font-size:13px;color:var(--accent);padding-top:2px}
+.timeline .w{font-weight:600}
+.timeline p{margin:2px 0 0;font-size:14.5px;color:var(--ink-2)}
+.refs{font-size:14px;padding-left:1.3em}
+.refs li{margin-bottom:6px}
+#tip{position:fixed;pointer-events:none;z-index:20;background:var(--ink);color:var(--bg);font-size:12.5px;line-height:1.45;padding:6px 9px;border-radius:5px;max-width:300px;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+footer{max-width:1180px;margin:40px auto 0;border-top:1px solid var(--line);padding-top:16px;font-size:13px;color:var(--muted)}
+@media (prefers-reduced-motion:no-preference){nav.toc a{transition:color .15s,border-color .15s}}
+</style>
+<style>[hidden]{display:none!important}img{max-width:100%}</style>
+</head>
+<body>
+
+<div id="tip" hidden></div>
+<header class="cover">
+  <p class="eyebrow">實驗報告 · 方向 1 · CIFAR-100 · 第 1–9 輪</p>
+  <h1>校準式快慢視覺：權重共用遞迴 ViT 的自適應停止</h1>
+  <p class="lede">一個 Transformer 區塊反覆套用 8 次，每一步都讀出校準過的類別機率，再由一個以計算價格 λ 為條件的小型 MLP 決定何時停止。本報告整理 CIFAR-100 上 9 輪實驗的設定、結果與結論。</p>
+  <dl class="meta">
+    <div><dt>報告日期</dt><dd>2026-11-12</dd></div>
+    <div><dt>實驗期間</dt><dd>2026-11-06 → 11-12</dd></div>
+    <div><dt>硬體</dt><dd>NVIDIA H100 NVL ×1（另 Kaggle 2×T4）</dd></div>
+    <div><dt>軟體</dt><dd>torch 2.6.0+cu124 · bf16</dd></div>
+    <div><dt>程式版本</dt><dd>0.2.0 → 0.8.2</dd></div>
+    <div><dt>分支</dt><dd>claude/charming-ritchie-qycdtj</dd></div>
+  </dl>
+</header>
+
+<div class="page">
+<nav class="toc" aria-label="目錄">
+  <p>目錄</p>
+  <ol>
+    <li><a href="#summary">摘要</a></li>
+    <li><a href="#goals">1 研究目標與假說</a></li>
+    <li><a href="#method">2 方法</a></li>
+    <li><a href="#setup">3 實驗設定</a></li>
+    <li><a href="#backbone">4 骨幹與訓練配方</a></li>
+    <li class="sub"><a href="#calib">4.3 校準</a></li>
+    <li><a href="#halting">5 學習式停止策略</a></li>
+    <li class="sub"><a href="#features">5.3 特徵與資料來源</a></li>
+    <li><a href="#latency">6 實際延遲與吞吐量</a></li>
+    <li><a href="#discussion">7 討論</a></li>
+    <li><a href="#next">8 結論與下一步</a></li>
+    <li><a href="#appendix">附錄</a></li>
+  </ol>
+</nav>
+
+<main>
+<section id="summary">
+  <h2>摘要</h2>
+  <p>我們自行實作 bViT 式單區塊遞迴 ViT（1.86M 參數，T<sub>max</sub> = 8），每一步都以共用讀出頭輸出類別機率，訓練後在 held-out 集上為每一步擬合溫度，再於快取的每步輸出上離線訓練停止策略。主要發現：</p>
+  <div class="tiles">
+    <div class="tile"><span class="lab">最佳共用權重模型的 top-1</span><span class="val">62.14<small> ±0.31%</small></span><span class="ctx">平方步權重 + lr 5e-4；不共用的 8 區塊 ViT 為 62.63%（參數 7.7 倍）</span></div>
+    <div class="tile"><span class="lab">達到全深度準確率所需計算量</span><span class="val">43<small>%</small></span><span class="ctx">學習式停止策略；固定深度需 62%，max-prob 門檻需 83%</span></div>
+    <div class="tile"><span class="lab">AUC 相對固定深度</span><span class="val">+0.4～+1.1</span><span class="ctx">6 個骨幹全部勝出；相對門檻規則 +2～+3</span></div>
+    <div class="tile"><span class="lab">同準確率下的實際速度比</span><span class="val">0.48～1.08<small>×</small></span><span class="ctx">H100 上 FLOPs 的節省沒有轉成實際加速</span></div>
+  </div>
+  <ul class="list">
+    <li><b>每步損失權重是共用模型的關鍵。</b>均等權重讓共用模型在第 3–4 步就飽和；改為 w<sub>t</sub> ∝ (t+1)² 並把學習率降到 5e-4，最佳步從 59.34% 升到 62.14%，種子間差異也穩定下來。</li>
+    <li><b>只用機率統計量（S0）的 λ 條件化 MLP 就夠了。</b>它在所有骨幹上都勝過固定深度與 max-prob / 熵門檻，λ 掃描單調，成本不到單步遞迴的 0.03%。表徵特徵（S2、S3、S5）在 CIFAR 規模下沒有帶來好處。</li>
+    <li><b>溫度縮放有效但不是瓶頸。</b>模型普遍信心不足（T<sub>t</sub> ≈ 0.70–0.90），縮放後 ECE 2–3%。</li>
+    <li><b>實際時間沒有加速。</b>每步計算量只有 0.24 GFLOPs，GPU→CPU 同步與 kernel 發送開銷和計算同一量級。CUDA graphs 讓 batch 1 快 3–4 倍，但自適應版本仍比同準確率的固定深度慢。</li>
+  </ul>
+</section>
+
+<section id="goals">
+  <h2><span class="sn">1</span>研究目標與假說</h2>
+  <p>目標是用單一個權重共用的遞迴模型涵蓋整條「準確率–計算量」曲線：簡單的圖早停、難的圖多想，並讓停止決策所依據的信心經過校準。規格見 <code>TODO.md</code>。三個假說在本階段的檢驗狀態如下。</p>
+  <div class="tbl-wrap"><table class=""><thead><tr><th>假說</th><th>內容</th><th>本階段狀態</th></tr></thead><tbody><tr class=""><td>H1 效率</td><td>校準且以 λ 為條件的停止策略，在準確率–計算量曲線上優於熵門檻、max-prob 門檻、ACT 與固定早退</td><td><span class="chip warn">部分支持</span> FLOPs 上勝過門檻與固定深度；尚未與 ACT / RL 比較；實際延遲未改善</td></tr><tr class=""><td>H2 穩健</td><td>相同平均計算量下，把遞迴集中給難圖，能提升 ImageNet-C/-R/-A 的表現與校準</td><td><span class="chip none">未檢驗</span> 尚未做分布偏移資料</td></tr><tr class=""><td>H3 像人類</td><td>停止步數與人類最短觀看時間（MVT）正相關，並與 IT 物體解答時間吻合</td><td><span class="chip none">未檢驗</span> 需 ImageNet 規模與 MVT 資料</td></tr></tbody></table></div>
+</section>
+
+<section id="method">
+  <h2><span class="sn">2</span>方法</h2>
+  <figure class="fig" id="fig-arch"><figcaption><span class="fig-n">架構</span>共用遞迴區塊、每步讀出與停止策略</figcaption>
+    <div class="chart-wrap"><svg viewBox="0 0 900 250" class="chart arch" role="img" aria-labelledby="arch-t">
+<title id="arch-t">系統架構：共用遞迴區塊、每步讀出、停止策略</title>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahead"/></marker></defs>
+<rect class="abox " x="10" y="40" width="100" height="62" rx="6"/><text class="at1" x="60.0" y="67.0" text-anchor="middle">影像</text><text class="at2" x="60.0" y="85.0" text-anchor="middle">32×32×3</text>
+<path class="aline" d="M110,71 L140,71" marker-end="url(#ah)"/>
+<rect class="abox " x="142" y="40" width="120" height="62" rx="6"/><text class="at1" x="202.0" y="67.0" text-anchor="middle">Patch 嵌入</text><text class="at2" x="202.0" y="85.0" text-anchor="middle">4×4 → 64 + CLS</text>
+<path class="aline" d="M262,71 L292,71" marker-end="url(#ah)"/>
+<rect class="abox hl" x="294" y="30" width="170" height="82" rx="6"/><text class="at1" x="379.0" y="67.0" text-anchor="middle">共用 Transformer 區塊</text><text class="at2" x="379.0" y="85.0" text-anchor="middle">dim 384 · 6 heads</text>
+<text class="at2" x="379" y="100" text-anchor="middle">第 t 步，t = 0…7</text>
+<path class="aline" d="M464,71 L494,71" marker-end="url(#ah)"/>
+<rect class="abox " x="496" y="40" width="160" height="62" rx="6"/><text class="at1" x="576.0" y="67.0" text-anchor="middle">共用讀出頭</text><text class="at2" x="576.0" y="85.0" text-anchor="middle">LN(CLS_t) + step_emb(t)</text>
+<path class="aline" d="M656,71 L686,71" marker-end="url(#ah)"/>
+<rect class="abox " x="688" y="40" width="92" height="62" rx="6"/><text class="at1" x="734.0" y="67.0" text-anchor="middle">÷ T_t</text><text class="at2" x="734.0" y="85.0" text-anchor="middle">每步溫度</text>
+<path class="aline" d="M780,71 L810,71" marker-end="url(#ah)"/>
+<text class="at1" x="848" y="76" text-anchor="middle">p_t</text>
+<path class="aline" d="M734,102 L734,150" marker-end="url(#ah)"/>
+<rect class="abox hl2" x="600" y="152" width="200" height="62" rx="6"/><text class="at1" x="700.0" y="179.0" text-anchor="middle">停止策略 MLP</text><text class="at2" x="700.0" y="197.0" text-anchor="middle">S0 機率統計量 + log λ</text>
+<text class="at2" x="530" y="176" text-anchor="end">λ（計算價格）</text>
+<path class="aline" d="M536,172 L598,172" marker-end="url(#ah)"/>
+<path class="aline" d="M800,183 L846,183" marker-end="url(#ah)"/>
+<text class="at1" x="868" y="188" text-anchor="middle">停</text>
+<path class="aline" d="M600,198 L379,198 L379,116" marker-end="url(#ah)"/>
+<text class="at2" x="490" y="216" text-anchor="middle">繼續 → 再算一步</text>
+</svg></div>
+    <p class="fig-note">t = 0 是第一次通過遞迴區塊後的狀態。讀出頭與溫度都依步數區分，但只有溫度是每步一個參數；分類頭本身共用。</p>
+  </figure>
+
+  <h3>2.1 骨幹：bViT 式遞迴 ViT</h3>
+  <p>bViT（Byra et al., 2026）沒有公開程式碼，依論文描述自行實作於 <code>fsv/models/bvit.py</code>：pre-norm Transformer 區塊、GELU、無 drop path。為 32×32 輸入與本專案需求所做的調整：patch size 4（64 個 patch + CLS）、T<sub>max</sub> = 8（論文 ImageNet 為 12）、一律 LayerNorm（論文為 RMSNorm）、每一步都讀出並計算損失（論文只在最後一步）。讀出頭為 <code>head(LN(CLS_t) + step_emb(t))</code>，所有步共用。設定 <code>n_blocks = 8</code> 時就是不共用權重、每層後有出口的 ViT 對照組。</p>
+  <div class="tbl-wrap"><table class=""><thead><tr><th>模型</th><th class="n">dim / heads</th><th class="n">參數</th><th class="n">每步 GFLOPs</th><th class="n">全深度 GFLOPs</th></tr></thead><tbody><tr class=""><td>bViT-S</td><td class="n">384 / 6</td><td class="n">1.86M</td><td class="n">0.237</td><td class="n">1.895</td></tr><tr class=""><td>bViT-B</td><td class="n">768 / 12</td><td class="n">7.26M</td><td class="n">0.934</td><td class="n">7.471</td></tr><tr class=""><td>ViT-S 8 區塊（不共用）</td><td class="n">384 / 6</td><td class="n">14.28M</td><td class="n">0.237</td><td class="n">1.895</td></tr></tbody></table></div>
+
+  <h3>2.2 Stage A：每步損失</h3>
+  <pre><code>L = Σ_t w_t · [ CE(p_t, y) + β · Brier(p_t, y) ]
+    + γ · L_conf                              # Gatekeeper 式信心損失
+    + δ · mean_(t&lt;T) KL( sg(p_T) ‖ p_t )      # 最後一步自我蒸餾</code></pre>
+  <p>β = 1、γ = 0.5、δ = 0.5。L<sub>conf</sub> 依 Gatekeeper（Rabanser et al., 2025）的概念：答對的樣本維持交叉熵，答錯的樣本以 KL(U ‖ p) 推向均勻分布，兩者以 α = 0.5 混合（原論文的確切權重仍待確認，TODO-2）。步權重 w<sub>t</sub> 比較三種：均等、線性 ∝ t+1、平方 ∝ (t+1)²，皆正規化為總和 1。</p>
+
+  <h3>2.3 Stage B：每步溫度縮放</h3>
+  <p>骨幹凍結後，在 held-out 5,000 張上以 LBFGS 為每一步各擬合一個溫度 T<sub>t</sub>（<code>fsv/calibration.py</code>）。之後所有停止規則與策略都使用縮放後的機率。</p>
+
+  <h3>2.4 Stage C：停止策略</h3>
+  <p>骨幹凍結後先快取每一步的 logits 與特徵，所有停止策略都在快取上離線訓練（一組實驗數分鐘）。策略為 2 層 MLP（hidden 64，GELU），每步輸出停止 logit，推論時在第一個 sigmoid &gt; 0.5 的步停止。</p>
+  <div class="tbl-wrap"><table class=""><thead><tr><th>代號</th><th>輸入特徵</th><th>說明</th></tr></thead><tbody><tr class=""><td>S0</td><td>機率統計量</td><td>top-5 機率、正規化熵、top-1 與 top-2 差距、top-1 是否改變、KL(p<sub>t</sub> ‖ p<sub>t−1</sub>)、top-1 連續不變的步數、步數 one-hot</td></tr><tr class=""><td>S2</td><td>S0 + CLS 特徵</td><td>384 維原始特徵；MLP 第一層即學習式降維（相當於 S6）</td></tr><tr class=""><td>S3</td><td>S0 + 收斂訊號</td><td>CLS 與 pooled 特徵：與前一步的 cos、相對變化量、與第 0 步的 cos</td></tr><tr class=""><td>S5</td><td>S0 + 隨機投影</td><td>固定高斯矩陣 384 → 64</td></tr></tbody></table></div>
+  <div class="tbl-wrap"><table class=""><thead><tr><th>目標</th><th>定義</th></tr></thead><tbody><tr class=""><td><code>reward_acc</code></td><td>λ 條件化，最小化 E<sub>π</sub>[ 1[第 t 步答錯] + λ(t+1)/T ]。每步輸出都已快取，期望值可精確計算，不需 RL 取樣</td></tr><tr class=""><td><code>reward</code></td><td>同上，以 Brier(p<sub>t</sub>, y) 取代 0/1 錯誤（對應 Stage C 的 RL 獎勵設計）</td></tr><tr class=""><td><code>oracle_any</code></td><td>監督式 BCE；標籤 t* = 最早一個之後都答對的步；每步都錯的樣本可在任何步停</td></tr><tr class=""><td><code>oracle_full</code></td><td>同上，但每步都錯的樣本標記為跑滿 T<sub>max</sub></td></tr></tbody></table></div>
+  <p>λ 在訓練時對每個樣本從 log-uniform [10<sup>−4</sup>, 10] 抽樣，以正規化後的 log λ 輸入 MLP；推論時掃描 λ 得到整條曲線。監督式策略則掃描停止門檻。輸出形式比較 <b>O1</b>（每步輸出停止機率）與 <b>O3</b>（在第 k 步一次預測每張圖的總步數，<code>StepMLP</code>，以精確期望獎勵訓練）。</p>
+
+  <h3>2.5 評估指標</h3>
+  <ul class="list">
+    <li><b>AUC</b>：準確率–計算量曲線在 [第 0 步, 第 7 步] GFLOPs 區間的平均 top-1。以「全部在第 0 步停」為左端錨點，錨點與方法最便宜點之間以直線連接（隨機混合兩種設定即可達到）。</li>
+    <li><b>acc @ t<sub>k</sub></b>：在固定深度第 k 步的計算量下可達到的最佳準確率。</li>
+    <li><b>cost@full / cost@best</b>：達到全深度 / 最佳固定深度準確率所需的平均計算量，以全深度計算量的百分比表示。</li>
+    <li><b>Oracle</b>：知道標籤、在 t* 停止的上限參考，不是可實現的方法。</li>
+    <li><b>校準</b>：ECE（15 bins）、NLL、Brier、AURC（風險–覆蓋曲線下面積）。</li>
+    <li><b>實際時間</b>：同一行程內連續量測固定深度與自適應版本的 batch 256 吞吐量（含 batch compaction）與 batch 1 延遲（500 張，取中位數）。速度比 = 自適應吞吐量 ÷ 同準確率的固定深度吞吐量。</li>
+  </ul>
+</section>
+
+<section id="setup">
+  <h2><span class="sn">3</span>實驗設定</h2>
+  <h3>3.1 資料</h3>
+  <p>CIFAR-100（Hugging Face parquet 鏡像）。從 50,000 張訓練集固定切出 5,000 張 held-out，用於溫度縮放、停止策略訓練與模型選擇；其餘 45,000 張訓練骨幹。所有報告數字均為 10,000 張測試集。</p>
+  <h3>3.2 訓練配方</h3>
+  <div class="tbl-wrap"><table class=""><thead><tr><th>項目</th><th>設定</th></tr></thead><tbody><tr class=""><td>訓練長度</td><td>200 epochs，batch 256</td></tr><tr class=""><td>最佳化器</td><td>AdamW（β = 0.9, 0.999），weight decay 0.05，梯度裁剪 1.0</td></tr><tr class=""><td>學習率</td><td>1e-3（第 5 輪起另測 5e-4），10 epochs 線性 warmup 後 cosine 降到 1e-5</td></tr><tr class=""><td>資料增強</td><td>RandomCrop 32（padding 4）、水平翻轉、RandAugment(2, 9)、Random Erasing 0.25</td></tr><tr class=""><td>混合</td><td>Mixup α = 0.8、CutMix α = 1.0，每個 batch 都套用</td></tr><tr class=""><td>精度</td><td>bf16 autocast（H100）；Kaggle 為 fp16 + GradScaler</td></tr><tr class=""><td>損失</td><td>β = 1、γ = 0.5、δ = 0.5、Gatekeeper α = 0.5；步權重依實驗而定</td></tr></tbody></table></div>
+  <h3>3.3 硬體與流程</h3>
+  <p>第 1 次執行在 Kaggle（2×T4，DDP，fp16），之後全部在使用者的單張 H100 NVL 上執行，CPU 上限 8 核（DataLoader 7 個 worker）。一次 200 epochs 訓練約 10–22 分鐘。使用者以 <code>scripts/run_experiment.py</code> 執行登記在 <code>fsv/experiments.py</code> 的實驗，再以 <code>scripts/summarize.py</code> 輸出摘要貼回；原始摘要存於 <code>results/round*_h100/</code>。主要設定使用 3 個骨幹種子（0, 1, 2），停止策略另用 3 個策略種子；單一種子的結果在表中註明。</p>
+</section>
+
+<section id="backbone">
+  <h2><span class="sn">4</span>骨幹與訓練配方</h2>
+  <h3>4.1 每步準確率</h3>
+  <figure class="fig" id="fig-1"><figcaption><span class="fig-n">圖 1</span>每一步讀出的測試集 top-1（3 個種子平均）</figcaption>
+<div class="chart-wrap"><div class="legend"><span class="key"><i class="sw s1"></i>bViT-S 平方權重，lr 5e-4</span><span class="key"><i class="sw s2"></i>bViT-S 均等權重，lr 1e-3</span><span class="key"><i class="sw s3"></i>ViT-S 8 區塊（不共用）</span></div><svg viewBox="0 0 680 330" role="img" aria-labelledby="c1-t" class="chart">
+<title id="c1-t">每步測試 top-1</title>
+<line class="grid" x1="52" x2="588" y1="284.0" y2="284.0"/>
+<text class="tk" x="44" y="288.0" text-anchor="end">20%</text>
+<line class="grid" x1="52" x2="588" y1="226.2" y2="226.2"/>
+<text class="tk" x="44" y="230.2" text-anchor="end">30%</text>
+<line class="grid" x1="52" x2="588" y1="168.3" y2="168.3"/>
+<text class="tk" x="44" y="172.3" text-anchor="end">40%</text>
+<line class="grid" x1="52" x2="588" y1="110.5" y2="110.5"/>
+<text class="tk" x="44" y="114.5" text-anchor="end">50%</text>
+<line class="grid" x1="52" x2="588" y1="52.7" y2="52.7"/>
+<text class="tk" x="44" y="56.7" text-anchor="end">60%</text>
+<line class="axis" x1="52" x2="588" y1="284" y2="284"/>
+<line class="axis" x1="73.2" x2="73.2" y1="284" y2="289"/>
+<text class="tk" x="73.2" y="303" text-anchor="middle">t=0</text>
+<line class="axis" x1="143.7" x2="143.7" y1="284" y2="289"/>
+<text class="tk" x="143.7" y="303" text-anchor="middle">t=1</text>
+<line class="axis" x1="214.2" x2="214.2" y1="284" y2="289"/>
+<text class="tk" x="214.2" y="303" text-anchor="middle">t=2</text>
+<line class="axis" x1="284.7" x2="284.7" y1="284" y2="289"/>
+<text class="tk" x="284.7" y="303" text-anchor="middle">t=3</text>
+<line class="axis" x1="355.3" x2="355.3" y1="284" y2="289"/>
+<text class="tk" x="355.3" y="303" text-anchor="middle">t=4</text>
+<line class="axis" x1="425.8" x2="425.8" y1="284" y2="289"/>
+<text class="tk" x="425.8" y="303" text-anchor="middle">t=5</text>
+<line class="axis" x1="496.3" x2="496.3" y1="284" y2="289"/>
+<text class="tk" x="496.3" y="303" text-anchor="middle">t=6</text>
+<line class="axis" x1="566.8" x2="566.8" y1="284" y2="289"/>
+<text class="tk" x="566.8" y="303" text-anchor="middle">t=7</text>
+<text class="axl" x="320.0" y="322" text-anchor="middle">遞迴步數 t（每步 0.237 GFLOPs）</text>
+<text class="axl" transform="translate(14 151.0) rotate(-90)" text-anchor="middle">top-1</text>
+
+<path class="ln s2" d="M73.2,209.3 L143.7,86.1 L214.2,61.5 L284.7,57.2 L355.3,56.5 L425.8,57.2 L496.3,57.9 L566.8,59.3"/>
+<path class="ln s3" d="M73.2,208.5 L143.7,92.2 L214.2,58.6 L284.7,45.3 L355.3,41.1 L425.8,39.4 L496.3,38.5 L566.8,37.5"/>
+<path class="ln s1" d="M73.2,255.2 L143.7,98.0 L214.2,56.2 L284.7,44.6 L355.3,41.3 L425.8,40.4 L496.3,40.7 L566.8,41.5"/>
+<circle class="dot s2" cx="73.2" cy="209.3" r="4"/>
+<circle class="hit" cx="73.2" cy="209.3" r="11" data-tip="bViT-S 均等權重，lr 1e-3 · t=0：32.91 ± 0.43%（0.239 GFLOPs）"/>
+<circle class="dot s2" cx="143.7" cy="86.1" r="4"/>
+<circle class="hit" cx="143.7" cy="86.1" r="11" data-tip="bViT-S 均等權重，lr 1e-3 · t=1：54.23 ± 0.27%（0.476 GFLOPs）"/>
+<circle class="dot s2" cx="214.2" cy="61.5" r="4"/>
+<circle class="hit" cx="214.2" cy="61.5" r="11" data-tip="bViT-S 均等權重，lr 1e-3 · t=2：58.48 ± 0.08%（0.712 GFLOPs）"/>
+<circle class="dot s2" cx="284.7" cy="57.2" r="4"/>
+<circle class="hit" cx="284.7" cy="57.2" r="11" data-tip="bViT-S 均等權重，lr 1e-3 · t=3：59.22 ± 0.08%（0.949 GFLOPs）"/>
+<circle class="dot s2" cx="355.3" cy="56.5" r="4"/>
+<circle class="hit" cx="355.3" cy="56.5" r="11" data-tip="bViT-S 均等權重，lr 1e-3 · t=4：59.34 ± 0.07%（1.185 GFLOPs）"/>
+<circle class="dot s2" cx="425.8" cy="57.2" r="4"/>
+<circle class="hit" cx="425.8" cy="57.2" r="11" data-tip="bViT-S 均等權重，lr 1e-3 · t=5：59.22 ± 0.18%（1.422 GFLOPs）"/>
+<circle class="dot s2" cx="496.3" cy="57.9" r="4"/>
+<circle class="hit" cx="496.3" cy="57.9" r="11" data-tip="bViT-S 均等權重，lr 1e-3 · t=6：59.10 ± 0.20%（1.659 GFLOPs）"/>
+<circle class="dot s2" cx="566.8" cy="59.3" r="4"/>
+<circle class="hit" cx="566.8" cy="59.3" r="11" data-tip="bViT-S 均等權重，lr 1e-3 · t=7：58.85 ± 0.31%（1.895 GFLOPs）"/>
+<circle class="dot s3" cx="73.2" cy="208.5" r="4"/>
+<circle class="hit" cx="73.2" cy="208.5" r="11" data-tip="ViT-S 8 區塊（不共用） · t=0：33.05 ± 0.19%（0.239 GFLOPs）"/>
+<circle class="dot s3" cx="143.7" cy="92.2" r="4"/>
+<circle class="hit" cx="143.7" cy="92.2" r="11" data-tip="ViT-S 8 區塊（不共用） · t=1：53.17 ± 0.45%（0.476 GFLOPs）"/>
+<circle class="dot s3" cx="214.2" cy="58.6" r="4"/>
+<circle class="hit" cx="214.2" cy="58.6" r="11" data-tip="ViT-S 8 區塊（不共用） · t=2：58.98 ± 0.49%（0.712 GFLOPs）"/>
+<circle class="dot s3" cx="284.7" cy="45.3" r="4"/>
+<circle class="hit" cx="284.7" cy="45.3" r="11" data-tip="ViT-S 8 區塊（不共用） · t=3：61.28 ± 0.11%（0.949 GFLOPs）"/>
+<circle class="dot s3" cx="355.3" cy="41.1" r="4"/>
+<circle class="hit" cx="355.3" cy="41.1" r="11" data-tip="ViT-S 8 區塊（不共用） · t=4：62.01 ± 0.54%（1.185 GFLOPs）"/>
+<circle class="dot s3" cx="425.8" cy="39.4" r="4"/>
+<circle class="hit" cx="425.8" cy="39.4" r="11" data-tip="ViT-S 8 區塊（不共用） · t=5：62.30 ± 0.64%（1.422 GFLOPs）"/>
+<circle class="dot s3" cx="496.3" cy="38.5" r="4"/>
+<circle class="hit" cx="496.3" cy="38.5" r="11" data-tip="ViT-S 8 區塊（不共用） · t=6：62.45 ± 0.53%（1.659 GFLOPs）"/>
+<circle class="dot s3" cx="566.8" cy="37.5" r="4"/>
+<circle class="hit" cx="566.8" cy="37.5" r="11" data-tip="ViT-S 8 區塊（不共用） · t=7：62.62 ± 0.71%（1.895 GFLOPs）"/>
+<circle class="dot s1" cx="73.2" cy="255.2" r="4"/>
+<circle class="hit" cx="73.2" cy="255.2" r="11" data-tip="bViT-S 平方權重，lr 5e-4 · t=0：24.98 ± 0.84%（0.239 GFLOPs）"/>
+<circle class="dot s1" cx="143.7" cy="98.0" r="4"/>
+<circle class="hit" cx="143.7" cy="98.0" r="11" data-tip="bViT-S 平方權重，lr 5e-4 · t=1：52.16 ± 0.44%（0.476 GFLOPs）"/>
+<circle class="dot s1" cx="214.2" cy="56.2" r="4"/>
+<circle class="hit" cx="214.2" cy="56.2" r="11" data-tip="bViT-S 平方權重，lr 5e-4 · t=2：59.40 ± 0.44%（0.712 GFLOPs）"/>
+<circle class="dot s1" cx="284.7" cy="44.6" r="4"/>
+<circle class="hit" cx="284.7" cy="44.6" r="11" data-tip="bViT-S 平方權重，lr 5e-4 · t=3：61.40 ± 0.64%（0.949 GFLOPs）"/>
+<circle class="dot s1" cx="355.3" cy="41.3" r="4"/>
+<circle class="hit" cx="355.3" cy="41.3" r="11" data-tip="bViT-S 平方權重，lr 5e-4 · t=4：61.97 ± 0.40%（1.185 GFLOPs）"/>
+<circle class="dot s1" cx="425.8" cy="40.4" r="4"/>
+<circle class="hit" cx="425.8" cy="40.4" r="11" data-tip="bViT-S 平方權重，lr 5e-4 · t=5：62.12 ± 0.27%（1.422 GFLOPs）"/>
+<circle class="dot s1" cx="496.3" cy="40.7" r="4"/>
+<circle class="hit" cx="496.3" cy="40.7" r="11" data-tip="bViT-S 平方權重，lr 5e-4 · t=6：62.07 ± 0.35%（1.659 GFLOPs）"/>
+<circle class="dot s1" cx="566.8" cy="41.5" r="4"/>
+<circle class="hit" cx="566.8" cy="41.5" r="11" data-tip="bViT-S 平方權重，lr 5e-4 · t=7：61.93 ± 0.24%（1.895 GFLOPs）"/>
+</svg></div>
+<p class="fig-note">均等權重的共用模型在 t=4 就到頂（59.3%），之後下滑；平方步權重加 lr 5e-4 讓第 5 步達到 62.1%，與 8 個不共用區塊（62.6%）只差 0.5 個百分點，參數只有 1/7.7。代價是第 0 步從 33% 降到 25%。</p>
+<details class="data"><summary>數據表</summary><div class="tbl-wrap"><table class=""><thead><tr><th>步數</th><th class="n">t=0</th><th class="n">t=1</th><th class="n">t=2</th><th class="n">t=3</th><th class="n">t=4</th><th class="n">t=5</th><th class="n">t=6</th><th class="n">t=7</th></tr></thead><tbody><tr class=""><td>bViT-S 均等權重，lr 1e-3</td><td class="n">32.91±0.43</td><td class="n">54.23±0.27</td><td class="n">58.48±0.08</td><td class="n">59.22±0.08</td><td class="n">59.34±0.07</td><td class="n">59.22±0.18</td><td class="n">59.10±0.20</td><td class="n">58.85±0.31</td></tr><tr class=""><td>bViT-S 平方權重，lr 5e-4</td><td class="n">24.98±0.84</td><td class="n">52.16±0.44</td><td class="n">59.40±0.44</td><td class="n">61.40±0.64</td><td class="n">61.97±0.40</td><td class="n">62.12±0.27</td><td class="n">62.07±0.35</td><td class="n">61.93±0.24</td></tr><tr class=""><td>ViT-S 8 區塊（不共用）</td><td class="n">33.05±0.19</td><td class="n">53.17±0.45</td><td class="n">58.98±0.49</td><td class="n">61.28±0.11</td><td class="n">62.01±0.54</td><td class="n">62.30±0.64</td><td class="n">62.45±0.53</td><td class="n">62.62±0.71</td></tr><tr class=""><td>累計 GFLOPs</td><td class="n">0.239</td><td class="n">0.476</td><td class="n">0.712</td><td class="n">0.949</td><td class="n">1.185</td><td class="n">1.422</td><td class="n">1.659</td><td class="n">1.895</td></tr></tbody></table></div></details>
+</figure>
+  <h3>4.2 配方消融</h3>
+  <p>第 1–6 輪的主要問題是「為什麼共用權重的模型在第 3–4 步就停止進步」。依序排除了訓練精度、增強強度、模型寬度、時間嵌入與輸入注入，最後找到的原因是每步損失權重：均等權重下前面的步佔了大部分梯度，共用區塊被拉去服務早期讀出。</p>
+  <figure class="fig" id="fig-2"><figcaption><span class="fig-n">圖 2</span>訓練配方消融：最佳步 top-1（橫線為 ±1 標準差）</figcaption>
+<div class="chart-wrap"><div class="legend"><span class="key"><i class="sw s1"></i>共用權重（1.86M 參數，bViT-B 除外）</span><span class="key"><i class="sw s3"></i>不共用的 8 區塊 ViT</span></div><svg viewBox="0 0 680 636" role="img" aria-labelledby="c2-t" class="chart">
+<title id="c2-t">訓練配方消融</title>
+<line class="grid" x1="230.0" x2="230.0" y1="14" y2="590"/>
+<text class="tk" x="230.0" y="608" text-anchor="middle">56%</text>
+<line class="grid" x1="281.2" x2="281.2" y1="14" y2="590"/>
+<text class="tk" x="281.2" y="608" text-anchor="middle">57%</text>
+<line class="grid" x1="332.5" x2="332.5" y1="14" y2="590"/>
+<text class="tk" x="332.5" y="608" text-anchor="middle">58%</text>
+<line class="grid" x1="383.8" x2="383.8" y1="14" y2="590"/>
+<text class="tk" x="383.8" y="608" text-anchor="middle">59%</text>
+<line class="grid" x1="435.0" x2="435.0" y1="14" y2="590"/>
+<text class="tk" x="435.0" y="608" text-anchor="middle">60%</text>
+<line class="grid" x1="486.2" x2="486.2" y1="14" y2="590"/>
+<text class="tk" x="486.2" y="608" text-anchor="middle">61%</text>
+<line class="grid" x1="537.5" x2="537.5" y1="14" y2="590"/>
+<text class="tk" x="537.5" y="608" text-anchor="middle">62%</text>
+<line class="grid" x1="588.8" x2="588.8" y1="14" y2="590"/>
+<text class="tk" x="588.8" y="608" text-anchor="middle">63%</text>
+<line class="grid" x1="640.0" x2="640.0" y1="14" y2="590"/>
+<text class="tk" x="640.0" y="608" text-anchor="middle">64%</text>
+<text class="axl" x="435.0" y="628" text-anchor="middle">最佳步測試 top-1</text>
+<text class="rl" x="216" y="30.0" text-anchor="end">bViT-S 基準</text>
+<text class="rs" x="216" y="43.0" text-anchor="end">均等權重 · lr 1e-3 · 3 種子</text>
+<line class="err s1" x1="397.6" x2="404.8" y1="32.0" y2="32.0"/>
+<circle class="dot s1" cx="401.2" cy="32.0" r="5"/>
+<circle class="hit" cx="401.2" cy="32.0" r="12" data-tip="bViT-S 基準：59.34% ± 0.07"/>
+<line class="rowsep" x1="8" x2="640" y1="50.0" y2="50.0"/>
+<text class="rl" x="216" y="66.0" text-anchor="end">減輕增強</text>
+<text class="rs" x="216" y="79.0" text-anchor="end">mixup 0.2，無 CutMix / erasing</text>
+<circle class="dot s1" cx="278.7" cy="68.0" r="5"/>
+<circle class="hit" cx="278.7" cy="68.0" r="12" data-tip="減輕增強：56.95%（1 個種子）"/>
+<line class="rowsep" x1="8" x2="640" y1="86.0" y2="86.0"/>
+<text class="rl" x="216" y="102.0" text-anchor="end">bViT-B（dim 768）</text>
+<text class="rs" x="216" y="115.0" text-anchor="end">4× FLOPs · 7.26M 參數</text>
+<circle class="dot s1" cx="334.0" cy="104.0" r="5"/>
+<circle class="hit" cx="334.0" cy="104.0" r="12" data-tip="bViT-B（dim 768）：58.03%（1 個種子）"/>
+<line class="rowsep" x1="8" x2="640" y1="122.0" y2="122.0"/>
+<text class="rl" x="216" y="144.0" text-anchor="end">fp16 訓練</text>
+<circle class="dot s1" cx="407.8" cy="140.0" r="5"/>
+<circle class="hit" cx="407.8" cy="140.0" r="12" data-tip="fp16 訓練：59.47%（1 個種子）"/>
+<line class="rowsep" x1="8" x2="640" y1="158.0" y2="158.0"/>
+<text class="rl" x="216" y="174.0" text-anchor="end">無自我蒸餾</text>
+<text class="rs" x="216" y="187.0" text-anchor="end">δ = 0</text>
+<circle class="dot s1" cx="408.9" cy="176.0" r="5"/>
+<circle class="hit" cx="408.9" cy="176.0" r="12" data-tip="無自我蒸餾：59.49%（1 個種子）"/>
+<line class="rowsep" x1="8" x2="640" y1="194.0" y2="194.0"/>
+<text class="rl" x="216" y="210.0" text-anchor="end">時間嵌入</text>
+<text class="rs" x="216" y="223.0" text-anchor="end">bViT-TE</text>
+<circle class="dot s1" cx="415.0" cy="212.0" r="5"/>
+<circle class="hit" cx="415.0" cy="212.0" r="12" data-tip="時間嵌入：59.61%（1 個種子）"/>
+<line class="rowsep" x1="8" x2="640" y1="230.0" y2="230.0"/>
+<text class="rl" x="216" y="246.0" text-anchor="end">2 組 mixup</text>
+<text class="rs" x="216" y="259.0" text-anchor="end">模擬 Kaggle 雙 GPU</text>
+<circle class="dot s1" cx="418.1" cy="248.0" r="5"/>
+<circle class="hit" cx="418.1" cy="248.0" r="12" data-tip="2 組 mixup：59.67%（1 個種子）"/>
+<line class="rowsep" x1="8" x2="640" y1="266.0" y2="266.0"/>
+<text class="rl" x="216" y="288.0" text-anchor="end">輸入重新注入</text>
+<circle class="dot s1" cx="422.2" cy="284.0" r="5"/>
+<circle class="hit" cx="422.2" cy="284.0" r="12" data-tip="輸入重新注入：59.75%（1 個種子）"/>
+<line class="rowsep" x1="8" x2="640" y1="302.0" y2="302.0"/>
+<text class="rl" x="216" y="318.0" text-anchor="end">均等權重 · lr 5e-4</text>
+<text class="rs" x="216" y="331.0" text-anchor="end">3 種子</text>
+<line class="err s1" x1="396.6" x2="482.7" y1="320.0" y2="320.0"/>
+<circle class="dot s1" cx="439.6" cy="320.0" r="5"/>
+<circle class="hit" cx="439.6" cy="320.0" r="12" data-tip="均等權重 · lr 5e-4：60.09% ± 0.84"/>
+<line class="rowsep" x1="8" x2="640" y1="338.0" y2="338.0"/>
+<text class="rl" x="216" y="354.0" text-anchor="end">線性權重 · lr 1e-3</text>
+<text class="rs" x="216" y="367.0" text-anchor="end">3 種子</text>
+<line class="err s1" x1="403.7" x2="565.7" y1="356.0" y2="356.0"/>
+<circle class="dot s1" cx="484.7" cy="356.0" r="5"/>
+<circle class="hit" cx="484.7" cy="356.0" r="12" data-tip="線性權重 · lr 1e-3：60.97% ± 1.58"/>
+<line class="rowsep" x1="8" x2="640" y1="374.0" y2="374.0"/>
+<text class="rl" x="216" y="390.0" text-anchor="end">線性權重 · lr 5e-4</text>
+<text class="rs" x="216" y="403.0" text-anchor="end">3 種子</text>
+<line class="err s1" x1="480.6" x2="517.5" y1="392.0" y2="392.0"/>
+<circle class="dot s1" cx="499.1" cy="392.0" r="5"/>
+<circle class="hit" cx="499.1" cy="392.0" r="12" data-tip="線性權重 · lr 5e-4：61.25% ± 0.36"/>
+<line class="rowsep" x1="8" x2="640" y1="410.0" y2="410.0"/>
+<text class="rl" x="216" y="426.0" text-anchor="end">平方權重 · lr 1e-3</text>
+<text class="rs" x="216" y="439.0" text-anchor="end">3 種子</text>
+<line class="err s1" x1="453.4" x2="566.2" y1="428.0" y2="428.0"/>
+<circle class="dot s1" cx="509.8" cy="428.0" r="5"/>
+<circle class="hit" cx="509.8" cy="428.0" r="12" data-tip="平方權重 · lr 1e-3：61.46% ± 1.10"/>
+<line class="rowsep" x1="8" x2="640" y1="446.0" y2="446.0"/>
+<text class="rl" x="216" y="468.0" text-anchor="end">線性 + 時間嵌入 + 注入</text>
+<circle class="dot s1" cx="522.6" cy="464.0" r="5"/>
+<circle class="hit" cx="522.6" cy="464.0" r="12" data-tip="線性 + 時間嵌入 + 注入：61.71%（1 個種子）"/>
+<line class="rowsep" x1="8" x2="640" y1="482.0" y2="482.0"/>
+<text class="rl" x="216" y="498.0" text-anchor="end">平方權重 · lr 5e-4</text>
+<text class="rs" x="216" y="511.0" text-anchor="end">3 種子 · 選用設定</text>
+<line class="err s1" x1="528.8" x2="560.6" y1="500.0" y2="500.0"/>
+<circle class="dot s1" cx="544.7" cy="500.0" r="5"/>
+<circle class="hit" cx="544.7" cy="500.0" r="12" data-tip="平方權重 · lr 5e-4：62.14% ± 0.31"/>
+<line class="rowsep" x1="8" x2="640" y1="518.0" y2="518.0"/>
+<text class="rl" x="216" y="534.0" text-anchor="end">ViT-S 8 區塊</text>
+<text class="rs" x="216" y="547.0" text-anchor="end">不共用 · 14.28M · 3 種子</text>
+<line class="err s3" x1="534.4" x2="605.2" y1="536.0" y2="536.0"/>
+<circle class="dot s3" cx="569.8" cy="536.0" r="5"/>
+<circle class="hit" cx="569.8" cy="536.0" r="12" data-tip="ViT-S 8 區塊：62.63% ± 0.69"/>
+<line class="rowsep" x1="8" x2="640" y1="554.0" y2="554.0"/>
+<text class="rl" x="216" y="570.0" text-anchor="end">ViT-S 8 區塊 · 線性權重</text>
+<text class="rs" x="216" y="583.0" text-anchor="end">不共用 · 14.28M</text>
+<circle class="dot s3" cx="577.5" cy="572.0" r="5"/>
+<circle class="hit" cx="577.5" cy="572.0" r="12" data-tip="ViT-S 8 區塊 · 線性權重：62.78%（1 個種子）"/>
+</svg></div>
+<p class="fig-note">只有<b>偏重後段的步權重</b>帶來大幅提升（+2.8）；lr 1e-3 下種子間差異大（±1.1～1.6），降到 5e-4 後穩定。時間嵌入、輸入注入、拿掉自我蒸餾、fp16、mixup 分組都在 ±0.4 以內（多為單一種子）。加寬到 bViT-B 反而較差。</p>
+<details class="data"><summary>數據表</summary><div class="tbl-wrap"><table class=""><thead><tr><th>設定</th><th>說明</th><th class="n">最佳步 top-1 %</th></tr></thead><tbody><tr class=""><td>bViT-S 基準</td><td>均等權重 · lr 1e-3 · 3 種子</td><td class="n">59.34 ± 0.07</td></tr><tr class=""><td>減輕增強</td><td>mixup 0.2，無 CutMix / erasing</td><td class="n">56.95</td></tr><tr class=""><td>bViT-B（dim 768）</td><td>4× FLOPs · 7.26M 參數</td><td class="n">58.03</td></tr><tr class=""><td>fp16 訓練</td><td>—</td><td class="n">59.47</td></tr><tr class=""><td>無自我蒸餾</td><td>δ = 0</td><td class="n">59.49</td></tr><tr class=""><td>時間嵌入</td><td>bViT-TE</td><td class="n">59.61</td></tr><tr class=""><td>2 組 mixup</td><td>模擬 Kaggle 雙 GPU</td><td class="n">59.67</td></tr><tr class=""><td>輸入重新注入</td><td>—</td><td class="n">59.75</td></tr><tr class=""><td>均等權重 · lr 5e-4</td><td>3 種子</td><td class="n">60.09 ± 0.84</td></tr><tr class=""><td>線性權重 · lr 1e-3</td><td>3 種子</td><td class="n">60.97 ± 1.58</td></tr><tr class=""><td>線性權重 · lr 5e-4</td><td>3 種子</td><td class="n">61.25 ± 0.36</td></tr><tr class=""><td>平方權重 · lr 1e-3</td><td>3 種子</td><td class="n">61.46 ± 1.10</td></tr><tr class=""><td>線性 + 時間嵌入 + 注入</td><td>—</td><td class="n">61.71</td></tr><tr class=""><td>平方權重 · lr 5e-4</td><td>3 種子 · 選用設定</td><td class="n">62.14 ± 0.31</td></tr><tr class=""><td>ViT-S 8 區塊</td><td>不共用 · 14.28M · 3 種子</td><td class="n">62.63 ± 0.69</td></tr><tr class=""><td>ViT-S 8 區塊 · 線性權重</td><td>不共用 · 14.28M</td><td class="n">62.78</td></tr></tbody></table></div></details>
+</figure>
+  <div class="tbl-wrap"><table class=""><caption>表 1：所有骨幹的測試集結果（H100 bf16，另註明者除外；多種子為平均 ± 標準差）</caption><thead><tr><th>實驗</th><th class="n">種子</th><th class="n">參數</th><th class="n">最佳步 top-1</th><th class="n">最後一步</th><th class="n">ECE TS（最後一步）</th><th class="n">AUC max-prob / 熵 / 固定深度</th><th class="n">oracle any</th></tr></thead><tbody><tr class=""><td>kaggle_c100_bvit_s（2×T4, fp16）</td><td class="n">0</td><td class="n">1.86M</td><td class="n">61.34（t=4）</td><td class="n">60.66</td><td class="n">2.48</td><td class="n">56.49 / 56.10 / 58.38</td><td class="n">64.44 @ 0.37 G</td></tr><tr class=""><td>c100_bvit_s</td><td class="n">0,1,2</td><td class="n">1.86M</td><td class="n">59.34±0.07（t=4）</td><td class="n">58.85±0.31</td><td class="n">3.18±0.20</td><td class="n">54.43 / 54.05 / 56.58</td><td class="n">62.38 @ 0.36 G</td></tr><tr class=""><td>c100_bvit_s_lightaug</td><td class="n">0</td><td class="n">1.86M</td><td class="n">56.95（t=4）</td><td class="n">56.49</td><td class="n">1.63</td><td class="n">53.50 / 52.98 / 54.93</td><td class="n">61.75 @ 0.35 G</td></tr><tr class=""><td>c100_bvit_b</td><td class="n">0</td><td class="n">7.26M</td><td class="n">58.03（t=3）</td><td class="n">57.42</td><td class="n">3.24</td><td class="n">54.51 / 54.17 / 56.38</td><td class="n">61.78 @ 1.30 G</td></tr><tr class=""><td>c100_vit_s_8blk</td><td class="n">0,1,2</td><td class="n">14.28M</td><td class="n">62.63±0.69（t=7）</td><td class="n">62.62±0.71</td><td class="n">3.26±0.32</td><td class="n">57.67 / 57.11 / 58.30</td><td class="n">66.40 @ 0.42 G</td></tr><tr class=""><td>c100_bvit_s_fp16</td><td class="n">0</td><td class="n">1.86M</td><td class="n">59.47（t=4）</td><td class="n">58.49</td><td class="n">3.74</td><td class="n">54.42 / 54.03 / 56.71</td><td class="n">62.23 @ 0.36 G</td></tr><tr class=""><td>c100_bvit_s_te</td><td class="n">0</td><td class="n">1.86M</td><td class="n">59.61（t=5）</td><td class="n">59.19</td><td class="n">3.69</td><td class="n">54.85 / 54.44 / 56.77</td><td class="n">62.80 @ 0.36 G</td></tr><tr class=""><td>c100_bvit_s_inject</td><td class="n">0</td><td class="n">1.86M</td><td class="n">59.75（t=4）</td><td class="n">59.24</td><td class="n">3.05</td><td class="n">54.94 / 54.50 / 56.92</td><td class="n">62.78 @ 0.36 G</td></tr><tr class=""><td>c100_bvit_s_nosd</td><td class="n">0</td><td class="n">1.86M</td><td class="n">59.49（t=4）</td><td class="n">58.97</td><td class="n">2.99</td><td class="n">54.50 / 54.10 / 56.39</td><td class="n">62.37 @ 0.37 G</td></tr><tr class=""><td>c100_bvit_s_linw</td><td class="n">0,1,2</td><td class="n">1.86M</td><td class="n">60.97±1.58（t=5）</td><td class="n">60.55±1.60</td><td class="n">2.87±0.30</td><td class="n">55.15 / 54.68 / 57.07</td><td class="n">63.61 @ 0.39 G</td></tr><tr class=""><td>c100_bvit_s_quadw</td><td class="n">0,1,2</td><td class="n">1.86M</td><td class="n">61.46±1.10（t=5）</td><td class="n">61.07±0.98</td><td class="n">3.19±0.24</td><td class="n">55.03 / 54.49 / 56.87</td><td class="n">63.93 @ 0.40 G</td></tr><tr class=""><td>c100_bvit_s_linw_lr5e4</td><td class="n">0,1,2</td><td class="n">1.86M</td><td class="n">61.25±0.36（t=5）</td><td class="n">60.90±0.34</td><td class="n">3.06±0.05</td><td class="n">55.50 / 55.05 / 57.35</td><td class="n">64.04 @ 0.39 G</td></tr><tr class=""><td>c100_bvit_s_lr5e4</td><td class="n">0,1,2</td><td class="n">1.86M</td><td class="n">60.09±0.84（t=4）</td><td class="n">59.64±1.02</td><td class="n">3.20±0.42</td><td class="n">55.26 / 54.86 / 57.17</td><td class="n">63.17 @ 0.36 G</td></tr><tr class="em"><td>c100_bvit_s_quadw_lr5e4</td><td class="n">0,1,2</td><td class="n">1.86M</td><td class="n">62.14±0.31（t=5）</td><td class="n">61.93±0.24</td><td class="n">3.13±0.18</td><td class="n">55.83 / 55.33 / 57.54</td><td class="n">64.76 @ 0.41 G</td></tr><tr class=""><td>c100_bvit_s_linw_te_inject</td><td class="n">0</td><td class="n">1.86M</td><td class="n">61.71（t=5）</td><td class="n">61.29</td><td class="n">2.89</td><td class="n">55.90 / 55.36 / 57.79</td><td class="n">64.22 @ 0.39 G</td></tr><tr class=""><td>c100_bvit_s_mix2</td><td class="n">0</td><td class="n">1.86M</td><td class="n">59.67（t=4）</td><td class="n">59.03</td><td class="n">3.97</td><td class="n">54.97 / 54.59 / 56.92</td><td class="n">62.68 @ 0.36 G</td></tr><tr class=""><td>c100_vit_s_8blk_linw</td><td class="n">0</td><td class="n">14.28M</td><td class="n">62.78（t=7）</td><td class="n">62.78</td><td class="n">2.47</td><td class="n">56.58 / 55.89 / 57.28</td><td class="n">66.11 @ 0.45 G</td></tr></tbody></table></div>
+  <ul class="list">
+    <li><b>種子變異很小</b>（基準 ±0.07），所以 Kaggle（61.3%）與 H100（59.3%）的 2 個百分點差距是系統性的。精度（fp16 59.47%）與 mixup 分組（59.67%）都已排除；在 CPU 上重新評估 Kaggle checkpoint 結果相同，差異來自訓練。剩下的差異是 torch 2.11 對 2.6（含 torchvision），未再追查。</li>
+    <li><b>減輕增強反而更差</b>（56.95%）：模型過擬合，「增強太強導致欠擬合」不成立。</li>
+    <li><b>加寬沒有幫助</b>：bViT-B 用 4 倍計算量少了 1.3 個百分點，而且同樣在第 3 步飽和。</li>
+    <li><b>偏重後段只對共用權重有效</b>：8 區塊 ViT 改用線性權重沒有差別（62.78% 對 62.62±0.71%）。</li>
+    <li><b>學習率的拆解</b>（皆 lr 5e-4）：學習率本身讓均等權重 +0.75（59.34 → 60.09），平方權重再 +2.05（→ 62.14）。最佳共用模型的 NLL（1.453 對 1.526）與 AURC（14.87 對 15.10）甚至優於 8 區塊 ViT。</li>
+  </ul>
+
+  <h3 id="calib">4.3 校準</h3>
+  <figure class="fig" id="fig-3"><figcaption><span class="fig-n">圖 3</span>每步溫度縮放前後的 ECE（bViT-S 平方權重，lr 5e-4，3 個種子平均）</figcaption>
+<div class="chart-wrap"><div class="legend"><span class="key"><i class="sw s2"></i>溫度縮放前</span><span class="key"><i class="sw s1"></i>溫度縮放後</span></div><svg viewBox="0 0 680 290" role="img" aria-labelledby="c3-t" class="chart">
+<title id="c3-t">ECE</title>
+<line class="grid" x1="52" x2="588" y1="244.0" y2="244.0"/>
+<text class="tk" x="44" y="248.0" text-anchor="end">0%</text>
+<line class="grid" x1="52" x2="588" y1="211.7" y2="211.7"/>
+<text class="tk" x="44" y="215.7" text-anchor="end">2%</text>
+<line class="grid" x1="52" x2="588" y1="179.4" y2="179.4"/>
+<text class="tk" x="44" y="183.4" text-anchor="end">4%</text>
+<line class="grid" x1="52" x2="588" y1="147.1" y2="147.1"/>
+<text class="tk" x="44" y="151.1" text-anchor="end">6%</text>
+<line class="grid" x1="52" x2="588" y1="114.9" y2="114.9"/>
+<text class="tk" x="44" y="118.9" text-anchor="end">8%</text>
+<line class="grid" x1="52" x2="588" y1="82.6" y2="82.6"/>
+<text class="tk" x="44" y="86.6" text-anchor="end">10%</text>
+<line class="grid" x1="52" x2="588" y1="50.3" y2="50.3"/>
+<text class="tk" x="44" y="54.3" text-anchor="end">12%</text>
+<line class="grid" x1="52" x2="588" y1="18.0" y2="18.0"/>
+<text class="tk" x="44" y="22.0" text-anchor="end">14%</text>
+<line class="axis" x1="52" x2="588" y1="244" y2="244"/>
+<line class="axis" x1="73.2" x2="73.2" y1="244" y2="249"/>
+<text class="tk" x="73.2" y="263" text-anchor="middle">t=0</text>
+<line class="axis" x1="143.7" x2="143.7" y1="244" y2="249"/>
+<text class="tk" x="143.7" y="263" text-anchor="middle">t=1</text>
+<line class="axis" x1="214.2" x2="214.2" y1="244" y2="249"/>
+<text class="tk" x="214.2" y="263" text-anchor="middle">t=2</text>
+<line class="axis" x1="284.7" x2="284.7" y1="244" y2="249"/>
+<text class="tk" x="284.7" y="263" text-anchor="middle">t=3</text>
+<line class="axis" x1="355.3" x2="355.3" y1="244" y2="249"/>
+<text class="tk" x="355.3" y="263" text-anchor="middle">t=4</text>
+<line class="axis" x1="425.8" x2="425.8" y1="244" y2="249"/>
+<text class="tk" x="425.8" y="263" text-anchor="middle">t=5</text>
+<line class="axis" x1="496.3" x2="496.3" y1="244" y2="249"/>
+<text class="tk" x="496.3" y="263" text-anchor="middle">t=6</text>
+<line class="axis" x1="566.8" x2="566.8" y1="244" y2="249"/>
+<text class="tk" x="566.8" y="263" text-anchor="middle">t=7</text>
+<text class="axl" x="320.0" y="282" text-anchor="middle">遞迴步數 t</text>
+<text class="axl" transform="translate(14 131.0) rotate(-90)" text-anchor="middle">ECE（15 bins）</text>
+
+<path class="ln s2" d="M73.2,75.0 L143.7,34.0 L214.2,96.1 L284.7,119.1 L355.3,129.5 L425.8,132.3 L496.3,130.0 L566.8,124.4"/>
+<path class="ln s1" d="M73.2,212.2 L143.7,214.0 L214.2,207.8 L284.7,199.9 L355.3,199.1 L425.8,199.1 L496.3,195.9 L566.8,193.5"/>
+<circle class="dot s2" cx="73.2" cy="75.0" r="4"/>
+<circle class="hit" cx="73.2" cy="75.0" r="11" data-tip="t=0 縮放前 ECE 10.47%"/>
+<circle class="dot s2" cx="143.7" cy="34.0" r="4"/>
+<circle class="hit" cx="143.7" cy="34.0" r="11" data-tip="t=1 縮放前 ECE 13.01%"/>
+<circle class="dot s2" cx="214.2" cy="96.1" r="4"/>
+<circle class="hit" cx="214.2" cy="96.1" r="11" data-tip="t=2 縮放前 ECE 9.16%"/>
+<circle class="dot s2" cx="284.7" cy="119.1" r="4"/>
+<circle class="hit" cx="284.7" cy="119.1" r="11" data-tip="t=3 縮放前 ECE 7.74%"/>
+<circle class="dot s2" cx="355.3" cy="129.5" r="4"/>
+<circle class="hit" cx="355.3" cy="129.5" r="11" data-tip="t=4 縮放前 ECE 7.09%"/>
+<circle class="dot s2" cx="425.8" cy="132.3" r="4"/>
+<circle class="hit" cx="425.8" cy="132.3" r="11" data-tip="t=5 縮放前 ECE 6.92%"/>
+<circle class="dot s2" cx="496.3" cy="130.0" r="4"/>
+<circle class="hit" cx="496.3" cy="130.0" r="11" data-tip="t=6 縮放前 ECE 7.06%"/>
+<circle class="dot s2" cx="566.8" cy="124.4" r="4"/>
+<circle class="hit" cx="566.8" cy="124.4" r="11" data-tip="t=7 縮放前 ECE 7.41%"/>
+<text class="dl" x="575.8" y="128.4">縮放前</text>
+<circle class="dot s1" cx="73.2" cy="212.2" r="4"/>
+<circle class="hit" cx="73.2" cy="212.2" r="11" data-tip="t=0 縮放後 ECE 1.97%（T_t = 0.699）"/>
+<circle class="dot s1" cx="143.7" cy="214.0" r="4"/>
+<circle class="hit" cx="143.7" cy="214.0" r="11" data-tip="t=1 縮放後 ECE 1.86%（T_t = 0.752）"/>
+<circle class="dot s1" cx="214.2" cy="207.8" r="4"/>
+<circle class="hit" cx="214.2" cy="207.8" r="11" data-tip="t=2 縮放後 ECE 2.24%（T_t = 0.802）"/>
+<circle class="dot s1" cx="284.7" cy="199.9" r="4"/>
+<circle class="hit" cx="284.7" cy="199.9" r="11" data-tip="t=3 縮放後 ECE 2.73%（T_t = 0.820）"/>
+<circle class="dot s1" cx="355.3" cy="199.1" r="4"/>
+<circle class="hit" cx="355.3" cy="199.1" r="11" data-tip="t=4 縮放後 ECE 2.78%（T_t = 0.829）"/>
+<circle class="dot s1" cx="425.8" cy="199.1" r="4"/>
+<circle class="hit" cx="425.8" cy="199.1" r="11" data-tip="t=5 縮放後 ECE 2.78%（T_t = 0.832）"/>
+<circle class="dot s1" cx="496.3" cy="195.9" r="4"/>
+<circle class="hit" cx="496.3" cy="195.9" r="11" data-tip="t=6 縮放後 ECE 2.98%（T_t = 0.831）"/>
+<circle class="dot s1" cx="566.8" cy="193.5" r="4"/>
+<circle class="hit" cx="566.8" cy="193.5" r="11" data-tip="t=7 縮放後 ECE 3.13%（T_t = 0.828）"/>
+<text class="dl" x="575.8" y="197.5">縮放後</text>
+</svg></div>
+<p class="fig-note">擬合出的溫度全部小於 1（0.70～0.83），代表模型<b>信心不足</b>而非過度自信；減輕增強時溫度約 1.1，所以信心不足主要來自 mixup / CutMix 的軟標籤。溫度縮放把 ECE 從 7～13% 降到 2～3%，但越後面的步殘留 ECE 越高。</p>
+<details class="data"><summary>數據表</summary><div class="tbl-wrap"><table class=""><thead><tr><th></th><th class="n">t=0</th><th class="n">t=1</th><th class="n">t=2</th><th class="n">t=3</th><th class="n">t=4</th><th class="n">t=5</th><th class="n">t=6</th><th class="n">t=7</th></tr></thead><tbody><tr class=""><td>ECE 縮放前 %</td><td class="n">10.47</td><td class="n">13.01</td><td class="n">9.16</td><td class="n">7.74</td><td class="n">7.09</td><td class="n">6.92</td><td class="n">7.06</td><td class="n">7.41</td></tr><tr class=""><td>ECE 縮放後 %</td><td class="n">1.97</td><td class="n">1.86</td><td class="n">2.24</td><td class="n">2.73</td><td class="n">2.78</td><td class="n">2.78</td><td class="n">2.98</td><td class="n">3.13</td></tr><tr class=""><td>溫度 T_t</td><td class="n">0.699</td><td class="n">0.752</td><td class="n">0.802</td><td class="n">0.820</td><td class="n">0.829</td><td class="n">0.832</td><td class="n">0.831</td><td class="n">0.828</td></tr></tbody></table></div></details>
+</figure>
+  <p>所有骨幹都有同樣的模式：縮放前 ECE 在第 1 步最高（偏重後段時第 1 步最差，13%），縮放後越後面的步 ECE 越高。8 區塊 ViT 的縮放前 ECE 隨步數下降到 3.6%，溫度也較接近 1（0.81–0.90）。是否需要比溫度縮放更強的校準（TODO-2：Brier、focal loss、label smoothing 的比較）目前看不出必要：停止策略的瓶頸不在校準（見第 5 節）。</p>
+</section>
+
+<section id="halting">
+  <h2><span class="sn">5</span>學習式停止策略（TODO-1）</h2>
+  <h3>5.1 準確率–計算量曲線</h3>
+  <figure class="fig" id="fig-4"><figcaption><span class="fig-n">圖 4</span>準確率–計算量曲線（Kaggle bViT-S checkpoint，測試集）</figcaption>
+<div class="chart-wrap"><div class="legend"><span class="key"><i class="sw s1"></i>S0-reward_acc 停止策略（掃描 λ）</span><span class="key"><i class="sw s2"></i>max-prob 門檻（掃描 τ）</span><span class="key"><i class="sw s3"></i>固定深度 t = 0…7</span></div><svg viewBox="0 0 680 330" role="img" aria-labelledby="c4-t" class="chart">
+<title id="c4-t">準確率–計算量曲線</title>
+<line class="grid" x1="52" x2="588" y1="260.5" y2="260.5"/>
+<text class="tk" x="44" y="264.5" text-anchor="end">35%</text>
+<line class="grid" x1="52" x2="588" y1="221.4" y2="221.4"/>
+<text class="tk" x="44" y="225.4" text-anchor="end">40%</text>
+<line class="grid" x1="52" x2="588" y1="182.3" y2="182.3"/>
+<text class="tk" x="44" y="186.3" text-anchor="end">45%</text>
+<line class="grid" x1="52" x2="588" y1="143.2" y2="143.2"/>
+<text class="tk" x="44" y="147.2" text-anchor="end">50%</text>
+<line class="grid" x1="52" x2="588" y1="104.1" y2="104.1"/>
+<text class="tk" x="44" y="108.1" text-anchor="end">55%</text>
+<line class="grid" x1="52" x2="588" y1="64.9" y2="64.9"/>
+<text class="tk" x="44" y="68.9" text-anchor="end">60%</text>
+<line class="grid" x1="52" x2="588" y1="25.8" y2="25.8"/>
+<text class="tk" x="44" y="29.8" text-anchor="end">65%</text>
+<line class="axis" x1="52" x2="588" y1="284" y2="284"/>
+<line class="axis" x1="67.3" x2="67.3" y1="284" y2="289"/>
+<text class="tk" x="67.3" y="303" text-anchor="middle">0.25</text>
+<line class="axis" x1="143.9" x2="143.9" y1="284" y2="289"/>
+<text class="tk" x="143.9" y="303" text-anchor="middle">0.5</text>
+<line class="axis" x1="220.5" x2="220.5" y1="284" y2="289"/>
+<text class="tk" x="220.5" y="303" text-anchor="middle">0.75</text>
+<line class="axis" x1="297.0" x2="297.0" y1="284" y2="289"/>
+<text class="tk" x="297.0" y="303" text-anchor="middle">1</text>
+<line class="axis" x1="373.6" x2="373.6" y1="284" y2="289"/>
+<text class="tk" x="373.6" y="303" text-anchor="middle">1.25</text>
+<line class="axis" x1="450.2" x2="450.2" y1="284" y2="289"/>
+<text class="tk" x="450.2" y="303" text-anchor="middle">1.5</text>
+<line class="axis" x1="526.7" x2="526.7" y1="284" y2="289"/>
+<text class="tk" x="526.7" y="303" text-anchor="middle">1.75</text>
+<text class="axl" x="320.0" y="322" text-anchor="middle">平均每張影像 GFLOPs（含讀出頭與停止策略）</text>
+<text class="axl" transform="translate(14 151.0) rotate(-90)" text-anchor="middle">top-1</text>
+
+<path class="ln s2" d="M63.9,267.9 L64.5,266.4 L66.5,259.2 L70.2,246.8 L75.2,233.5 L81.2,218.0 L88.4,206.5 L96.2,191.8 L105.1,178.2 L114.6,166.8 L124.4,154.2 L134.9,145.4 L144.4,136.6 L154.9,127.5 L166.3,121.2 L177.9,112.9 L188.4,107.9 L198.7,102.9 L209.2,98.0 L219.3,93.8 L230.0,91.1 L240.2,88.7 L250.4,84.6 L260.1,80.9 L270.1,78.6 L280.9,76.0 L290.0,74.1 L299.9,73.1 L310.3,71.1 L319.1,69.2 L328.2,67.8 L337.3,66.3 L346.6,65.6 L356.1,63.9 L365.1,62.6 L374.3,61.8 L382.6,61.6 L391.6,61.2 L399.9,60.7 L410.2,59.8 L420.3,60.0 L431.5,59.6 L443.7,59.7 L457.5,59.7 L472.5,59.9 L491.6,59.8 L520.1,59.8 L571.2,59.8"/>
+<path class="ln s3" d="M63.9,267.9 L136.4,96.9 L208.9,63.7 L281.3,58.1 L353.8,54.5 L426.3,55.1 L498.7,56.6 L571.2,59.8"/>
+<path class="ln s1" d="M63.9,267.9 L64.0,267.6 L65.0,263.4 L72.6,236.9 L96.9,163.6 L115.2,120.8 L126.8,101.5 L139.7,85.2 L153.1,72.7 L163.5,68.2 L171.0,64.5 L177.6,62.9 L183.8,62.6 L189.6,61.7 L194.7,60.6 L199.9,60.1 L205.2,59.2 L210.8,58.7 L216.1,58.3 L220.7,58.4 L225.4,58.2 L229.5,58.1 L234.2,58.1 L239.0,58.1 L245.6,58.1 L247.3,58.1 L248.4,58.1 L249.6,58.1 L250.8,58.1 L251.9,58.1 L253.0,58.1 L254.1,58.1 L255.3,58.1 L256.3,58.1 L257.4,58.1 L258.6,58.1 L260.0,58.1 L261.4,58.1 L262.7,58.1"/>
+<circle class="hit" cx="63.9" cy="267.9" r="11" data-tip="max-prob 門檻：34.06% @ 0.239 GFLOPs"/>
+<circle class="hit" cx="64.5" cy="266.4" r="11" data-tip="max-prob 門檻：34.25% @ 0.241 GFLOPs"/>
+<circle class="hit" cx="66.5" cy="259.2" r="11" data-tip="max-prob 門檻：35.17% @ 0.247 GFLOPs"/>
+<circle class="hit" cx="70.2" cy="246.8" r="11" data-tip="max-prob 門檻：36.75% @ 0.260 GFLOPs"/>
+<circle class="hit" cx="75.2" cy="233.5" r="11" data-tip="max-prob 門檻：38.46% @ 0.276 GFLOPs"/>
+<circle class="hit" cx="81.2" cy="218.0" r="11" data-tip="max-prob 門檻：40.43% @ 0.295 GFLOPs"/>
+<circle class="hit" cx="88.4" cy="206.5" r="11" data-tip="max-prob 門檻：41.91% @ 0.319 GFLOPs"/>
+<circle class="hit" cx="96.2" cy="191.8" r="11" data-tip="max-prob 門檻：43.79% @ 0.344 GFLOPs"/>
+<circle class="hit" cx="105.1" cy="178.2" r="11" data-tip="max-prob 門檻：45.52% @ 0.373 GFLOPs"/>
+<circle class="hit" cx="114.6" cy="166.8" r="11" data-tip="max-prob 門檻：46.98% @ 0.405 GFLOPs"/>
+<circle class="hit" cx="124.4" cy="154.2" r="11" data-tip="max-prob 門檻：48.59% @ 0.436 GFLOPs"/>
+<circle class="hit" cx="134.9" cy="145.4" r="11" data-tip="max-prob 門檻：49.71% @ 0.471 GFLOPs"/>
+<circle class="hit" cx="144.4" cy="136.6" r="11" data-tip="max-prob 門檻：50.84% @ 0.502 GFLOPs"/>
+<circle class="hit" cx="154.9" cy="127.5" r="11" data-tip="max-prob 門檻：52.00% @ 0.536 GFLOPs"/>
+<circle class="hit" cx="166.3" cy="121.2" r="11" data-tip="max-prob 門檻：52.81% @ 0.573 GFLOPs"/>
+<circle class="hit" cx="177.9" cy="112.9" r="11" data-tip="max-prob 門檻：53.87% @ 0.611 GFLOPs"/>
+<circle class="hit" cx="188.4" cy="107.9" r="11" data-tip="max-prob 門檻：54.51% @ 0.645 GFLOPs"/>
+<circle class="hit" cx="198.7" cy="102.9" r="11" data-tip="max-prob 門檻：55.15% @ 0.679 GFLOPs"/>
+<circle class="hit" cx="209.2" cy="98.0" r="11" data-tip="max-prob 門檻：55.77% @ 0.713 GFLOPs"/>
+<circle class="hit" cx="219.3" cy="93.8" r="11" data-tip="max-prob 門檻：56.31% @ 0.746 GFLOPs"/>
+<circle class="hit" cx="230.0" cy="91.1" r="11" data-tip="max-prob 門檻：56.66% @ 0.781 GFLOPs"/>
+<circle class="hit" cx="240.2" cy="88.7" r="11" data-tip="max-prob 門檻：56.96% @ 0.814 GFLOPs"/>
+<circle class="hit" cx="250.4" cy="84.6" r="11" data-tip="max-prob 門檻：57.49% @ 0.848 GFLOPs"/>
+<circle class="hit" cx="260.1" cy="80.9" r="11" data-tip="max-prob 門檻：57.96% @ 0.879 GFLOPs"/>
+<circle class="hit" cx="270.1" cy="78.6" r="11" data-tip="max-prob 門檻：58.25% @ 0.912 GFLOPs"/>
+<circle class="hit" cx="280.9" cy="76.0" r="11" data-tip="max-prob 門檻：58.59% @ 0.947 GFLOPs"/>
+<circle class="hit" cx="290.0" cy="74.1" r="11" data-tip="max-prob 門檻：58.83% @ 0.977 GFLOPs"/>
+<circle class="hit" cx="299.9" cy="73.1" r="11" data-tip="max-prob 門檻：58.96% @ 1.009 GFLOPs"/>
+<circle class="hit" cx="310.3" cy="71.1" r="11" data-tip="max-prob 門檻：59.21% @ 1.043 GFLOPs"/>
+<circle class="hit" cx="319.1" cy="69.2" r="11" data-tip="max-prob 門檻：59.46% @ 1.072 GFLOPs"/>
+<circle class="hit" cx="328.2" cy="67.8" r="11" data-tip="max-prob 門檻：59.64% @ 1.102 GFLOPs"/>
+<circle class="hit" cx="337.3" cy="66.3" r="11" data-tip="max-prob 門檻：59.82% @ 1.131 GFLOPs"/>
+<circle class="hit" cx="346.6" cy="65.6" r="11" data-tip="max-prob 門檻：59.91% @ 1.162 GFLOPs"/>
+<circle class="hit" cx="356.1" cy="63.9" r="11" data-tip="max-prob 門檻：60.13% @ 1.193 GFLOPs"/>
+<circle class="hit" cx="365.1" cy="62.6" r="11" data-tip="max-prob 門檻：60.30% @ 1.222 GFLOPs"/>
+<circle class="hit" cx="374.3" cy="61.8" r="11" data-tip="max-prob 門檻：60.40% @ 1.252 GFLOPs"/>
+<circle class="hit" cx="382.6" cy="61.6" r="11" data-tip="max-prob 門檻：60.43% @ 1.279 GFLOPs"/>
+<circle class="hit" cx="391.6" cy="61.2" r="11" data-tip="max-prob 門檻：60.48% @ 1.309 GFLOPs"/>
+<circle class="hit" cx="399.9" cy="60.7" r="11" data-tip="max-prob 門檻：60.54% @ 1.336 GFLOPs"/>
+<circle class="hit" cx="410.2" cy="59.8" r="11" data-tip="max-prob 門檻：60.66% @ 1.370 GFLOPs"/>
+<circle class="hit" cx="420.3" cy="60.0" r="11" data-tip="max-prob 門檻：60.63% @ 1.402 GFLOPs"/>
+<circle class="hit" cx="431.5" cy="59.6" r="11" data-tip="max-prob 門檻：60.68% @ 1.439 GFLOPs"/>
+<circle class="hit" cx="443.7" cy="59.7" r="11" data-tip="max-prob 門檻：60.67% @ 1.479 GFLOPs"/>
+<circle class="hit" cx="457.5" cy="59.7" r="11" data-tip="max-prob 門檻：60.67% @ 1.524 GFLOPs"/>
+<circle class="hit" cx="472.5" cy="59.9" r="11" data-tip="max-prob 門檻：60.64% @ 1.573 GFLOPs"/>
+<circle class="hit" cx="491.6" cy="59.8" r="11" data-tip="max-prob 門檻：60.66% @ 1.635 GFLOPs"/>
+<circle class="hit" cx="520.1" cy="59.8" r="11" data-tip="max-prob 門檻：60.66% @ 1.728 GFLOPs"/>
+<circle class="hit" cx="571.2" cy="59.8" r="11" data-tip="max-prob 門檻：60.66% @ 1.895 GFLOPs"/>
+<circle class="dot s3" cx="63.9" cy="267.9" r="4"/>
+<circle class="hit" cx="63.9" cy="267.9" r="11" data-tip="固定深度 t=0：34.06% @ 0.239 GFLOPs"/>
+<circle class="dot s3" cx="136.4" cy="96.9" r="4"/>
+<circle class="hit" cx="136.4" cy="96.9" r="11" data-tip="固定深度 t=1：55.92% @ 0.476 GFLOPs"/>
+<circle class="dot s3" cx="208.9" cy="63.7" r="4"/>
+<circle class="hit" cx="208.9" cy="63.7" r="11" data-tip="固定深度 t=2：60.16% @ 0.712 GFLOPs"/>
+<circle class="dot s3" cx="281.3" cy="58.1" r="4"/>
+<circle class="hit" cx="281.3" cy="58.1" r="11" data-tip="固定深度 t=3：60.88% @ 0.949 GFLOPs"/>
+<circle class="dot s3" cx="353.8" cy="54.5" r="4"/>
+<circle class="hit" cx="353.8" cy="54.5" r="11" data-tip="固定深度 t=4：61.33% @ 1.185 GFLOPs"/>
+<circle class="dot s3" cx="426.3" cy="55.1" r="4"/>
+<circle class="hit" cx="426.3" cy="55.1" r="11" data-tip="固定深度 t=5：61.26% @ 1.422 GFLOPs"/>
+<circle class="dot s3" cx="498.7" cy="56.6" r="4"/>
+<circle class="hit" cx="498.7" cy="56.6" r="11" data-tip="固定深度 t=6：61.07% @ 1.659 GFLOPs"/>
+<circle class="dot s3" cx="571.2" cy="59.8" r="4"/>
+<circle class="hit" cx="571.2" cy="59.8" r="11" data-tip="固定深度 t=7：60.66% @ 1.895 GFLOPs"/>
+<circle class="hit" cx="63.9" cy="267.9" r="11" data-tip="停止策略 λ=10：34.06% @ 0.239 GFLOPs"/>
+<circle class="hit" cx="64.0" cy="267.6" r="11" data-tip="停止策略 λ=4.2：34.10% @ 0.239 GFLOPs"/>
+<circle class="hit" cx="65.0" cy="263.4" r="11" data-tip="停止策略 λ=3.2：34.63% @ 0.242 GFLOPs"/>
+<circle class="hit" cx="72.6" cy="236.9" r="11" data-tip="停止策略 λ=2.4：38.02% @ 0.267 GFLOPs"/>
+<circle class="hit" cx="96.9" cy="163.6" r="11" data-tip="停止策略 λ=1.8：47.39% @ 0.346 GFLOPs"/>
+<circle class="hit" cx="115.2" cy="120.8" r="11" data-tip="停止策略 λ=1.3：52.86% @ 0.406 GFLOPs"/>
+<circle class="hit" cx="126.8" cy="101.5" r="11" data-tip="停止策略 λ=1：55.33% @ 0.444 GFLOPs"/>
+<circle class="hit" cx="139.7" cy="85.2" r="11" data-tip="停止策略 λ=0.75：57.41% @ 0.486 GFLOPs"/>
+<circle class="hit" cx="153.1" cy="72.7" r="11" data-tip="停止策略 λ=0.56：59.01% @ 0.530 GFLOPs"/>
+<circle class="hit" cx="163.5" cy="68.2" r="11" data-tip="停止策略 λ=0.42：59.58% @ 0.564 GFLOPs"/>
+<circle class="hit" cx="171.0" cy="64.5" r="11" data-tip="停止策略 λ=0.32：60.06% @ 0.589 GFLOPs"/>
+<circle class="hit" cx="177.6" cy="62.9" r="11" data-tip="停止策略 λ=0.24：60.26% @ 0.610 GFLOPs"/>
+<circle class="hit" cx="183.8" cy="62.6" r="11" data-tip="停止策略 λ=0.18：60.30% @ 0.630 GFLOPs"/>
+<circle class="hit" cx="189.6" cy="61.7" r="11" data-tip="停止策略 λ=0.13：60.42% @ 0.649 GFLOPs"/>
+<circle class="hit" cx="194.7" cy="60.6" r="11" data-tip="停止策略 λ=0.1：60.56% @ 0.666 GFLOPs"/>
+<circle class="hit" cx="199.9" cy="60.1" r="11" data-tip="停止策略 λ=0.075：60.62% @ 0.683 GFLOPs"/>
+<circle class="hit" cx="205.2" cy="59.2" r="11" data-tip="停止策略 λ=0.056：60.74% @ 0.700 GFLOPs"/>
+<circle class="hit" cx="210.8" cy="58.7" r="11" data-tip="停止策略 λ=0.042：60.80% @ 0.718 GFLOPs"/>
+<circle class="hit" cx="216.1" cy="58.3" r="11" data-tip="停止策略 λ=0.032：60.85% @ 0.736 GFLOPs"/>
+<circle class="hit" cx="220.7" cy="58.4" r="11" data-tip="停止策略 λ=0.024：60.84% @ 0.751 GFLOPs"/>
+<circle class="hit" cx="225.4" cy="58.2" r="11" data-tip="停止策略 λ=0.018：60.86% @ 0.766 GFLOPs"/>
+<circle class="hit" cx="229.5" cy="58.1" r="11" data-tip="停止策略 λ=0.013：60.88% @ 0.779 GFLOPs"/>
+<circle class="hit" cx="234.2" cy="58.1" r="11" data-tip="停止策略 λ=0.01：60.88% @ 0.795 GFLOPs"/>
+<circle class="hit" cx="239.0" cy="58.1" r="11" data-tip="停止策略 λ=0.0075：60.88% @ 0.811 GFLOPs"/>
+<circle class="hit" cx="245.6" cy="58.1" r="11" data-tip="停止策略 λ=0.0056：60.88% @ 0.832 GFLOPs"/>
+<circle class="hit" cx="247.3" cy="58.1" r="11" data-tip="停止策略 λ=0.0042：60.88% @ 0.838 GFLOPs"/>
+<circle class="hit" cx="248.4" cy="58.1" r="11" data-tip="停止策略 λ=0.0032：60.88% @ 0.841 GFLOPs"/>
+<circle class="hit" cx="249.6" cy="58.1" r="11" data-tip="停止策略 λ=0.0024：60.88% @ 0.845 GFLOPs"/>
+<circle class="hit" cx="250.8" cy="58.1" r="11" data-tip="停止策略 λ=0.0018：60.88% @ 0.849 GFLOPs"/>
+<circle class="hit" cx="251.9" cy="58.1" r="11" data-tip="停止策略 λ=0.0013：60.88% @ 0.853 GFLOPs"/>
+<circle class="hit" cx="253.0" cy="58.1" r="11" data-tip="停止策略 λ=0.001：60.88% @ 0.856 GFLOPs"/>
+<circle class="hit" cx="254.1" cy="58.1" r="11" data-tip="停止策略 λ=0.00075：60.88% @ 0.860 GFLOPs"/>
+<circle class="hit" cx="255.3" cy="58.1" r="11" data-tip="停止策略 λ=0.00056：60.88% @ 0.864 GFLOPs"/>
+<circle class="hit" cx="256.3" cy="58.1" r="11" data-tip="停止策略 λ=0.00042：60.88% @ 0.867 GFLOPs"/>
+<circle class="hit" cx="257.4" cy="58.1" r="11" data-tip="停止策略 λ=0.00032：60.88% @ 0.871 GFLOPs"/>
+<circle class="hit" cx="258.6" cy="58.1" r="11" data-tip="停止策略 λ=0.00024：60.88% @ 0.875 GFLOPs"/>
+<circle class="hit" cx="260.0" cy="58.1" r="11" data-tip="停止策略 λ=0.00018：60.88% @ 0.879 GFLOPs"/>
+<circle class="hit" cx="261.4" cy="58.1" r="11" data-tip="停止策略 λ=0.00013：60.88% @ 0.884 GFLOPs"/>
+<circle class="hit" cx="262.7" cy="58.1" r="11" data-tip="停止策略 λ=0.0001：60.88% @ 0.888 GFLOPs"/>
+<path class="ref-mark" d="M102.5,24.0 l6,6 l-6,6 l-6,-6 z"/>
+<circle class="hit" cx="102.5" cy="30.0" r="11" data-tip="oracle any：64.46% @ 0.365 GFLOPs，平均 1.53 步"/>
+<text class="dl" x="112.5" y="34.0" text-anchor="start">oracle（用到標籤）</text>
+</svg></div>
+<p class="fig-note">AUC（在 [0.239, 1.895] GFLOPs 區間的平均 top-1）：固定深度 58.38、max-prob 56.49、停止策略 58.80±0.04。學習式策略在低計算量端最多比固定深度高 1 個百分點；門檻規則全面落後。菱形是知道標籤的 oracle，與所有方法差距仍大。</p>
+<details class="data"><summary>數據表</summary><div class="tbl-wrap"><table class=""><thead><tr><th>方法</th><th class="n">AUC %</th><th class="n">acc @ t=1 計算量</th><th class="n">acc @ t=2</th><th class="n">acc @ t=3</th></tr></thead><tbody><tr class=""><td>固定深度</td><td class="n">58.38</td><td class="n">55.92</td><td class="n">60.16</td><td class="n">60.88</td></tr><tr class=""><td>max-prob 門檻</td><td class="n">56.50</td><td class="n">49.89</td><td class="n">55.75</td><td class="n">58.60</td></tr><tr class=""><td>熵門檻</td><td class="n">56.11</td><td class="n">48.72</td><td class="n">54.86</td><td class="n">57.89</td></tr><tr class=""><td>S0-reward_acc</td><td class="n">58.80 ± 0.04</td><td class="n">56.89</td><td class="n">60.76</td><td class="n">60.88</td></tr><tr class=""><td>S0-reward（Brier）</td><td class="n">58.53 ± 0.04</td><td class="n">56.50</td><td class="n">60.59</td><td class="n">60.88</td></tr><tr class=""><td>S0-oracle_any</td><td class="n">58.79 ± 0.06</td><td class="n">56.67</td><td class="n">60.74</td><td class="n">60.95</td></tr><tr class=""><td>S0-oracle_full</td><td class="n">56.63 ± 0.06</td><td class="n">50.27</td><td class="n">56.06</td><td class="n">58.80</td></tr><tr class=""><td>S3-reward_acc</td><td class="n">58.73 ± 0.05</td><td class="n">56.66</td><td class="n">60.72</td><td class="n">60.90</td></tr></tbody></table></div></details>
+</figure>
+  <ul class="list">
+    <li>學習式策略比門檻規則好約 2.3 AUC、比固定深度好約 0.4；同計算量下最多 +1.0 個百分點。</li>
+    <li><code>reward_acc</code>（0/1 錯誤）一致優於以 Brier 為損失的 <code>reward</code>。<code>oracle_full</code> 把「最後一步也錯」的樣本送到最後一步，浪費計算量，明顯較差；<code>oracle_any</code> 與 <code>reward_acc</code> 相當。</li>
+    <li>λ 掃描完全單調（0/40 次違反；第 9 輪 O1 在多骨幹上為 0.0–0.3/40），符合 TODO-3 的要求。</li>
+    <li>策略成本：每步 3,568 FLOPs（S0），含特徵計算不超過單步遞迴的 0.026%，遠低於 2% 的預算。</li>
+  </ul>
+
+  <h3>5.2 跨骨幹的結果</h3>
+  <figure class="fig" id="fig-5"><figcaption><span class="fig-n">圖 5</span>各骨幹的準確率–計算量 AUC（3 個骨幹種子 × 3 個策略種子；bViT-B 為 1 個骨幹種子）</figcaption>
+<div class="chart-wrap"><div class="legend"><span class="key"><i class="sw s1"></i>S0-reward_acc 停止策略</span><span class="key"><i class="sw s2"></i>max-prob 門檻</span><span class="key"><i class="sw s3"></i>固定深度</span></div><svg viewBox="0 0 680 264" role="img" aria-labelledby="c5-t" class="chart">
+<title id="c5-t">各骨幹 AUC</title>
+<line class="grid" x1="190.0" x2="190.0" y1="14" y2="218"/>
+<text class="tk" x="190.0" y="236" text-anchor="middle">54</text>
+<line class="grid" x1="265.0" x2="265.0" y1="14" y2="218"/>
+<text class="tk" x="265.0" y="236" text-anchor="middle">55</text>
+<line class="grid" x1="340.0" x2="340.0" y1="14" y2="218"/>
+<text class="tk" x="340.0" y="236" text-anchor="middle">56</text>
+<line class="grid" x1="415.0" x2="415.0" y1="14" y2="218"/>
+<text class="tk" x="415.0" y="236" text-anchor="middle">57</text>
+<line class="grid" x1="490.0" x2="490.0" y1="14" y2="218"/>
+<text class="tk" x="490.0" y="236" text-anchor="middle">58</text>
+<line class="grid" x1="565.0" x2="565.0" y1="14" y2="218"/>
+<text class="tk" x="565.0" y="236" text-anchor="middle">59</text>
+<line class="grid" x1="640.0" x2="640.0" y1="14" y2="218"/>
+<text class="tk" x="640.0" y="236" text-anchor="middle">60</text>
+<text class="axl" x="415.0" y="256" text-anchor="middle">AUC（%，平均 top-1）</text>
+<text class="rl" x="176" y="29.0" text-anchor="end">bViT-S 基準</text>
+<text class="rs" x="176" y="42.0" text-anchor="end">均等 · lr 1e-3</text>
+<line class="span" x1="222.2" x2="424.0" y1="31.0" y2="31.0"/>
+<circle class="dot s2" cx="222.2" cy="31.0" r="5"/>
+<circle class="hit" cx="222.2" cy="31.0" r="12" data-tip="bViT-S 基準（均等 · lr 1e-3）max-prob：54.43"/>
+<circle class="dot s3" cx="383.5" cy="31.0" r="5"/>
+<circle class="hit" cx="383.5" cy="31.0" r="12" data-tip="bViT-S 基準（均等 · lr 1e-3）固定深度：56.58"/>
+<circle class="dot s1" cx="424.0" cy="31.0" r="5"/>
+<circle class="hit" cx="424.0" cy="31.0" r="12" data-tip="bViT-S 基準（均等 · lr 1e-3）停止策略：57.12（比固定深度 +0.54）"/>
+<line class="rowsep" x1="8" x2="640" y1="48.0" y2="48.0"/>
+<text class="rl" x="176" y="63.0" text-anchor="end">bViT-S</text>
+<text class="rs" x="176" y="76.0" text-anchor="end">均等 · lr 5e-4</text>
+<line class="span" x1="284.5" x2="475.0" y1="65.0" y2="65.0"/>
+<circle class="dot s2" cx="284.5" cy="65.0" r="5"/>
+<circle class="hit" cx="284.5" cy="65.0" r="12" data-tip="bViT-S（均等 · lr 5e-4）max-prob：55.26"/>
+<circle class="dot s3" cx="427.8" cy="65.0" r="5"/>
+<circle class="hit" cx="427.8" cy="65.0" r="12" data-tip="bViT-S（均等 · lr 5e-4）固定深度：57.17"/>
+<circle class="dot s1" cx="475.0" cy="65.0" r="5"/>
+<circle class="hit" cx="475.0" cy="65.0" r="12" data-tip="bViT-S（均等 · lr 5e-4）停止策略：57.80（比固定深度 +0.63）"/>
+<line class="rowsep" x1="8" x2="640" y1="82.0" y2="82.0"/>
+<text class="rl" x="176" y="97.0" text-anchor="end">bViT-S</text>
+<text class="rs" x="176" y="110.0" text-anchor="end">線性 · lr 5e-4</text>
+<line class="span" x1="302.5" x2="491.5" y1="99.0" y2="99.0"/>
+<circle class="dot s2" cx="302.5" cy="99.0" r="5"/>
+<circle class="hit" cx="302.5" cy="99.0" r="12" data-tip="bViT-S（線性 · lr 5e-4）max-prob：55.50"/>
+<circle class="dot s3" cx="441.3" cy="99.0" r="5"/>
+<circle class="hit" cx="441.3" cy="99.0" r="12" data-tip="bViT-S（線性 · lr 5e-4）固定深度：57.35"/>
+<circle class="dot s1" cx="491.5" cy="99.0" r="5"/>
+<circle class="hit" cx="491.5" cy="99.0" r="12" data-tip="bViT-S（線性 · lr 5e-4）停止策略：58.02（比固定深度 +0.67）"/>
+<line class="rowsep" x1="8" x2="640" y1="116.0" y2="116.0"/>
+<text class="rl" x="176" y="131.0" text-anchor="end">bViT-S</text>
+<text class="rs" x="176" y="144.0" text-anchor="end">平方 · lr 5e-4</text>
+<line class="span" x1="327.2" x2="509.5" y1="133.0" y2="133.0"/>
+<circle class="dot s2" cx="327.2" cy="133.0" r="5"/>
+<circle class="hit" cx="327.2" cy="133.0" r="12" data-tip="bViT-S（平方 · lr 5e-4）max-prob：55.83"/>
+<circle class="dot s3" cx="455.5" cy="133.0" r="5"/>
+<circle class="hit" cx="455.5" cy="133.0" r="12" data-tip="bViT-S（平方 · lr 5e-4）固定深度：57.54"/>
+<circle class="dot s1" cx="509.5" cy="133.0" r="5"/>
+<circle class="hit" cx="509.5" cy="133.0" r="12" data-tip="bViT-S（平方 · lr 5e-4）停止策略：58.26（比固定深度 +0.72）"/>
+<line class="rowsep" x1="8" x2="640" y1="150.0" y2="150.0"/>
+<text class="rl" x="176" y="165.0" text-anchor="end">ViT-S 8 區塊</text>
+<text class="rs" x="176" y="178.0" text-anchor="end">不共用</text>
+<line class="span" x1="465.3" x2="594.2" y1="167.0" y2="167.0"/>
+<circle class="dot s2" cx="465.3" cy="167.0" r="5"/>
+<circle class="hit" cx="465.3" cy="167.0" r="12" data-tip="ViT-S 8 區塊（不共用）max-prob：57.67"/>
+<circle class="dot s3" cx="512.5" cy="167.0" r="5"/>
+<circle class="hit" cx="512.5" cy="167.0" r="12" data-tip="ViT-S 8 區塊（不共用）固定深度：58.30"/>
+<circle class="dot s1" cx="594.2" cy="167.0" r="5"/>
+<circle class="hit" cx="594.2" cy="167.0" r="12" data-tip="ViT-S 8 區塊（不共用）停止策略：59.39（比固定深度 +1.09）"/>
+<line class="rowsep" x1="8" x2="640" y1="184.0" y2="184.0"/>
+<text class="rl" x="176" y="199.0" text-anchor="end">bViT-B</text>
+<text class="rs" x="176" y="212.0" text-anchor="end">均等 · 1 種子</text>
+<line class="span" x1="228.2" x2="399.2" y1="201.0" y2="201.0"/>
+<circle class="dot s2" cx="228.2" cy="201.0" r="5"/>
+<circle class="hit" cx="228.2" cy="201.0" r="12" data-tip="bViT-B（均等 · 1 種子）max-prob：54.51"/>
+<circle class="dot s3" cx="368.5" cy="201.0" r="5"/>
+<circle class="hit" cx="368.5" cy="201.0" r="12" data-tip="bViT-B（均等 · 1 種子）固定深度：56.38"/>
+<circle class="dot s1" cx="399.2" cy="201.0" r="5"/>
+<circle class="hit" cx="399.2" cy="201.0" r="12" data-tip="bViT-B（均等 · 1 種子）停止策略：56.79（比固定深度 +0.41）"/>
+</svg></div>
+<p class="fig-note">六個骨幹上排序都一樣：停止策略 &gt; 固定深度 &gt; max-prob。策略相對固定深度的增益為 +0.41～+1.09，不共用的 8 區塊 ViT 增益最大（它的後段步數仍在進步，停止決策更有價值）。</p>
+<details class="data"><summary>數據表</summary><div class="tbl-wrap"><table class=""><thead><tr><th>骨幹</th><th>設定</th><th class="n">固定深度</th><th class="n">max-prob</th><th class="n">S0-reward_acc</th><th class="n">策略 − 固定</th></tr></thead><tbody><tr class=""><td>bViT-S 基準</td><td>均等 · lr 1e-3</td><td class="n">56.58</td><td class="n">54.43</td><td class="n">57.12</td><td class="n">+0.54</td></tr><tr class=""><td>bViT-S</td><td>均等 · lr 5e-4</td><td class="n">57.17</td><td class="n">55.26</td><td class="n">57.80</td><td class="n">+0.63</td></tr><tr class=""><td>bViT-S</td><td>線性 · lr 5e-4</td><td class="n">57.35</td><td class="n">55.50</td><td class="n">58.02</td><td class="n">+0.67</td></tr><tr class=""><td>bViT-S</td><td>平方 · lr 5e-4</td><td class="n">57.54</td><td class="n">55.83</td><td class="n">58.26</td><td class="n">+0.72</td></tr><tr class=""><td>ViT-S 8 區塊</td><td>不共用</td><td class="n">58.30</td><td class="n">57.67</td><td class="n">59.39</td><td class="n">+1.09</td></tr><tr class=""><td>bViT-B</td><td>均等 · 1 種子</td><td class="n">56.38</td><td class="n">54.51</td><td class="n">56.79</td><td class="n">+0.41</td></tr></tbody></table></div></details>
+</figure>
+  <div class="tbl-wrap"><table class=""><caption>表 2：達到全深度 / 最佳固定深度準確率所需的計算量（全深度計算量的 %）</caption><thead><tr><th>骨幹</th><th>方法</th><th class="n">cost@full</th><th class="n">cost@best</th></tr></thead><tbody><tr class=""><td>bViT-S 均等 · lr 5e-4</td><td>固定深度</td><td class="n">48.6 ± 6.4</td><td class="n">62.5 ± 0.0</td></tr><tr class=""><td></td><td>max-prob 門檻</td><td class="n">83.2 ± 3.9</td><td class="n">達不到</td></tr><tr class=""><td></td><td>S0-reward_acc</td><td class="n">41.3 ± 11.6</td><td class="n">42.9 ± 1.0</td></tr><tr class=""><td>bViT-S 平方 · lr 5e-4</td><td>固定深度</td><td class="n">62.0 ± 8.4</td><td class="n">79.2 ± 7.2</td></tr><tr class=""><td></td><td>max-prob 門檻</td><td class="n">83.4 ± 6.9</td><td class="n">達不到</td></tr><tr class="em"><td></td><td>S0-reward_acc</td><td class="n">43.2 ± 0.2</td><td class="n">46.7</td></tr><tr class=""><td>ViT-S 8 區塊</td><td>固定深度</td><td class="n">95.3 ± 8.1</td><td class="n">95.8 ± 7.2</td></tr><tr class=""><td></td><td>max-prob 門檻</td><td class="n">72.4 ± 2.4</td><td class="n">72.6 ± 2.3</td></tr><tr class=""><td></td><td>S0-reward_acc</td><td class="n">53.8 ± 2.5</td><td class="n">54.1 ± 2.0</td></tr><tr class=""><td>bViT-B（1 種子）</td><td>固定深度</td><td class="n">35.2</td><td class="n">50.0</td></tr><tr class=""><td></td><td>S0-reward_acc</td><td class="n">29.0</td><td class="n">38.4</td></tr></tbody></table></div>
+  <p>固定深度的 cost@full 低於 100%，是因為共用模型的準確率在最後幾步略降；停止策略在每個骨幹上都把所需計算量再壓低 10–40 個百分點，對 8 區塊 ViT 最明顯（95% → 54%）。</p>
+
+  <h3 id="features">5.3 特徵與訓練資料來源</h3>
+  <div class="tbl-wrap"><table class=""><caption>表 3：Kaggle checkpoint，1 個策略種子，AUC %</caption><thead><tr><th>特徵</th><th class="n">在 held-out 4k 上訓練</th><th class="n">在訓練集 20k 張的輸出上訓練</th></tr></thead><tbody><tr class=""><td>S0</td><td class="n">58.78</td><td class="n">59.07</td></tr><tr class=""><td>S2（CLS 384 維）</td><td class="n">54.80</td><td class="n">58.59</td></tr><tr class=""><td>S5（隨機投影 384→64）</td><td class="n">58.52</td><td class="n">59.11</td></tr></tbody></table></div>
+  <div class="tbl-wrap"><table class=""><caption>表 4：第 6 輪，3 個骨幹種子，AUC %</caption><thead><tr><th>骨幹</th><th class="n">固定深度</th><th class="n">S0（held-out）</th><th class="n">S0（訓練集輸出）</th><th class="n">S5（訓練集輸出）</th></tr></thead><tbody><tr class=""><td>bViT-S 均等 · lr 5e-4</td><td class="n">57.17</td><td class="n">57.80</td><td class="n">57.89</td><td class="n">57.79</td></tr><tr class=""><td>bViT-S 線性 · lr 5e-4</td><td class="n">57.35</td><td class="n">58.02</td><td class="n">58.03</td><td class="n">57.86</td></tr><tr class=""><td>bViT-S 平方 · lr 5e-4</td><td class="n">57.54</td><td class="n">58.26</td><td class="n">58.34</td><td class="n">58.10</td></tr><tr class=""><td>ViT-S 8 區塊</td><td class="n">58.30</td><td class="n">59.39</td><td class="n">59.11</td><td class="n">59.05</td></tr></tbody></table></div>
+  <ul class="list">
+    <li>S2 在 held-out 上變差是過擬合（4k 張、384 維輸入）；改用 5 倍資料後回到 58.6。</li>
+    <li>用訓練集圖片的輸出訓練策略，在 Kaggle checkpoint 上有 +0.3，但在 H100 骨幹上沒有一致的好處（−0.28～+0.09）。</li>
+    <li>S3 收斂訊號在所有骨幹上都沒有幫助；S5 在四個骨幹上都略差於 S0。<b>在 CIFAR 規模下，S0 在 held-out 上訓練就夠了。</b></li>
+  </ul>
+
+  <h3>5.4 一次預測總步數（O3）</h3>
+  <div class="tbl-wrap"><table class=""><caption>表 5：O3 在第 k 步決定每張圖的總步數，AUC %</caption><thead><tr><th>骨幹</th><th class="n">固定深度</th><th class="n">O1 S0-reward_acc</th><th class="n">O3 k=0</th><th class="n">O3 k=1</th></tr></thead><tbody><tr class=""><td>Kaggle bViT-S</td><td class="n">58.38</td><td class="n">58.80</td><td class="n">58.37</td><td class="n">58.19（k=2：56.83）</td></tr><tr class=""><td>bViT-S 平方 · lr 5e-4</td><td class="n">57.54 ± 0.39</td><td class="n">58.26 ± 0.40</td><td class="n">57.54 ± 0.47</td><td class="n">57.45 ± 0.56</td></tr><tr class=""><td>ViT-S 8 區塊</td><td class="n">58.30 ± 0.39</td><td class="n">59.39 ± 0.47</td><td class="n">58.16 ± 0.48</td><td class="n">58.17 ± 0.38</td></tr><tr class=""><td>bViT-B（1 種子）</td><td class="n">56.38</td><td class="n">56.79</td><td class="n">56.47</td><td class="n">56.42</td></tr></tbody></table></div>
+  <p>提早決定會失去 O1 大部分的 FLOPs 優勢：O3 的 AUC 大致等於固定深度。它的價值只在於能否把剩下的優勢轉成實際時間，因為整個 batch 只需同步一次。</p>
+
+  <h3>5.5 與 oracle 的差距</h3>
+  <p>oracle any 在約 1.5 步（0.36–0.42 GFLOPs）就達到 62.4–66.4%，比任何方法的最佳點還高 2–4 個百分點。它的優勢主要來自讓「反正會錯」的樣本在第 0 步就停；這些樣本無法從機率統計量或表徵特徵中辨認出來，所以這個差距不能期待由更好的停止策略補上。</p>
+</section>
+
+<section id="latency">
+  <h2><span class="sn">6</span>實際延遲與吞吐量（TODO-4）</h2>
+  <p><code>fsv/halting/online.py</code> 的 <code>AdaptiveRunner</code> 逐步執行模型，增量計算 S0 特徵（與離線版逐位元相同，有測試），每一步把已停止的影像移出 batch，後段步數只處理剩下的影像。第 7–9 輪逐步減少額外開銷：</p>
+  <div class="tbl-wrap"><table class=""><caption>表 6：第 8 輪，3 個骨幹種子；自適應版本 61.95%、平均 3.70 步</caption><thead><tr><th>版本（bViT-S 平方 · lr 5e-4，λ = 0.03）</th><th class="n">batch 256 吞吐量</th><th class="n">batch 1 延遲</th><th class="n">相對 eager 固定深度 t=4（吞吐量 / 延遲）</th></tr></thead><tbody><tr class=""><td>固定深度 t=4（eager，61.97%，5 步）</td><td class="n">98,931 img/s</td><td class="n">1.71 ms</td><td class="n">1.00× / 1.00×</td></tr><tr class=""><td>自適應第一版（布林遮罩索引，每步約 9 次同步）</td><td class="n">37,647 img/s</td><td class="n">4.37 ms</td><td class="n">0.38× / 0.39×</td></tr><tr class=""><td>自適應，每步只同步一次</td><td class="n">45,112 img/s</td><td class="n">3.59 ms</td><td class="n">0.46× / 0.48×</td></tr><tr class=""><td>自適應 + torch.compile</td><td class="n">52,315 img/s</td><td class="n">3.02 ms</td><td class="n">0.53× / 0.57×</td></tr></tbody></table></div>
+  <p>根本原因：只要每步同步一次，GPU 佇列就會清空，下一步約 55 個小 kernel 的 CPU 發送延遲（每個約 10 µs）全部暴露；這個模型在 batch 256 時每步只需約 0.5 ms，發送延遲與計算同一量級。第 9 輪再加入 O3（整個 batch 只同步一次、依預測步數排序後第 t 步只算前 n<sub>t</sub> 張）與 batch 1 的 CUDA graphs（<code>CudaGraphBS1</code>，決策與 eager 版 100% 一致）。</p>
+  <figure class="fig" id="fig-6"><figcaption><span class="fig-n">圖 6</span>同準確率下相對固定深度的實際速度比（H100，λ ≈ 0.03 附近最佳設定）</figcaption>
+<div class="chart-wrap"><div class="legend"><span class="key"><i class="sw s1"></i>O1：逐步決定是否停止</span><span class="key"><i class="sw s2"></i>O3：一次預測總步數</span></div><svg viewBox="0 0 680 272" role="img" aria-labelledby="c6-t" class="chart">
+<title id="c6-t">實際速度比</title>
+<line class="grid" x1="270.0" x2="270.0" y1="22" y2="226"/>
+<text class="tk" x="270.0" y="244" text-anchor="middle">0.4×</text>
+<line class="grid" x1="316.2" x2="316.2" y1="22" y2="226"/>
+<text class="tk" x="316.2" y="244" text-anchor="middle">0.5×</text>
+<line class="grid" x1="362.5" x2="362.5" y1="22" y2="226"/>
+<text class="tk" x="362.5" y="244" text-anchor="middle">0.6×</text>
+<line class="grid" x1="408.8" x2="408.8" y1="22" y2="226"/>
+<text class="tk" x="408.8" y="244" text-anchor="middle">0.7×</text>
+<line class="grid" x1="455.0" x2="455.0" y1="22" y2="226"/>
+<text class="tk" x="455.0" y="244" text-anchor="middle">0.8×</text>
+<line class="grid" x1="501.2" x2="501.2" y1="22" y2="226"/>
+<text class="tk" x="501.2" y="244" text-anchor="middle">0.9×</text>
+<line class="grid" x1="547.5" x2="547.5" y1="22" y2="226"/>
+<text class="tk" x="547.5" y="244" text-anchor="middle">1.0×</text>
+<line class="grid" x1="593.8" x2="593.8" y1="22" y2="226"/>
+<text class="tk" x="593.8" y="244" text-anchor="middle">1.1×</text>
+<line class="grid" x1="640.0" x2="640.0" y1="22" y2="226"/>
+<text class="tk" x="640.0" y="244" text-anchor="middle">1.2×</text>
+<text class="axl" x="455.0" y="264" text-anchor="middle">速度比（&gt; 1 才是真的加速）</text>
+<line class="refline" x1="547.5" x2="547.5" y1="18" y2="226"/>
+<text class="tk" x="552.5" y="28">固定深度</text>
+<text class="rl" x="256" y="37.0" text-anchor="end">bViT-S 平方權重</text>
+<text class="rs" x="256" y="50.0" text-anchor="end">每步 0.24 GFLOPs · batch 256</text>
+<line class="span" x1="307.0" x2="468.9" y1="39.0" y2="39.0"/>
+<circle class="dot s1" cx="307.0" cy="39.0" r="5"/>
+<circle class="hit" cx="307.0" cy="39.0" r="12" data-tip="bViT-S 平方權重 batch 256 O1：0.48×"/>
+<circle class="dot s2" cx="468.9" cy="39.0" r="5"/>
+<circle class="hit" cx="468.9" cy="39.0" r="12" data-tip="bViT-S 平方權重 batch 256 O3：0.83×"/>
+<line class="rowsep" x1="8" x2="640" y1="56.0" y2="56.0"/>
+<text class="rl" x="256" y="71.0" text-anchor="end">ViT-S 8 區塊</text>
+<text class="rs" x="256" y="84.0" text-anchor="end">每步 0.24 GFLOPs · batch 256</text>
+<line class="span" x1="307.0" x2="427.2" y1="73.0" y2="73.0"/>
+<circle class="dot s1" cx="307.0" cy="73.0" r="5"/>
+<circle class="hit" cx="307.0" cy="73.0" r="12" data-tip="ViT-S 8 區塊 batch 256 O1：0.48×"/>
+<circle class="dot s2" cx="427.2" cy="73.0" r="5"/>
+<circle class="hit" cx="427.2" cy="73.0" r="12" data-tip="ViT-S 8 區塊 batch 256 O3：0.74×"/>
+<line class="rowsep" x1="8" x2="640" y1="90.0" y2="90.0"/>
+<text class="rl" x="256" y="105.0" text-anchor="end">bViT-B</text>
+<text class="rs" x="256" y="118.0" text-anchor="end">每步 0.93 GFLOPs · batch 256</text>
+<line class="span" x1="496.6" x2="584.5" y1="107.0" y2="107.0"/>
+<circle class="dot s1" cx="496.6" cy="107.0" r="5"/>
+<circle class="hit" cx="496.6" cy="107.0" r="12" data-tip="bViT-B batch 256 O1：0.89×"/>
+<circle class="dot s2" cx="584.5" cy="107.0" r="5"/>
+<circle class="hit" cx="584.5" cy="107.0" r="12" data-tip="bViT-B batch 256 O3：1.08×"/>
+<line class="rowsep" x1="8" x2="640" y1="124.0" y2="124.0"/>
+<text class="rl" x="256" y="139.0" text-anchor="end">bViT-S 平方權重</text>
+<text class="rs" x="256" y="152.0" text-anchor="end">每步 0.24 GFLOPs · batch 1 + CUDA graphs</text>
+<line class="span" x1="404.1" x2="505.9" y1="141.0" y2="141.0"/>
+<circle class="dot s1" cx="404.1" cy="141.0" r="5"/>
+<circle class="hit" cx="404.1" cy="141.0" r="12" data-tip="bViT-S 平方權重 batch 1 CUDA graphs O1：0.69×"/>
+<circle class="dot s2" cx="505.9" cy="141.0" r="5"/>
+<circle class="hit" cx="505.9" cy="141.0" r="12" data-tip="bViT-S 平方權重 batch 1 CUDA graphs O3：0.91×"/>
+<line class="rowsep" x1="8" x2="640" y1="158.0" y2="158.0"/>
+<text class="rl" x="256" y="173.0" text-anchor="end">ViT-S 8 區塊</text>
+<text class="rs" x="256" y="186.0" text-anchor="end">每步 0.24 GFLOPs · batch 1 + CUDA graphs</text>
+<line class="span" x1="492.0" x2="496.6" y1="175.0" y2="175.0"/>
+<circle class="dot s1" cx="492.0" cy="175.0" r="5"/>
+<circle class="hit" cx="492.0" cy="175.0" r="12" data-tip="ViT-S 8 區塊 batch 1 CUDA graphs O1：0.88×"/>
+<circle class="dot s2" cx="496.6" cy="175.0" r="5"/>
+<circle class="hit" cx="496.6" cy="175.0" r="12" data-tip="ViT-S 8 區塊 batch 1 CUDA graphs O3：0.89×"/>
+<line class="rowsep" x1="8" x2="640" y1="192.0" y2="192.0"/>
+<text class="rl" x="256" y="207.0" text-anchor="end">bViT-B</text>
+<text class="rs" x="256" y="220.0" text-anchor="end">每步 0.93 GFLOPs · batch 1 + CUDA graphs</text>
+<line class="span" x1="427.2" x2="478.1" y1="209.0" y2="209.0"/>
+<circle class="dot s1" cx="427.2" cy="209.0" r="5"/>
+<circle class="hit" cx="427.2" cy="209.0" r="12" data-tip="bViT-B batch 1 CUDA graphs O1：0.74×"/>
+<circle class="dot s2" cx="478.1" cy="209.0" r="5"/>
+<circle class="hit" cx="478.1" cy="209.0" r="12" data-tip="bViT-B batch 1 CUDA graphs O3：0.85×"/>
+</svg></div>
+<p class="fig-note">12 個量測中只有 bViT-B 在 batch 256 的 O3（k=1）略超過 1×。O1 在 FLOPs 上只需 43–54% 計算量就能達到全深度準確率，但每步一次 GPU→CPU 同步加上小 kernel 的發送延遲，把節省吃掉了。每步計算量越大（bViT-B），額外開銷的佔比越小。</p>
+<details class="data"><summary>數據表</summary><div class="tbl-wrap"><table class=""><thead><tr><th>骨幹</th><th class="n">batch 256 · O1</th><th class="n">batch 256 · O3</th><th class="n">batch 1 CUDA graphs · O1</th><th class="n">batch 1 CUDA graphs · O3</th></tr></thead><tbody><tr class=""><td>bViT-S 平方權重</td><td class="n">0.48×</td><td class="n">0.83×（k=0）</td><td class="n">0.69×</td><td class="n">0.91×</td></tr><tr class=""><td>ViT-S 8 區塊</td><td class="n">0.48×</td><td class="n">0.74×（k=0）</td><td class="n">0.88×</td><td class="n">0.89×</td></tr><tr class=""><td>bViT-B</td><td class="n">0.89×</td><td class="n">1.08×（k=1；k=0 為 0.97×）</td><td class="n">0.74×</td><td class="n">0.85×</td></tr></tbody></table></div></details>
+</figure>
+  <ul class="list">
+    <li>CUDA graphs 讓 batch 1 的所有方法快 3–4 倍（固定深度跑滿 8 步從 2.8 ms 降到 0.71 ms），但自適應仍比同準確率的固定深度慢。</li>
+    <li>O3 只同步一次，實際時間較好，但 FLOPs 優勢幾乎為零，所以最多打平。</li>
+    <li>每步計算量越大，額外開銷佔比越小：bViT-S → bViT-B 時 batch 256 的 O1 從 0.48× 升到 0.89×，O3 首次略超過 1×。</li>
+  </ul>
+  <div class="callout"><p><b>結論：</b>在 32×32 輸入、單步 &lt; 1 GFLOPs 的設定下，H100 上無法把 FLOPs 節省轉成實際加速。實際延遲的主張需要每步計算量更大的設定（224×224 輸入、更寬的模型），或受計算量限制的硬體（CPU、邊緣裝置）。</p></div>
+</section>
+
+<section id="discussion">
+  <h2><span class="sn">7</span>討論</h2>
+  <h3>7.1 這個架構在 CIFAR-100 上的天花板</h3>
+  <p>三個觀察限制了自適應計算在這個任務上的收益：遞迴後段的幫助有限（約第 4–5 步飽和，第 2 步之後只再多 2–3 個百分點）；逐樣本的難度差異中等（多數樣本早就答對或怎麼算都錯）；每步計算量太小，實際時間由發送開銷主導。學習式策略穩定勝過基準，但絕對增益（約 +0.7 AUC）不大。</p>
+  <h3>7.2 限制</h3>
+  <ul class="list">
+    <li><b>單一資料集、低解析度。</b>所有結果都在 CIFAR-100；ImageNet 規模、分布偏移（H2）與人類 / 大腦比較（H3）都還沒做。</li>
+    <li><b>部分消融只有一個種子</b>（時間嵌入、輸入注入、無自我蒸餾、fp16、2 組 mixup、bViT-B）。它們的差異（±0.4）小於多種子設定的標準差上限，不足以下結論。</li>
+    <li><b>Kaggle 與 H100 的 2 個百分點差距</b>未完全解釋；推測與 torch / torchvision 版本有關。</li>
+    <li><b>延遲量測受共用 GPU 影響。</b>部分 batch 1 CUDA-graph 項目的標準差很大（例如 1.354±1.393 ms，單一種子被干擾）；第 5 輪的延遲因其他工作而偏高，已不採用。</li>
+    <li><b>比較對象尚不完整。</b>ACT / PonderNet、RL 停止策略、兩模型串接（Hao et al. 2026）與 AdaPerceiver、A-ViT 等動態深度方法都還沒有重現。</li>
+    <li><b>Gatekeeper 損失的確切定義</b>尚未對照原論文（TODO-2），教師蒸餾（η）未使用。</li>
+  </ul>
+  <h3>7.3 TODO 項目進度</h3>
+  <div class="tbl-wrap"><table class=""><thead><tr><th>項目</th><th>內容</th><th>狀態</th></tr></thead><tbody><tr class=""><td>TODO-1</td><td>停止策略的輸入、特徵來源、輸出形式</td><td><span class="chip good">CIFAR 完成</span> S0 / S2 / S3 / S5 × O1 / O3 × 4 種目標；O2、O4、1c 其他訊號未做</td></tr><tr class=""><td>TODO-2</td><td>校準損失細節</td><td><span class="chip none">未開始</span></td></tr><tr class=""><td>TODO-3</td><td>λ 的設計</td><td><span class="chip warn">部分</span> log-uniform [1e-4, 10]、log λ 輸入、掃描單調已驗證；編碼方式未比較</td></tr><tr class=""><td>TODO-4</td><td>延遲實測</td><td><span class="chip good">CIFAR 完成</span> 動態分組批次、O1 對 O3、torch.compile、CUDA graphs</td></tr><tr class=""><td>TODO-5</td><td>確認資源</td><td><span class="chip warn">部分</span> bViT 無公開程式碼，已自行實作；其他未確認</td></tr></tbody></table></div>
+</section>
+
+<section id="next">
+  <h2><span class="sn">8</span>結論與下一步</h2>
+  <p>在 CIFAR-100 上，「校準 + λ 條件化停止策略」的離線結果符合 H1 的 FLOPs 部分：以只用機率統計量的 MLP，就能在所有骨幹上勝過固定深度與門檻規則，並以約 43–54% 的計算量達到全深度準確率；配方上，偏重後段的步權重讓 1.86M 參數的共用模型追上 14.28M 參數的不共用 ViT。但這個任務本身讓「多想幾步」的價值有限，實際延遲也無法改善。</p>
+  <p>使用者決定下一階段改找<b>適合此架構的任務</b>，並考慮加入<b>仿皮層遞迴網路</b>（TODO.md 第 4 節）。適合的任務應該讓多想幾步真的必要、難度可控且差異大，並能與人類反應時間 / 皮層動態對照。候選：</p>
+  <ol class="list">
+    <li><b>需要逐步傳播的視覺任務</b>：路徑追蹤（Pathfinder、cABC）、迷宮、數數。難度可控、遞迴是必要的，可測試超出訓練步數的零樣本外推（AdRNN 2023）；人類曲線追蹤的反應時間隨路徑長度增加，猴子 V1 有對應的逐步傳播（Roelfsema）；hGRU、BLT 是自然的對照與骨幹。</li>
+    <li><b>遮擋 / 降質影像辨識</b>：遮擋物體、低對比、模糊。遞迴處理與遮擋物體辨識有關（Kar 2019 的挑戰影像、IT 解答時間），直接對應 H2 與 H3。</li>
+    <li><b>由粗到細的分類</b>：CIFAR-100 的 20 個超類別 / 100 個細類別，早期步回答粗類別、後期步回答細類別。</li>
+  </ol>
+</section>
+
+<section id="appendix">
+  <h2>附錄</h2>
+  <h3>A. 各輪紀錄</h3>
+  <ol class="timeline">
+    <li><span class="r">第 1 輪</span><div><span class="w">基準重現</span><p>Kaggle 2×T4 首次執行（61.34%）；H100 上的 bViT-S、減輕增強、8 區塊 ViT。H100 結果低 2 個百分點。</p></div></li>
+    <li><span class="r">第 2 輪</span><div><span class="w">種子與寬度</span><p>bViT-S 與 8 區塊各 3 種子；bViT-B 加寬反而較差。共用模型在第 3–4 步飽和。</p></div></li>
+    <li><span class="r">第 3 輪</span><div><span class="w">找到步權重</span><p>fp16、時間嵌入、輸入注入、無自我蒸餾都只差 ±0.4；線性步權重 +2.8（62.14%，單一種子）。</p></div></li>
+    <li><span class="r">第 4 輪</span><div><span class="w">步權重不穩定</span><p>線性權重 3 種子 60.97±1.58；平方權重 62.08；疊加時間嵌入與注入無額外好處；8 區塊用線性權重沒有差別；2 組 mixup 排除。</p></div></li>
+    <li><span class="r">第 5 輪</span><div><span class="w">降低學習率；停止策略第一版</span><p>lr 5e-4 讓線性權重穩定（61.25±0.36）。TODO-1 第一版：S0 / S3 × 4 種目標，在 5 個骨幹上勝過固定深度。</p></div></li>
+    <li><span class="r">第 6 輪</span><div><span class="w">選定配方；表徵特徵</span><p>平方權重 + lr 5e-4 為最佳共用模型（62.14±0.31）；lr 對照組。S2 / S5 特徵與訓練集輸出沒有一致的好處。</p></div></li>
+    <li><span class="r">第 7 輪</span><div><span class="w">計算量指標與第一次實測</span><p>cost@full / cost@best；線上自適應推論器在 GPU 上比固定深度慢 2–4 倍。</p></div></li>
+    <li><span class="r">第 8 輪</span><div><span class="w">減少同步</span><p>每步一次同步 + torch.compile，改善 20–40%，仍為固定深度的 0.5–0.65 倍。</p></div></li>
+    <li><span class="r">第 9 輪</span><div><span class="w">O3 與 CUDA graphs</span><p>O3 步數預測器、batch 1 CUDA graphs、bViT-B 重新評估；確立 CIFAR 上無實際加速的結論。</p></div></li>
+  </ol>
+
+  <h3>B. 重現方式</h3>
+  <p>在分支 <code>claude/charming-ritchie-qycdtj</code> 上，建立環境後執行（細節見 <code>README.md</code>）：</p>
+  <pre><code>python scripts/run_experiment.py c100_bvit_s_quadw_lr5e4 --seeds 0 1 2 --halting
+python scripts/benchmark_adaptive.py c100_bvit_s_quadw_lr5e4 c100_vit_s_8blk c100_bvit_b --seeds 0 1 2
+python scripts/summarize.py</code></pre>
+  <p>原始數據：<code>results/kaggle_c100_bvit_s/</code>（完整 JSON，含圖 4 的曲線）、<code>results/round1_h100/</code> 至 <code>results/round9_h100/summary.md</code>。</p>
+
+  <h3>C. 參考文獻</h3>
+  <ol class="refs">
+    <li>Byra et al. (2026). <i>Investigating Single-Block Recurrence in Vision Transformers</i>（bViT）. arXiv 2605.10661.</li>
+    <li>Bulat, Ouali &amp; Tzimiropoulos (2026). <i>One Block, Multiple Depths</i>（reViT）.</li>
+    <li>Jajal et al. (2025). <i>AdaPerceiver</i>. arXiv 2511.18105.</li>
+    <li>Li, Wang &amp; Wang (2026). <i>Adaptive Observation Control for Active Visual Recognition</i>（ACCV 2026）.</li>
+    <li>Veerabadran et al. (2023). <i>Adaptive recurrent vision performs zero-shot computation scaling to unseen difficulty levels</i>（AdRNN, NeurIPS）.</li>
+    <li>Rabanser et al. (2025). <i>GATEKEEPER</i>. arXiv 2502.19335.</li>
+    <li>Hao et al. (2026). <i>When Models Know When They Do Not Know</i>. arXiv 2601.07965.</li>
+    <li>Damani et al. (2026). <i>Beyond Binary Rewards</i>（RLCR, ICLR 2026）.</li>
+    <li>Guo et al. (2017). <i>On Calibration of Modern Neural Networks</i>（ICML）.</li>
+    <li>Graves (2016). <i>Adaptive Computation Time</i>；Banino et al. (2021). <i>PonderNet</i>.</li>
+    <li>Spoerer et al. (2020). <i>Recurrent neural networks can explain flexible trading of speed and accuracy in biological vision</i>（PLOS Comput Biol）.</li>
+    <li>Kar et al. (2019). <i>Evidence that recurrent circuits are critical to the ventral stream's execution of core object recognition behavior</i>（Nat Neurosci）.</li>
+    <li>Mayo et al. (2023). <i>How hard are computer vision datasets? Calibrating dataset difficulty to viewing time</i>（NeurIPS D&amp;B）.</li>
+  </ol>
+</section>
+</main>
+</div>
+<footer>由 <code>results/</code> 中的實驗摘要整理；數字與原始摘要一致，四捨五入至小數點後兩位。</footer>
+<script>
+(function(){
+  var tip=document.getElementById('tip');
+  function show(e){var t=e.target.getAttribute&&e.target.getAttribute('data-tip');if(!t)return;tip.textContent=t;tip.hidden=false;move(e);}
+  function move(e){if(tip.hidden)return;var x=e.clientX+14,y=e.clientY+14,r=tip.getBoundingClientRect();
+    if(x+r.width>window.innerWidth-8)x=e.clientX-r.width-14; if(y+r.height>window.innerHeight-8)y=e.clientY-r.height-14;
+    tip.style.left=x+'px';tip.style.top=y+'px';}
+  function hide(e){if(e.target.getAttribute&&e.target.getAttribute('data-tip'))tip.hidden=true;}
+  document.addEventListener('pointerover',show);document.addEventListener('pointermove',move);document.addEventListener('pointerout',hide);
+})();
+</script>
+</body>
+</html>

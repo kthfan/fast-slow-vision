@@ -187,6 +187,8 @@ python scripts/summarize.py
 
 ## 實驗紀錄
 
+完整實驗報告（HTML，含圖表）：[`results/report.html`](results/report.html)。
+
 CIFAR-100，T_max = 8，200 epochs，測試集，H100 bf16（另註明者除外）。
 AUC = 在 [第 0 步, 第 7 步] GFLOPs 區間的平均 top-1（溫度縮放後機率）。多種子為平均±標準差。
 
