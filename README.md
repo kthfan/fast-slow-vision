@@ -383,7 +383,12 @@ benchmark 預設量測（`cudagraph-bs1`、`o3k*-cudagraph-bs1`；`--no-cudagrap
 - 結論：在 32×32 輸入、單步 < 1 GFLOPs 的設定下，H100 上無法把 FLOPs 節省轉成實際加速；
   實際延遲的主張需要每步計算量更大的設定（224×224 輸入、更寬的模型）或受計算量限制的硬體（CPU / 邊緣裝置）。
 
-## 下一階段方向（討論中）
+## 下一階段方向
+
+分支 `claude/cortical-pathfinder`：主線改為仿皮層遞迴網路（CORnet-RT、BLT、hGRU），任務為 Pathfinder。
+開源程式評估、資料集選擇與計畫見 [`docs/cortical_pathfinder_plan.md`](docs/cortical_pathfinder_plan.md)。
+
+以下為選定方向前的討論紀錄。
 
 使用者決定：之後尋找**適合此架構的任務**，並考慮加入**仿皮層遞迴網路**（TODO.md 第 4 節）。
 CIFAR-100 上的結論是：遞迴後段步數的幫助有限（約第 4–5 步飽和）、逐樣本難度差異中等、每步計算量太小以致實際時間被發送開銷主導。
