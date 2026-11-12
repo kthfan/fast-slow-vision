@@ -264,8 +264,10 @@ class CudaGraphBS1:
         with torch.no_grad():
             self.x = torch.zeros(1, cfg.in_chans, cfg.img_size, cfg.img_size, device=device)
             with autocast_ctx(device, amp, cache_enabled=False):
-                probe = model.forward_step(model.embed(self.x), 0, model.embed(self.x))
-            self.x0, self.tok = torch.zeros_like(probe), torch.zeros_like(probe)
+                e = model.embed(self.x)
+                probe = model.forward_step(e, 0, e)
+            # VCNet: the step state (AIT map) has a different shape from the embedding (V1 map)
+            self.x0, self.tok = torch.zeros_like(e), torch.zeros_like(probe)
             self.pred = torch.zeros(1, dtype=torch.long, device=device)
             self.s = torch.zeros(1, dtype=torch.long, device=device)
             self.stop = torch.zeros(1, dtype=torch.bool, device=device)
@@ -305,7 +307,8 @@ class CudaGraphBS1:
         with autocast_ctx(self.device, self.amp, cache_enabled=False):
             x0 = self.model.embed(self.x)
         self.x0.copy_(x0)
-        self.tok.copy_(x0)
+        if self.tok.shape == x0.shape:  # ViT: step 0 reads the embedding from tok; VCNet reads x0
+            self.tok.copy_(x0)
 
     def _step_fn(self, t: int):
         tok, z = self._model_step(self.tok, self.x0, t)

@@ -1,4 +1,4 @@
-"""Evaluate a trained recurrent ViT.
+"""Evaluate a trained recurrent model (bViT or VCNet).
 
 1. Collect per-step logits on the held-out split and the test set.
 2. Stage B: fit one temperature per step on held-out.
@@ -31,7 +31,7 @@ from fsv.engine import auto_amp, collect_outputs, step_latency  # noqa: E402
 from fsv.flops import model_flops  # noqa: E402
 from fsv.halting import curve_auc, fixed_depth_curve, oracle_point, threshold_curve  # noqa: E402
 from fsv.metrics import per_step_metrics  # noqa: E402
-from fsv.models import BViTConfig, RecurrentViT  # noqa: E402
+from fsv.models import load_checkpoint_model  # noqa: E402
 
 
 def parse_args(argv=None):
@@ -65,9 +65,7 @@ def main(argv=None):
     # default: evaluate in the precision the model was trained with (falls back to the device default)
     amp = args.amp if args.amp != "auto" else (ck.get("amp") if device.type == "cuda" and ck.get("amp")
                                                else auto_amp(device))
-    model = RecurrentViT(BViTConfig(**ck["model_cfg"]))
-    model.load_state_dict(ck["model"])
-    model.to(device).eval()
+    model = load_checkpoint_model(ck).to(device).eval()
     train_args = ck.get("args", {})
     dataset = train_args.get("dataset", "cifar100")
     holdout = train_args.get("holdout", 5000)

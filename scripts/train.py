@@ -1,4 +1,4 @@
-"""Stage A training: recurrent bViT with per-step readout on CIFAR.
+"""Stage A training: recurrent bViT or VCNet with per-step readout on CIFAR.
 
 Single GPU (e.g. one H100) or CPU:
     python scripts/train.py --out runs/debug --max-cpus 8
@@ -58,6 +58,7 @@ def parse_args(argv=None):
     p.add_argument("--step-embed-in", action="store_true", help="bViT-TE input time embedding")
     p.add_argument("--input-inject", action="store_true", help="re-inject gated patch embeddings at every step")
     p.add_argument("--layerscale-init", type=float, default=0.0)
+    p.add_argument("--ait-carry", action="store_true", help="VCNet: carry AIT_{t-1} into AIT_t (zero-init gate)")
     # optimisation
     p.add_argument("--epochs", type=int, default=200)
     p.add_argument("--batch-size", type=int, default=256, help="global batch size")
@@ -82,6 +83,8 @@ def parse_args(argv=None):
     p.add_argument("--gk-alpha", type=float, default=0.5)
     p.add_argument("--step-weights", default="uniform", choices=["uniform", "linear", "quadratic"])
     p.add_argument("--label-smoothing", type=float, default=0.0)
+    p.add_argument("--loss-steps", default="all", choices=["all", "last"],
+                   help="all = loss on every step's readout (adaptive); last = final readout only (original VCNet)")
     # bookkeeping
     p.add_argument("--out", default="runs/debug")
     p.add_argument("--seed", type=int, default=0)
@@ -186,10 +189,14 @@ def main(argv=None):
                                 persistent_workers=args.workers > 0)
 
     num_classes = NUM_CLASSES[args.dataset]
-    model = build_model(args.model, num_classes=num_classes, t_max=args.t_max, n_blocks=args.n_blocks,
-                        patch_size=args.patch_size,
-                        norm=args.norm, step_embed_in=args.step_embed_in, input_inject=args.input_inject,
-                        layerscale_init=args.layerscale_init).to(device)
+    if args.model.startswith("vcnet"):
+        model = build_model(args.model, num_classes=num_classes, t_max=args.t_max,
+                            ait_carry=args.ait_carry).to(device)
+    else:
+        model = build_model(args.model, num_classes=num_classes, t_max=args.t_max, n_blocks=args.n_blocks,
+                            patch_size=args.patch_size,
+                            norm=args.norm, step_embed_in=args.step_embed_in, input_inject=args.input_inject,
+                            layerscale_init=args.layerscale_init).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     opt = torch.optim.AdamW(param_groups(model, args.wd), lr=args.lr, betas=(0.9, 0.999))
     scaler = torch.amp.GradScaler("cuda", enabled=amp == "fp16")
@@ -241,6 +248,8 @@ def main(argv=None):
                 g["lr"] = lr
             with autocast_ctx(device, amp):
                 logits = train_model(x)
+            if args.loss_steps == "last":
+                logits = logits[-1:]
             loss, parts = stage_a_loss(logits, target, loss_cfg)
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()

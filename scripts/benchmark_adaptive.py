@@ -45,7 +45,7 @@ from fsv.data import build_splits  # noqa: E402
 from fsv.engine import auto_amp  # noqa: E402
 from fsv.halting.online import AdaptiveRunner, CudaGraphBS1, O3Runner  # noqa: E402
 from fsv.halting.policy import HaltMLP, StepMLP  # noqa: E402
-from fsv.models import BViTConfig, RecurrentViT  # noqa: E402
+from fsv.models import load_checkpoint_model  # noqa: E402
 from fsv.version import code_info  # noqa: E402
 
 
@@ -148,9 +148,7 @@ def main(argv=None):
                 print(f"[benchmark] {run}: missing model.pt or {pol_path.name}; skipped")
                 continue
             ck = torch.load(run_dir / "model.pt", map_location="cpu", weights_only=False)
-            model = RecurrentViT(BViTConfig(**ck["model_cfg"]))
-            model.load_state_dict(ck["model"])
-            model.to(device).eval()
+            model = load_checkpoint_model(ck).to(device).eval()
             amp = ck.get("amp") if device.type == "cuda" and ck.get("amp") else auto_amp(device)
             pc = torch.load(pol_path, map_location="cpu", weights_only=False)
             policy = HaltMLP(pc["in_dim"], use_lambda=pc["use_lambda"], lam_range=tuple(pc["lam_range"]))

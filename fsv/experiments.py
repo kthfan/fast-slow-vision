@@ -13,6 +13,16 @@ _BASE = [
     "--epochs", "200", "--batch-size", "256", "--lr", "1e-3", "--wd", "0.05", "--warmup-epochs", "10",
 ]
 
+# VCNet (docs/vcnet.md): same CIFAR recipe for the original and the adaptive model.
+_VC = [
+    "--dataset", "cifar100", "--model", "vcnet",
+    "--epochs", "200", "--batch-size", "256", "--lr", "1e-3", "--wd", "0.05", "--warmup-epochs", "10",
+]
+# original VCNet: bottom-up sweep + one predictive-coding correction, read out once, plain cross-entropy
+_VC_ORIG = _VC + ["--t-max", "2", "--loss-steps", "last", "--beta", "0", "--gamma", "0", "--delta", "0"]
+# adaptive VCNet: 8 predictive-coding steps, a readout after every step, Stage A loss
+_VC_ADAPT = _VC + ["--t-max", "8", "--step-weights", "quadratic"]
+
 EXPERIMENTS: dict[str, dict] = {
     "smoke": {
         "desc": "Pipeline check on real CIFAR-100: 1 epoch capped at 100 iterations (~1-2 min on one GPU).",
@@ -89,5 +99,30 @@ EXPERIMENTS: dict[str, dict] = {
         "desc": "Non-shared baseline: 8 distinct blocks with an exit after each (same FLOPs, ~8x block params); "
                 "measures the cost of weight sharing.",
         "train": _BASE + ["--n-blocks", "8"],
+    },
+    # ---- VCNet: original (fixed computation) vs adaptive predictive-coding steps
+    "vcnet_smoke": {
+        "desc": "VCNet pipeline check on real CIFAR-100: adaptive variant, 1 epoch capped at 100 iterations.",
+        "train": ["--dataset", "cifar100", "--model", "vcnet", "--t-max", "8", "--epochs", "1",
+                  "--max-steps", "100", "--eval-every", "1"],
+    },
+    "c100_vcnet_orig": {
+        "desc": "Original VCNet (~1.0M params): bottom-up sweep + one AIT->V1 predictive-coding correction, "
+                "single readout, cross-entropy only.",
+        "train": _VC_ORIG,
+    },
+    "c100_vcnet_orig_ff": {
+        "desc": "Original VCNet without the top-down loop at inference (one bottom-up sweep): "
+                "how much does the feedback correction add?",
+        "train": [*_VC_ORIG[:_VC_ORIG.index("--t-max") + 1], "1", *_VC_ORIG[_VC_ORIG.index("--t-max") + 2:]],
+    },
+    "c100_vcnet_adapt": {
+        "desc": "Adaptive VCNet: up to 8 predictive-coding steps, shared readout after every step, "
+                "Stage A loss (CE + Brier + Gatekeeper + self-distillation, quadratic step weights).",
+        "train": _VC_ADAPT,
+    },
+    "c100_vcnet_adapt_carry": {
+        "desc": "Adaptive VCNet + AIT state carried across steps (AIT_t += g * AIT_{t-1}, zero-init gate).",
+        "train": _VC_ADAPT + ["--ait-carry"],
     },
 }

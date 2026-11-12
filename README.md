@@ -155,10 +155,11 @@ python scripts/summarize.py
 | 路徑 | 內容 |
 |---|---|
 | `fsv/models/bvit.py` | `RecurrentViT`：共用 Transformer 區塊遞迴 `t_max` 次；共用讀出頭 `head(LN(CLS_t) + step_emb(t))`；`n_blocks=t_max` 時為不共用權重的 ViT 對照組 |
+| `fsv/models/vcnet.py` | `VCNet`：仿視覺皮層 CNN（Hill et al., 2025），把 AIT→V1 預測編碼迴路展開成步數、每步讀出；設計與假設見 [`docs/vcnet.md`](docs/vcnet.md) |
 | `fsv/losses.py` | Stage A 損失：每步 CE + β·Brier + γ·Gatekeeper 信心損失 + δ·最後一步自我蒸餾 |
 | `fsv/calibration.py` | 每步溫度縮放（held-out 上以 LBFGS 擬合） |
 | `fsv/metrics.py` | acc、ECE、Brier、NLL、AURC |
-| `fsv/flops.py` | 解析式 FLOPs（含每步讀出頭） |
+| `fsv/flops.py` | FLOPs（含每步讀出頭）：ViT 用解析式，VCNet 用 `FlopCounterMode` 實測 |
 | `fsv/halting/thresholds.py` | max-prob / 熵門檻曲線、固定深度早退、oracle 停止步數 t*、曲線下面積 |
 | `fsv/engine.py` | 收集每步 logits / 特徵；逐步延遲量測；AMP 自動選擇（H100 用 bf16） |
 | `fsv/cpu.py` | CPU 核心數硬性上限 |
@@ -382,6 +383,12 @@ benchmark 預設量測（`cudagraph-bs1`、`o3k*-cudagraph-bs1`；`--no-cudagrap
 - 每步計算量越大，額外開銷的佔比越小：bViT-S → bViT-B 時 batch 256 的 O1 從 0.48× 升到 0.89×、O3 首次略超過 1×。
 - 結論：在 32×32 輸入、單步 < 1 GFLOPs 的設定下，H100 上無法把 FLOPs 節省轉成實際加速；
   實際延遲的主張需要每步計算量更大的設定（224×224 輸入、更寬的模型）或受計算量限制的硬體（CPU / 邊緣裝置）。
+
+## VCNet：原始 vs 自適應步數（`dev/vcnet` 分支，0.9.0 起）
+
+使用者決定改用 VCNet，目標是比較**原始 VCNet**與 **VCNet + 自適應步數**。架構、論文沒寫而由我們補上的假設、
+實驗計畫見 [`docs/vcnet.md`](docs/vcnet.md)。取得程式時，把第 1 步指令裡的分支名稱 `claude/charming-ritchie-qycdtj` 換成 `dev/vcnet`。登記的實驗：`vcnet_smoke`、`c100_vcnet_orig`、`c100_vcnet_orig_ff`、
+`c100_vcnet_adapt`、`c100_vcnet_adapt_carry`。
 
 ## 下一階段方向（討論中）
 

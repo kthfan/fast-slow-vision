@@ -1,3 +1,3 @@
-"""Calibrated fast-slow vision: recurrent ViT with per-step calibrated readout."""
+"""Calibrated fast-slow vision: recurrent ViT / VCNet with per-step calibrated readout."""
 
-__version__ = "0.8.3"
+__version__ = "0.9.0"
