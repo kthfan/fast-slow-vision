@@ -1,0 +1,224 @@
+"""Print one compact, paste-friendly summary of finished runs.
+
+    python scripts/summarize.py                      # every run under reports/
+    python scripts/summarize.py c100_bvit_s c100_bvit_b   # only these experiments (all seeds)
+
+Runs of the same experiment with different seeds are aggregated as
+mean ± std (sample std; "±" omitted for a single seed). Copy the whole output,
+including the BEGIN/END lines, into the conversation.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import statistics as st
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+MISSING = object()  # metric absent from a result file (older code), as opposed to None = "never reached"
+
+
+def load(d: Path):
+    def j(name):
+        p = d / name
+        return json.loads(p.read_text()) if p.exists() else None
+
+    hist = d / "history.jsonl"
+    return {"dir": d.name, "env": j("env.json") or {}, "cfg": j("config.json") or {}, "res": j("results.json"),
+            "halt": j("halting.json"), "bench": j("benchmark.json"),
+            "hist": [json.loads(x) for x in hist.read_text().splitlines() if x.strip()] if hist.exists() else []}
+
+
+def ms(vals, prec=1, scale=1.0):
+    vals = [v * scale for v in vals if v is not None]
+    if not vals:
+        return "-"
+    m = st.mean(vals)
+    return f"{m:.{prec}f}" if len(vals) == 1 else f"{m:.{prec}f}±{st.stdev(vals):.{prec}f}"
+
+
+def row(runs, getter, prec=1, scale=1.0):
+    per_run = [getter(r) for r in runs]
+    T = max(len(x) for x in per_run)
+    return " ".join(ms([x[t] for x in per_run if t < len(x)], prec, scale) for t in range(T))
+
+
+def benchmark_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
+    """TODO-4 wall-clock results; speed-ups are against the cheapest fixed depth at least as accurate."""
+    out = []
+    for exp, runs in runs_by_exp.items():
+        bs = [r["bench"] for r in runs if r.get("bench")]
+        if not bs:
+            continue
+        b0 = bs[0]
+        modes = b0.get("modes") or {"eager-naive": {"fixed": b0["fixed"], "adaptive": b0["adaptive"]}}  # <= 0.7.0
+        out += ["", f"[benchmark {exp}] seeds {len(bs)} | {b0['device']} | AMP {b0['amp']} | policy {b0['policy']} | "
+                    f"batch {b0['batch_size']} throughput with compaction, batch-1 latency on {b0['bs1_images']} images"]
+        if "cudagraph_captured" in b0:
+            agree = [a.get("agree_with_eager") for b in bs for m, v in b["modes"].items() if "cudagraph" in m
+                     for a in v["adaptive"]]
+            out.append(f"  CUDA graphs captured: {b0['cudagraph_captured']}; decisions agree with eager on "
+                       f"{min(x for x in agree if x is not None) * 100:.1f}%+ of timed images" if agree else "")
+        if b0.get("cudagraph_error"):
+            out.append(f"  CUDA-graph modes failed: {b0['cudagraph_error'][:200]}")
+        if b0.get("compile_error"):
+            out.append(f"  torch.compile failed: {b0['compile_error'][:200]}")
+        for mode in modes:
+            ms_ = [(b.get("modes") or {"eager-naive": b})[mode] for b in bs if mode in (b.get("modes") or {"eager-naive": b})]
+            out.append(f"  [{mode}]  setting      acc%           steps         img/s            bs1 ms        "
+                       "speed-up vs fixed (bs256 / bs1); * = more accurate than every fixed depth, "
+                       "compared with the most accurate one")
+            T = len(ms_[0]["fixed"])
+            for t in range(T) if not mode.startswith("o3") else []:  # O3 modes reuse the eager/compiled fixed rows
+                rows = [m["fixed"][t] for m in ms_]
+                out.append(f"  fixed t={t:<12}" + ms([r["acc"] for r in rows], 2, 100).rjust(13) + f"{t + 1:15.2f}"
+                           + ms([r["img_per_s"] for r in rows], 0).rjust(16) + ms([r["bs1_ms"] for r in rows], 3).rjust(16))
+            for i, a0 in enumerate(ms_[0]["adaptive"]):
+                rows = [m["adaptive"][i] for m in ms_]
+                ratios_b, ratios_1, above = [], [], False
+                for m, r in zip(ms_, rows):  # cheapest fixed depth with accuracy >= this setting
+                    ok = [f for f in m["fixed"] if f["acc"] >= r["acc"]]
+                    # more accurate than every fixed depth: compare with the most accurate one (marked '*')
+                    f = ok[0] if ok else max(m["fixed"], key=lambda f: f["acc"])
+                    above = above or not ok
+                    if r.get("img_per_s") and f.get("img_per_s"):  # batch-1-only modes have no throughput
+                        ratios_b.append(r["img_per_s"] / f["img_per_s"])
+                    ratios_1.append(f["bs1_ms"] / r["bs1_ms"])
+                out.append(f"  lam={str(a0['lam']):<16}" + ms([r["acc"] for r in rows], 2, 100).rjust(13)
+                           + ms([r["mean_steps"] for r in rows], 2).rjust(15)
+                           + ms([r["img_per_s"] for r in rows], 0).rjust(16)
+                           + ms([r["bs1_ms"] for r in rows], 3).rjust(16)
+                           + f"   {ms(ratios_b, 2)}x / {ms(ratios_1, 2)}x" + (" *" if above else ""))
+    return out
+
+
+def halting_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
+    """TODO-1 study: AUC and accuracy at the compute of fixed depth t=1..3, averaged over backbone seeds."""
+    out = []
+    for exp, runs in runs_by_exp.items():
+        halts = [r["halt"] for r in runs if r.get("halt")]
+        if not halts:
+            continue
+        keys = list(halts[0]["matched_compute_gflops"])
+        out += ["", f"[halting {exp}] backbone seeds {len(halts)} | test set, policies trained on held-out | "
+                    f"AUC and acc@<fixed-depth compute> in %"]
+        has_cost = "cost@full" in halts[0]["baselines"]["fixed_depth"]
+        ckeys = ["cost@full", "cost@best"] if has_cost else []
+        out.append("  " + "method".ljust(22) + "AUC".rjust(13) + "".join(f"acc@{k}".rjust(13) for k in keys)
+                   + "".join(k.rjust(13) for k in ckeys))
+        names = list(halts[0]["baselines"]) + list(dict.fromkeys(k for h in halts for k in h["policies"]))
+        if "cost@full" in halts[0]["baselines"]["fixed_depth"]:
+            out.append("  cost@full / cost@best = compute needed to match the full-depth / best fixed-depth accuracy, "
+                       "% of full-depth compute ('-' = never reached, blank = not computed for that policy)")
+        for name in names:
+            def val(h, k):
+                v = h["baselines"].get(name) or h["policies"].get(name) or {}
+                if k not in v:
+                    return MISSING
+                v = v[k]
+                return v["mean"] if isinstance(v, dict) else v
+
+            def cell(vals, prec, scale):
+                if all(v is MISSING for v in vals):
+                    return ""  # not computed (policy trained before this metric existed)
+                return ms([v for v in vals if v is not MISSING], prec, scale)
+            out.append("  " + name.ljust(22) + cell([val(h, "auc") for h in halts], 2, 100).rjust(13)
+                       + "".join(cell([val(h, f"acc@{k}") for h in halts], 2, 100).rjust(13) for k in keys)
+                       + "".join(cell([val(h, k) for h in halts], 1, 100).rjust(13) for k in ckeys))
+        pol = halts[0]["policies"]
+        rw = [k for k in pol if "reward" in k]
+        if rw:
+            viol = [h["policies"][k]["lambda_monotone_violations"]["mean"] for h in halts for k in rw
+                    if k in h["policies"]]
+            out.append(f"  lambda sweep: mean steps non-monotone in {st.mean(viol):.1f} of 40 adjacent pairs (reward policies)")
+        cost = max(v["policy_cost_fraction_of_step"] for h in halts for v in h["policies"].values())
+        out.append(f"  policy cost <= {cost * 100:.4f}% of one recurrent step; oracle any "
+                   f"{ms([h['oracle']['any']['acc'] for h in halts], 2, 100)}% @ "
+                   f"{ms([h['oracle']['any']['gflops'] for h in halts], 3)} GFLOPs")
+    return out
+
+
+def summarize(runs_by_exp: dict[str, list[dict]], sections=("train", "halting", "bench")) -> str:
+    all_runs = [r for rs in runs_by_exp.values() for r in rs]
+    e = max(all_runs, key=lambda r: (r["env"].get("code_version") is not None, r["env"].get("started", "")))["env"]
+    out = ["===== BEGIN FSV SUMMARY =====",
+           f"code {e.get('code_version', '?')} | {e.get('gpu', '?')} | torch {e.get('torch', '?')} "
+           f"| cpus {e.get('max_cpus', '?')}/{e.get('machine_cpus', '?')}"]
+    versions = {r["env"].get("code_version") for rs in runs_by_exp.values() for r in rs}
+    if len(versions) > 1:
+        out.append(f"NOTE: runs use different code versions: {sorted(map(str, versions))}")
+    for exp, runs in (runs_by_exp.items() if "train" in sections else []):
+        done = [r for r in runs if r["res"]]
+        seeds = ",".join(str(r["env"].get("seed", 0)) for r in runs)
+        failed = [r["dir"] for r in runs if not r["res"]]
+        cfg = runs[0]["cfg"]
+        out.append("")
+        out.append(f"[{exp}] seeds {seeds} | params {cfg.get('params', 0) / 1e6:.2f}M | "
+                   f"train {ms([r['env'].get('train_minutes') for r in runs])} min | "
+                   f"epoch {ms([st.mean(h['epoch_time_s'] for h in r['hist']) for r in runs if r['hist']])}s"
+                   + (f" | FAILED/unfinished: {failed}" if failed else ""))
+        if not done:
+            continue
+        res = [r["res"] for r in done]
+        out.append("  test acc%  " + row(res, lambda r: [x["acc"] for x in r["test_raw"]], 2, 100))
+        out.append("  ECE raw%   " + row(res, lambda r: [x["ece"] for x in r["test_raw"]], 2, 100))
+        out.append("  ECE TS%    " + row(res, lambda r: [x["ece"] for x in r["test_ts"]], 2, 100))
+        out.append("  NLL TS     " + row(res, lambda r: [x["nll"] for x in r["test_ts"]], 3))
+        out.append("  AURC TS%   " + row(res, lambda r: [x["aurc"] for x in r["test_ts"]], 2, 100))
+        out.append("  temp       " + row(res, lambda r: r["temperatures"], 3))
+        out.append("  GFLOPs     " + " ".join(f"{c / 1e9:.3f}" for c in res[0]["flops"]["cumulative"]))
+        lat = [r.get("latency", {}) for r in res]
+        for k in [k for k in lat[0] if k.startswith("bs")]:
+            out.append(f"  lat {k} ms " + row(lat, lambda x: x[k]["ms_cumulative"], 2))
+        hold = [r["hist"][-1]["holdout"] for r in done if r["hist"] and "holdout" in r["hist"][-1]]
+        if hold:
+            out.append("  holdout%   " + row(hold, lambda h: [x["acc"] for x in h], 1, 100))
+        last_loss = [r["hist"][-1].get("train_total") for r in done if r["hist"]]
+        if last_loss:
+            out.append(f"  final train loss {ms(last_loss, 3)} | AMP {cfg.get('amp', '?')}")
+        best = [max(x["acc"] for x in r["test_raw"]) for r in res]
+        out.append(f"  best-step acc {ms(best, 2, 100)} | last-step acc "
+                   f"{ms([r['test_raw'][-1]['acc'] for r in res], 2, 100)}")
+        out.append("  AUC " + " ".join(f"{k} {ms([r['curve_auc_acc'][k] for r in res], 2, 100)}"
+                                        for k in res[0]["curve_auc_acc"]))
+        out.append("  oracle " + " | ".join(
+            f"{k} {ms([r['oracle'][k]['acc'] for r in res], 2, 100)}% @ "
+            f"{ms([r['oracle'][k]['gflops'] for r in res], 3)} GFLOPs" for k in res[0]["oracle"]))
+    if "halting" in sections:
+        out += halting_lines(runs_by_exp)
+    if "bench" in sections:
+        out += benchmark_lines(runs_by_exp)
+    out.append("===== END FSV SUMMARY =====")
+    return "\n".join(out)
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("experiments", nargs="*", help="experiment names (default: all under reports/)")
+    p.add_argument("--reports", default=str(ROOT / "reports"))
+    p.add_argument("--sections", nargs="+", default=["train", "halting", "bench"], choices=["train", "halting", "bench"],
+                   help="which parts to print (default: all)")
+    args = p.parse_args(argv)
+
+    runs_by_exp: dict[str, list[dict]] = {}
+    for d in sorted(Path(args.reports).iterdir() if Path(args.reports).exists() else []):
+        if not (d / "env.json").exists():
+            continue
+        r = load(d)
+        exp = r["env"].get("experiment", d.name)
+        if exp == "smoke" and not args.experiments:
+            continue
+        if args.experiments and exp not in args.experiments:
+            continue
+        runs_by_exp.setdefault(exp, []).append(r)
+    if not runs_by_exp:
+        sys.exit(f"no finished runs found under {args.reports}")
+    for runs in runs_by_exp.values():
+        runs.sort(key=lambda r: r["env"].get("seed", 0))
+    print(summarize(runs_by_exp, args.sections))
+
+
+if __name__ == "__main__":
+    main()

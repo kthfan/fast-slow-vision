@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fsv"
+version = "0.1.0"
+description = "Calibrated fast-slow vision: recurrent ViT with calibrated per-step readout and halting"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.4", "torchvision", "numpy", "pyarrow", "pillow"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["fsv*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
