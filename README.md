@@ -462,6 +462,31 @@ Kaggle T4、torch 2.6.0+cu124、隨機權重（`results/t4_fused/`，圖在 `res
 - 時間圖：`python scripts/profile_breakdown.py --out X.json` 後 `python scripts/plot_timeline.py X.json`，
   畫出單次呼叫的 CPU / GPU 時間線（每個 kernel 依發出它的部分著色）與每部分耗時長條圖。
 
+### 兩個 batch 交錯執行（0.11.0，`AdaptiveRunner.run_interleaved`）
+
+k 個 batch 同時在途、輪流推進：CPU 等 A 的第 t 步結果時，GPU 執行已排入的 B 的 kernel；有 batch 完成就補下一個。
+停止數量改用非同步讀回（pinned 記憶體 + event），不用 `nonzero`（它會等佇列裡所有工作，包含另一個 batch 的）。
+沒有推測性的多算，結果與 `run` 逐位元相同（有測試）。benchmark 模式 `eager-interleaved2`、`triton-interleaved2`（`--inflight`）。
+
+Kaggle T4、batch 256、隨機權重（`results/t4_interleaved/`；每 batch，不開 profiler 的 CPU 時間）：
+
+| 骨幹 / 方法 | 實際耗時 | CPU 發送 kernel | CPU 等同步 | GPU 閒置 | kernel 數 |
+|---|---|---|---|---|---|
+| bViT-S 固定 4 步 | 22.25 ms | 9.87 | 0 | 0% | 118 |
+| bViT-S O1 | 21.32 ms | 12.51 | 7.94 | 20% | 536 |
+| bViT-S O1，2 個在途 | 21.80 ms | **17.99** | **2.51** | 19% | 571 |
+| bViT-S O1 融合，2 個在途 | **20.77 ms** | 13.06 | 6.51 | 7% | 359 |
+| bViT-B O1 | 55.86 ms | 13.31 | 41.67 | 5% | 446 |
+| bViT-B O1，2 個在途 | 54.22 ms | 14.85 | 38.65 | 1% | 476 |
+| bViT-B O1 融合，2 個在途 | **53.70 ms** | 10.77 | 42.13 | 0% | 295 |
+
+- 交錯本身有效：bViT-S 的同步等待從 7.9 降到 2.5 ms，bViT-B 的 GPU 閒置從 5% 降到 1%；3 個在途與 2 個相同。
+- 但實際耗時幾乎不變（bViT-B −3%、bViT-S ±2%，都在 T4 約 ±5% 的量測誤差內）。
+- 原因（bViT-S）：瓶頸是 CPU 發送 kernel，不是同步。CPU 不再等待後，省下的時間全花在變慢的發送上
+  （GPU 忙碌時每次發送更慢：12.5 → 18.0 ms），CPU 總時間（發送 + 等待）兩種做法都約 20.5 ms，GPU 仍在等 CPU。
+  時間圖 `timeline_bvit_s_eager-bs256x2.png` 可見 CPU 線全程忙碌。兩個 batch 同步前進，後段步驟同時只剩少數影像，交錯無法用前段的大工作量填補。
+- 要再進一步，必須減少發送次數：融合 kernel（536 → 359 個）已把閒置降到 7%；下一步是 CUDA graph（依大小分級）或固定槽位池，讓每步只發送一次。
+
 ## VCNet：原始 vs 自適應步數（`dev/vcnet` 分支，0.9.0 起）
 
 使用者決定改用 VCNet，目標是比較**原始 VCNet**與 **VCNet + 自適應步數**。架構、論文沒寫而由我們補上的假設、
