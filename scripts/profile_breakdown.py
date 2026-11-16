@@ -133,23 +133,53 @@ def fixed_eager(r: AdaptiveRunner, x, t_stop, P):
         return z.argmax(-1)
 
 
+def trace_events(prof) -> list[dict]:
+    """The profiler's Chrome-trace events (kernels launched through the driver API, such as
+    Triton kernels, are only linked to their launch site there, not in the op tree)."""
+    import os
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
+    prof.export_chrome_trace(path)
+    ev = json.loads(Path(path).read_text())["traceEvents"]
+    Path(path).unlink()
+    return ev
+
+
+def attribute(ev, t0=float("-inf"), t1=float("inf")):
+    """GPU kernels/copies launched from host time [t0, t1], each assigned to the innermost part
+    range that contains its launch call (matched by correlation id).
+    Returns (list of (part, start, end), part ranges)."""
+    parts = sorted((e for e in ev if e.get("cat") == "user_annotation" and e.get("name") in PARTS and "dur" in e
+                    and t0 <= e["ts"] <= t1), key=lambda e: e["ts"])
+    starts = [e["ts"] for e in parts]
+    calls = {e["args"]["correlation"]: e["ts"] for e in ev if e.get("cat") in ("cuda_runtime", "cuda_driver")
+             and "correlation" in e.get("args", {}) and t0 <= e["ts"] <= t1}
+    import bisect
+
+    def part_at(ts):
+        i = bisect.bisect_right(starts, ts)
+        best = None
+        for e in parts[max(0, i - 8):i]:  # parts do not nest deeply: look at the last few that started
+            if e["ts"] <= ts <= e["ts"] + e["dur"] and (best is None or e["dur"] < best["dur"]):
+                best = e
+        return best["name"] if best else "other"
+
+    segs = [(part_at(calls[e["args"]["correlation"]]), e["ts"], e["ts"] + e["dur"]) for e in ev
+            if e.get("cat") in ("kernel", "gpu_memcpy", "gpu_memset")
+            and e.get("args", {}).get("correlation") in calls]
+    return sorted(segs, key=lambda x: x[1]), parts
+
+
 def gpu_parts(prof) -> tuple[dict, dict, float]:
     """(gpu_us per part, kernel count per part, total GPU busy us) from a profiler run."""
-    from torch.autograd import DeviceType
-
-    gpu, nk, busy = defaultdict(float), defaultdict(int), 0.0
-
-    def kernels(e):
-        return len(e.kernels) + sum(kernels(c) for c in e.cpu_children)
-
-    for e in prof.events():
-        if e.device_type != DeviceType.CPU:
-            continue
-        if e.name in PARTS:
-            gpu[e.name] += e.device_time_total
-            nk[e.name] += kernels(e)
-        busy += sum(k.duration for k in e.kernels)
-    return gpu, nk, busy
+    segs, _ = attribute(trace_events(prof))
+    gpu, nk = defaultdict(float), defaultdict(int)
+    for part, a, b in segs:
+        gpu[part] += b - a
+        nk[part] += 1
+    return gpu, nk, sum(b - a for _, a, b in segs)
 
 
 def breakdown_eager(fn, chunks, sync, repeats, cuda):
@@ -367,9 +397,6 @@ def trace_timeline(fn, sync, cuda, reps: int = 3):
     enclosing part). Times in microseconds from the start of the call."""
     if not cuda:
         return None
-    import os
-    import tempfile
-
     from torch.profiler import ProfilerActivity, profile
 
     for _ in range(3):
@@ -380,25 +407,14 @@ def trace_timeline(fn, sync, cuda, reps: int = 3):
             with torch.profiler.record_function("call"):
                 fn(Parts(profile=True))
             sync()
-    fd, path = tempfile.mkstemp(suffix=".json")
-    os.close(fd)
-    prof.export_chrome_trace(path)
-    ev = json.loads(Path(path).read_text())["traceEvents"]
-    Path(path).unlink()
+    ev = trace_events(prof)
     ua = [e for e in ev if e.get("cat") == "user_annotation" and "dur" in e]
     last = max((e for e in ua if e["name"] == "call"), key=lambda e: e["ts"])
     t0, t1 = last["ts"], last["ts"] + last["dur"]
-    parts = sorted((e for e in ua if e["name"] in PARTS and t0 <= e["ts"] <= t1), key=lambda e: e["ts"])
+    segs, parts = attribute(ev, t0, t1)
+    gpu = [(n, a - t0, b - t0) for n, a, b in segs]
     calls = {e["args"]["correlation"]: e for e in ev if e.get("cat") in ("cuda_runtime", "cuda_driver")
              and "correlation" in e.get("args", {}) and t0 <= e["ts"] <= t1}
-
-    def part_at(ts):
-        inner = [e for e in parts if e["ts"] <= ts <= e["ts"] + e["dur"]]
-        return min(inner, key=lambda e: e["dur"])["name"] if inner else "other"
-
-    gpu = sorted(((part_at(calls[e["args"]["correlation"]]["ts"]), e["ts"] - t0, e["ts"] + e["dur"] - t0)
-                  for e in ev if e.get("cat") in ("kernel", "gpu_memcpy", "gpu_memset")
-                  and e.get("args", {}).get("correlation") in calls), key=lambda x: x[1])
     waits = [(e["name"], e["ts"] - t0, e["ts"] + e["dur"] - t0) for e in calls.values()
              if e["dur"] > 5 and any(k in e["name"] for k in ("Synchronize", "Memcpy"))]
     cpu = [(e["name"], e["ts"] - t0, e["ts"] + e["dur"] - t0) for e in parts]
@@ -545,21 +561,26 @@ def main(argv=None):
             # ---- timelines of one call: an image that stops after the depth of the deepest fixed setting
             if a.trace and cuda:
                 tf = max(fixed_ts)
-                i1 = next((i for i, s_ in enumerate(s_ref) if s_ == tf), 0)
-                xi = Xs[i1:i1 + 1]
+                # an image whose O1 stop step equals the fixed depth (same number of model steps);
+                # decided at batch 1, the setting being traced
+                cand = sorted(range(X.shape[0]), key=lambda i: abs(int(s_all[i]) - tf))[:64]
+                i1 = min(cand, key=lambda i: abs(int(r.run(X[i:i + 1], lam)[1]) - tf))
+                xi = X[i1:i1 + 1]
+                s1_img = int(r.run(xi, lam)[1])
                 cg0 = graphs["O1"]
-                tl = {"image_stop_step": s_ref[i1], "fixed_t": tf, "panels": {}}
+                tl = {"image_index": i1, "image_stop_step": s1_img, "fixed_t": tf, "panels": {}}
+                o1n, o1f = f"O1 ({s1_img + 1} steps)", f"O1 fused ({s1_img + 1} steps)"
                 cfgs = {
                     "graph-bs1": {f"fixed {tf + 1} steps": lambda P: _fixed_graph(cg0, xi, tf, P),
-                                  "O1": lambda P: split["O1"].run(xi, lam, P)},
+                                  o1n: lambda P: split["O1"].run(xi, lam, P)},
                     "eager-bs1": {f"fixed {tf + 1} steps": lambda P: fixed_eager(r, xi, tf, P),
-                                  "O1": lambda P: o1_eager(r, xi, lam, P)},
+                                  o1n: lambda P: o1_eager(r, xi, lam, P)},
                     "eager-bs256": {f"fixed {tf + 1} steps": lambda P: fixed_eager(r, X[:bs], tf, P),
                                     "O1": lambda P: o1_eager(r, X[:bs], lam, P)},
                 }
                 if use_fused:
-                    cfgs["graph-bs1"]["O1 fused"] = lambda P: split["O1-fused"].run(xi, lam, P)
-                    cfgs["eager-bs1"]["O1 fused"] = lambda P: o1_eager(rf, xi, lam, P, True)
+                    cfgs["graph-bs1"][o1f] = lambda P: split["O1-fused"].run(xi, lam, P)
+                    cfgs["eager-bs1"][o1f] = lambda P: o1_eager(rf, xi, lam, P, True)
                     cfgs["eager-bs256"]["O1 fused"] = lambda P: o1_eager(rf, X[:bs], lam, P, True)
                 for panel, cs in cfgs.items():
                     tl["panels"][panel] = {}
