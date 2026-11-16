@@ -384,6 +384,38 @@ benchmark 預設量測（`cudagraph-bs1`、`o3k*-cudagraph-bs1`；`--no-cudagrap
 - 結論：在 32×32 輸入、單步 < 1 GFLOPs 的設定下，H100 上無法把 FLOPs 節省轉成實際加速；
   實際延遲的主張需要每步計算量更大的設定（224×224 輸入、更寬的模型）或受計算量限制的硬體（CPU / 邊緣裝置）。
 
+### CPU 與 GPU 迴圈並行（0.9.0）
+
+想法：GPU 一路往下跑、不等 CPU；CPU 只在旁邊輪詢結果，決定停止後才停掉 GPU 迴圈。實作：
+
+- `AdaptiveRunner.run_pipelined(x, lam, lookahead)`（batch）與 `CudaGraphBS1.run_pipelined`（batch 1，CUDA graphs）：
+  GPU 每步把「仍在跑的影像數 / 停止旗標」非同步複製到 pinned 記憶體並記錄 event；CPU 用不阻塞的 `event.query()` 讀已到達的結果，
+  只有在超前最後一個已知結果 `lookahead` 步時才等待。停止決策在 GPU 上鎖存（latch），所以多跑的步不會改變答案；
+  batch 版的壓縮（compaction）延後 `lookahead` 步。`lookahead=0` 等同原本每步同步一次。決策與同步版逐位元相同（有測試，含 GPU）。
+- benchmark 新模式：`eager-pipelined`、`compiled-pipelined`、`cudagraph-bs1-pipelined`（`--lookahead`，預設 1；`--no-pipelined` 關閉），
+  以及 `cudagraph-bs1-fused`（每步的特徵 + 策略 kernel 用 `torch.compile` 融合後錄進同一張 graph）。
+- `scripts/bench_sync.py`：不需 checkpoint 的合成測試（隨機權重、隨機策略，平均步數調到約 3.5），並量測
+  「**已知停止步、完全不讀回**」的下限：同步版減掉它，就是同步本身的成本；任何把策略留在 GPU 上的作法
+  （pipelining、CUDA graph 條件節點的 GPU 端 while 迴圈）都不可能比這個下限更快。
+
+Kaggle T4、torch 2.6.0+cu124（`results/t4_bench_sync/`；batch 1 CUDA graphs，ms/張）：
+
+| 骨幹 | 固定 t=3（4 步） | O1 每步同步 | O1 pipelined L=1 | L=2 | 不同步下限 | 融合 + 同步 | 融合下限 |
+|---|---|---|---|---|---|---|---|
+| bViT-S（平均 3.52 步） | 0.622 | 0.988 | 1.126 | 1.296 | 0.917 | **0.822** | 0.752 |
+| bViT-B（平均 3.34 步） | 1.522 | 1.720 | 2.122 | 2.572 | 1.616 | **1.545** | 1.457 |
+
+batch 256（eager）：bViT-S 11,989 → 10,439 img/s（L=1），bViT-B 3,720 → 3,120 img/s。
+
+- **同步本身只佔一小部分**：同步版比不同步下限只慢 0.07–0.10 ms（約 7%）。O1 比固定深度慢，主因是每步約 40 個小的特徵 + 策略 kernel
+  （batch 1 每步約 0.1 ms，與一個遞迴步同量級），不是 CPU–GPU 往返。
+- **pipelining 反而更慢**：CUDA stream 無法取消已排入的 kernel，CPU 看到「停」時，已超前排入的 `lookahead` 步仍會跑完，
+  而且排在下一張圖前面；多算一步（0.15–0.4 ms）遠大於省下的同步（每步約 0.02 ms）。batch 256 時壓縮延後也讓已停的影像多算。
+- 要真正「GPU 自己迴圈、停了就不再算」需要 CUDA graph 條件節點（while / if node）；torch 2.6 沒有這個 API，
+  而且它的極限就是上表的「不同步下限」，在 T4 上只比現在快約 7%。
+- **有效的方向是把策略變便宜**：`compile_decide=True` 融合特徵 + 策略後，bViT-S 0.988 → 0.822 ms、bViT-B 1.720 → 1.545 ms，
+  效果比去掉同步還大。H100 的單步更快、同步佔比可能較高，數字需在 H100 上用 `bench_sync.py` / benchmark 的新模式確認。
+
 ## VCNet：原始 vs 自適應步數（`dev/vcnet` 分支，0.9.0 起）
 
 使用者決定改用 VCNet，目標是比較**原始 VCNet**與 **VCNet + 自適應步數**。架構、論文沒寫而由我們補上的假設、
