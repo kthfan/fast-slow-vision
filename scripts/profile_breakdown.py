@@ -119,99 +119,6 @@ def o1_eager(r: AdaptiveRunner, x, lam, P, fused: bool = False):
     return preds, steps
 
 
-def o1_gen(r: AdaptiveRunner, x, lam, P, fused: bool = False):
-    """``AdaptiveRunner._batch_gen`` with every part timed (same operations, same order)."""
-    B, T, dev = x.shape[0], r.T, x.device
-    cuda = dev.type == "cuda"
-    preds = torch.zeros(B, dtype=torch.long, device=dev)
-    steps = torch.full((B,), T - 1, dtype=torch.long, device=dev)
-    idx = torch.arange(B, device=dev)
-    counts = torch.empty(T, dtype=torch.long, pin_memory=cuda)
-    with P("embed"), autocast_ctx(r.device, r.amp):
-        x0 = tok = r.model.embed(x)
-    lam_all = r._lam(B, lam)
-    prev_logp = prev_pred = run = None
-    for t in range(T):
-        with autocast_ctx(r.device, r.amp):
-            with P("model_step"):
-                tok = r.model.forward_step(tok, t, x0)
-            with P("readout"):
-                z = r.model.readout(tok, t)
-        if t == T - 1:
-            with P("record"):
-                preds.index_copy_(0, idx, z.argmax(-1))
-            break
-        n = idx.shape[0]
-        lam_n = None if lam_all is None else lam_all[:n]
-        if fused:
-            with P("fused_decide"):
-                stop, pred, logp, run = r._decide(z, prev_logp, prev_pred, run, lam_n, t)
-        else:
-            with P("features"):
-                p = (z.float() / r.temps[t]).softmax(-1).clamp_min(1e-12)
-                logp = p.log()
-                feats, pred, run = online_s0(p, logp, prev_logp, prev_pred, run, t, T)
-            with P("policy"):
-                stop = r.policy(feats[None], lam_n)[0] > 0
-        with P("record"):
-            preds.index_copy_(0, idx, torch.where(stop, pred, preds.index_select(0, idx)))
-            steps.index_copy_(0, idx, torch.where(stop, torch.full_like(idx, t), steps.index_select(0, idx)))
-            order = torch.argsort(stop.to(torch.uint8), stable=True)
-            if cuda:
-                counts[t].copy_((~stop).sum(), non_blocking=True)
-                ev = torch.cuda.Event()
-                ev.record()
-            else:
-                counts[t] = (~stop).sum()
-                ev = None
-        yield ev
-        with P("sync"):
-            if ev is not None:
-                ev.synchronize()
-            n_keep = int(counts[t])
-        if n_keep == 0:
-            break
-        if n_keep < n:
-            with P("compaction"):
-                keep = order[:n_keep]
-                idx, tok, x0 = idx.index_select(0, keep), tok.index_select(0, keep), x0.index_select(0, keep)
-                logp, pred, run = logp.index_select(0, keep), pred.index_select(0, keep), run.index_select(0, keep)
-        prev_logp, prev_pred = logp, pred
-    return preds, steps
-
-
-def o1_interleaved(r: AdaptiveRunner, xs, lam, P, inflight: int = 2, fused: bool = False):
-    """``AdaptiveRunner.run_interleaved`` driving the timed generators."""
-    from collections import deque
-
-    results, pending, active = [None] * len(xs), iter(enumerate(xs)), deque()
-
-    def advance(i, g):
-        try:
-            next(g)
-            return True
-        except StopIteration as e:
-            results[i] = e.value
-            return False
-
-    def start():
-        for i, x in pending:
-            g = o1_gen(r, x, lam, P, fused)
-            if advance(i, g):
-                active.append((i, g))
-                return
-
-    for _ in range(inflight):
-        start()
-    while active:
-        i, g = active.popleft()
-        if advance(i, g):
-            active.append((i, g))
-        else:
-            start()
-    return results
-
-
 def fixed_eager(r: AdaptiveRunner, x, t_stop, P):
     """``AdaptiveRunner.run_fixed`` with every part timed."""
     with P("embed"), autocast_ctx(r.device, r.amp):
@@ -275,7 +182,7 @@ def gpu_parts(prof) -> tuple[dict, dict, float]:
     return gpu, nk, sum(b - a for _, a, b in segs)
 
 
-def breakdown_eager(fn, chunks, sync, repeats, cuda, n_units: int | None = None):
+def breakdown_eager(fn, chunks, sync, repeats, cuda):
     """fn(chunk, P) over all chunks. Returns per-call cpu/gpu/kernels per part + wall/busy/idle."""
     run_all = lambda P: [fn(c, P) for c in chunks]  # noqa: E731
     run_all(Parts())
@@ -289,7 +196,7 @@ def breakdown_eager(fn, chunks, sync, repeats, cuda, n_units: int | None = None)
         sync()
         walls.append(time.perf_counter() - t0)
         cpus.append(P.cpu)
-    n = n_units or len(chunks)  # n_units: one call covers several batches (interleaved runner)
+    n = len(chunks)
     wall = st.median(walls) / n * 1e6
     cpu = {k: st.median([c.get(k, 0.0) for c in cpus]) / n * 1e6 for k in PARTS}
     gpu, nk, busy = defaultdict(float), defaultdict(int), float("nan")
@@ -579,8 +486,6 @@ def main(argv=None):
     p.add_argument("--bs1-images", type=int, default=200)
     p.add_argument("--repeats", type=int, default=3)
     p.add_argument("--out", default="")
-    p.add_argument("--inflight", type=int, nargs="+", default=[2],
-                   help="batches in flight for the interleaved O1 runner (batch 256)")
     p.add_argument("--no-fused", dest="fused", action="store_false",
                    help="skip the variants with features + policy fused into one Triton kernel")
     p.add_argument("--no-trace", dest="trace", action="store_false",
@@ -625,16 +530,6 @@ def main(argv=None):
                     res["modes"][f"{mode}/{vname}"] = o1
                     print_table(f"{mode} {vname}, lam={lam}, mean steps {float(s_cat.float().mean()) + 1:.2f}, "
                                 f"decisions agree {o1['agree_with_runner'] * 100:.2f}%", o1)
-                if mode == "eager-bs256":  # several batches in flight: per batch, over the same images
-                    for k in a.inflight:
-                        for vname, rr, fz in variants:
-                            il = breakdown_eager(lambda c, P, rr=rr, fz=fz, k=k: o1_interleaved(rr, c, lam, P, k, fz),
-                                                 [ch], sync, a.repeats, cuda, n_units=len(ch))
-                            out_il = o1_interleaved(rr, ch, lam, Parts(), k, fz)
-                            il["agree_with_runner"] = float(torch.cat([o[1] for o in out_il]).eq(s_cat).float().mean())
-                            res["modes"][f"{mode}/{vname}-interleaved{k}"] = il
-                            print_table(f"{mode} {vname} interleaved, {k} batches in flight, decisions agree "
-                                        f"{il['agree_with_runner'] * 100:.2f}%", il)
                 for t in fixed_ts:
                     fx = breakdown_eager(lambda c, P, t=t: fixed_eager(r, c, t, P), ch, sync, a.repeats, cuda)
                     res["modes"][f"{mode}/fixed_t{t}"] = fx
@@ -692,15 +587,6 @@ def main(argv=None):
                     cfgs["graph-bs1"][o1f] = lambda P: split["O1-fused"].run(xi, lam, P)
                     cfgs["eager-bs1"][o1f] = lambda P: o1_eager(rf, xi, lam, P, True)
                     cfgs["eager-bs256"]["O1 fused"] = lambda P: o1_eager(rf, X[:bs], lam, P, True)
-                xa, xb2 = X[:bs], X[bs:2 * bs]
-                cfgs["eager-bs256x2"] = {
-                    f"fixed {tb + 1} steps": lambda P: [fixed_eager(r, c, tb, P) for c in (xa, xb2)],
-                    "O1, one batch after the other": lambda P: [o1_eager(r, c, lam, P) for c in (xa, xb2)],
-                    "O1 interleaved (2 in flight)": lambda P: o1_interleaved(r, [xa, xb2], lam, P, 2),
-                }
-                if use_fused:
-                    cfgs["eager-bs256x2"]["O1 fused, interleaved"] = lambda P: o1_interleaved(rf, [xa, xb2], lam, P,
-                                                                                              2, True)
                 for panel, cs in cfgs.items():
                     tl["panels"][panel] = {}
                     for cname, fn in cs.items():

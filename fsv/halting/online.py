@@ -12,22 +12,19 @@ how much that costs.
 With ``compile=True`` the per-step model call and the per-step
 feature + policy computation are wrapped in ``torch.compile`` (dynamic shapes),
 which fuses the many small kernels; the fixed-depth baseline uses the same
-compiled model step, so the comparison stays fair.
+compiled model step, so the comparison stays fair. With ``fused=True`` the
+features + policy of a step are ONE Triton kernel (``fused.py``).
 
-``run_pipelined`` (and ``CudaGraphBS1.run_pipelined``) removes the per-step stall:
-the CPU keeps launching steps without waiting, while the GPU copies each step's
-result (number of active images / stop flag) into pinned host memory and records
-an event. The CPU only polls those events (``Event.query()``, non-blocking) and
-acts on whatever has already arrived; it blocks only when it would otherwise run
-more than ``lookahead`` steps ahead of the last result it knows. Decisions are
-latched on the GPU, so steps launched speculatively after an image has stopped
-never change its answer; they only cost compute (at most ``lookahead`` steps).
+Tried and removed in 0.12.0 (measurements in README): a pipelined runner (CPU
+launches steps ahead and polls the results; slower, queued speculative steps
+cannot be cancelled), several batches in flight round robin (no gain: the
+batch-256 runner is bound by kernel launches), and torch.compile of the
+feature + policy step inside CUDA graphs (superseded by the Triton kernel).
 """
 
 from __future__ import annotations
 
 import math
-from collections import deque
 
 import torch
 import torch.nn.functional as F
@@ -132,158 +129,6 @@ class AdaptiveRunner:
                 break
             if n_keep < n:
                 idx, tok, x0 = idx.index_select(0, keep), tok.index_select(0, keep), x0.index_select(0, keep)
-                logp, pred, run = logp.index_select(0, keep), pred.index_select(0, keep), run.index_select(0, keep)
-            prev_logp, prev_pred = logp, pred
-        return preds, steps
-
-    def _batch_gen(self, x: torch.Tensor, lam):
-        """One batch of ``run`` as a generator: it launches a step, then yields the event that
-        marks the end of that step's work. When resumed it waits only for that event, reads the
-        number of images still running (copied asynchronously to pinned memory; no ``nonzero``,
-        which would wait for everything queued on the GPU, other batches included), compacts
-        and launches the next step. Returns (predictions, stop steps)."""
-        B, T, dev = x.shape[0], self.T, x.device
-        cuda = dev.type == "cuda"
-        preds = torch.zeros(B, dtype=torch.long, device=dev)
-        steps = torch.full((B,), T - 1, dtype=torch.long, device=dev)
-        idx = torch.arange(B, device=dev)
-        counts = torch.empty(T, dtype=torch.long, pin_memory=cuda)
-        with autocast_ctx(self.device, self.amp):
-            x0 = tok = self.model.embed(x)
-        lam_all = self._lam(B, lam)
-        prev_logp = prev_pred = run = None
-        for t in range(T):
-            tok, z = self._step(tok, x0, t)
-            if t == T - 1:
-                preds.index_copy_(0, idx, z.argmax(-1))
-                break
-            n = idx.shape[0]
-            stop, pred, logp, run = self._decide(z, prev_logp, prev_pred, run,
-                                                 None if lam_all is None else lam_all[:n], t)
-            preds.index_copy_(0, idx, torch.where(stop, pred, preds.index_select(0, idx)))
-            steps.index_copy_(0, idx, torch.where(stop, torch.full_like(idx, t), steps.index_select(0, idx)))
-            order = torch.argsort(stop.to(torch.uint8), stable=True)  # running rows first
-            if cuda:
-                counts[t].copy_((~stop).sum(), non_blocking=True)
-                ev = torch.cuda.Event()
-                ev.record()
-            else:
-                counts[t] = (~stop).sum()
-                ev = None
-            yield ev  # the caller launches other batches' work here
-            if ev is not None:
-                ev.synchronize()
-            n_keep = int(counts[t])
-            if n_keep == 0:
-                break
-            if n_keep < n:
-                keep = order[:n_keep]
-                idx, tok, x0 = idx.index_select(0, keep), tok.index_select(0, keep), x0.index_select(0, keep)
-                logp, pred, run = logp.index_select(0, keep), pred.index_select(0, keep), run.index_select(0, keep)
-            prev_logp, prev_pred = logp, pred
-        return preds, steps
-
-    @torch.no_grad()
-    def run_interleaved(self, xs: list[torch.Tensor], lam: float | None = None,
-                        inflight: int = 2) -> list[tuple[torch.Tensor, torch.Tensor]]:
-        """``run`` on several batches with ``inflight`` of them in progress at once, round robin.
-
-        While the CPU waits for batch A's step-t result, the GPU works on the kernels already
-        queued for batch B, so the queue never drains; when a batch finishes, the next one from
-        ``xs`` takes its place. No speculative work: every launched step is needed. Same results
-        as calling ``run`` on each batch. ``inflight=1`` is ``run`` with the asynchronous read
-        instead of ``nonzero``."""
-        results: list = [None] * len(xs)
-        pending = iter(enumerate(xs))
-        active: deque = deque()
-
-        def advance(i, g) -> bool:  # resume one batch: wait for its last step, launch the next one
-            try:
-                next(g)
-                return True
-            except StopIteration as e:
-                results[i] = e.value
-                return False
-
-        def start() -> None:
-            for i, x in pending:
-                g = self._batch_gen(x, lam)
-                if advance(i, g):
-                    active.append((i, g))
-                    return
-
-        for _ in range(max(1, inflight)):
-            start()
-        while active:
-            i, g = active.popleft()
-            if advance(i, g):
-                active.append((i, g))
-            else:
-                start()
-        return results
-
-    @torch.no_grad()
-    def run_pipelined(self, x: torch.Tensor, lam: float | None = None,
-                      lookahead: int = 1) -> tuple[torch.Tensor, torch.Tensor]:
-        """Like ``run`` but without the per-step stall: the CPU and GPU loops run concurrently.
-
-        After every step the GPU updates an ``alive`` mask (decisions are latched: an image that
-        stopped keeps its prediction and step even if it is computed again) and copies the
-        number of alive images to pinned host memory, followed by an event. Before launching
-        the next step the CPU reads every count that has already arrived (non-blocking) and
-        compacts the batch to that many rows (alive rows first; the count can only be an upper
-        bound of the current one, so no alive row is dropped). It waits only for the count of
-        step ``t - lookahead``, so up to ``lookahead`` steps stay queued on the GPU and the GPU
-        never idles. ``lookahead=0`` behaves like ``run`` (one wait per step). Same results as
-        ``run``: rows are independent, compaction only changes which finished rows are dropped.
-        """
-        B, T = x.shape[0], self.T
-        dev = x.device
-        cuda = dev.type == "cuda"
-        preds = torch.zeros(B, dtype=torch.long, device=dev)
-        steps = torch.full((B,), T - 1, dtype=torch.long, device=dev)
-        idx = torch.arange(B, device=dev)
-        alive = torch.ones(B, dtype=torch.bool, device=dev)
-        counts = torch.empty(T, dtype=torch.long, pin_memory=cuda)  # host side
-        pending: deque = deque()  # (step, event or None) whose count may not have arrived yet
-        known = B  # latest count known on the host (alive counts only decrease)
-        with autocast_ctx(self.device, self.amp):
-            x0 = tok = self.model.embed(x)
-        lam_all = self._lam(B, lam)
-        prev_logp = prev_pred = run = None
-        for t in range(T):
-            tok, z = self._step(tok, x0, t)
-            if t == T - 1:
-                preds.index_copy_(0, idx, torch.where(alive, z.argmax(-1), preds.index_select(0, idx)))
-                break
-            n = idx.shape[0]
-            stop, pred, logp, run = self._decide(z, prev_logp, prev_pred, run,
-                                                 None if lam_all is None else lam_all[:n], t)
-            new = stop & alive
-            preds.index_copy_(0, idx, torch.where(new, pred, preds.index_select(0, idx)))
-            steps.index_copy_(0, idx, torch.where(new, torch.full_like(idx, t), steps.index_select(0, idx)))
-            alive = alive & ~stop
-            if cuda:
-                counts[t].copy_(alive.sum(), non_blocking=True)
-                ev = torch.cuda.Event()
-                ev.record()
-            else:  # CPU: the value is there at once; pretend it arrives `lookahead` steps later
-                counts[t] = alive.sum()
-                ev = None
-            pending.append((t, ev))
-            # absorb what has arrived; block only on the count of step t - lookahead
-            while pending and (pending[0][0] <= t - lookahead or (pending[0][1] is not None
-                                                                  and pending[0][1].query())):
-                j, ev_j = pending.popleft()
-                if ev_j is not None:
-                    ev_j.synchronize()
-                known = min(known, int(counts[j]))
-            if known == 0:
-                break
-            if known < n:  # alive rows first (stable), then keep `known` rows: a superset of the alive ones
-                keep = torch.argsort((~alive).to(torch.uint8), stable=True)[:known]
-                idx, tok, x0, alive = (idx.index_select(0, keep), tok.index_select(0, keep),
-                                       x0.index_select(0, keep), alive.index_select(0, keep))
                 logp, pred, run = logp.index_select(0, keep), pred.index_select(0, keep), run.index_select(0, keep)
             prev_logp, prev_pred = logp, pred
         return preds, steps
@@ -414,9 +259,7 @@ class CudaGraphBS1:
     * fixed depth t: the whole forward pass (embed + steps 0..t) is ONE graph;
     * O1 policy: one graph per step (model step + features + policy), then one host read of
       the stop flag per step;
-    * O1 pipelined (``run_pipelined``): the same per-step graphs with the decision latched on
-      the GPU; the CPU launches step graphs ahead and polls each step's stop flag (copied to
-      pinned memory, with an event) without stalling the GPU;
+    * ``fused=True``: the features + policy of every O1 step are one Triton kernel;
     * O3 policy: one graph for steps 0..k and the depth decision, one host read of the
       chosen depth s, then one graph that runs steps k+1..s.
     All inputs and outputs live in static buffers. On a CPU device nothing is captured and
@@ -424,25 +267,14 @@ class CudaGraphBS1:
     """
 
     def __init__(self, model, temps: torch.Tensor, device, amp: str = "none", policy=None, o3_policy=None,
-                 compile_decide: bool = False, fused: bool = False):
+                 fused: bool = False):
         cfg = model.cfg
-        # optional: fuse the ~40 small feature + policy kernels of each step with torch.compile
-        # (compiled during the warm-up, then captured in the same graph)
-        self._decide_core = self._decide_core_impl
-        if compile_decide:
-            import torch._dynamo as dynamo
-
-            for key in ("cache_size_limit", "recompile_limit"):
-                if hasattr(dynamo.config, key):
-                    setattr(dynamo.config, key, max(getattr(dynamo.config, key), 256))
-            self._decide_core = torch.compile(self._decide_core_impl, dynamic=False)
         # optional: features + policy (and the state update) as ONE Triton kernel per step
         self.fd = None
         if fused and policy is not None:
             from .fused import FusedDecide
 
             self.fd = FusedDecide(policy.eval(), temps, cfg.t_max)
-            self._decide_core = lambda z, pl, pp, r, lam, t: self.fd(z, pl, pp, r, lam, t)
         self.model, self.device, self.amp, self.T = model.eval(), device, amp, cfg.t_max
         self.temps = temps.float().to(device)
         self.policy = policy.eval() if policy is not None else None
@@ -459,9 +291,6 @@ class CudaGraphBS1:
             self.pred = torch.zeros(1, dtype=torch.long, device=device)
             self.s = torch.zeros(1, dtype=torch.long, device=device)
             self.stop = torch.zeros(1, dtype=torch.bool, device=device)
-            self.done = torch.zeros(1, dtype=torch.bool, device=device)  # latch for run_pipelined
-            self.done_host = torch.zeros(self.T, dtype=torch.bool, pin_memory=self.captured)
-            self.events = [torch.cuda.Event() for _ in range(self.T)] if self.captured else None
             self.prev_logp = torch.zeros(1, C, device=device)
             self.prev_pred = torch.zeros(1, dtype=torch.long, device=device)
             self.run_ = torch.zeros(1, device=device)
@@ -471,8 +300,6 @@ class CudaGraphBS1:
             if self.policy is not None:
                 self.g_embed = _Replay(self._embed_fn, cap)
                 self.g_step = [_Replay(lambda t=t: self._step_fn(t), cap) for t in range(self.T)]
-                self.g_embed_latch = _Replay(self._embed_latch_fn, cap)
-                self.g_step_latch = [_Replay(lambda t=t: self._step_latch_fn(t), cap) for t in range(self.T)]
             if self.o3 is not None:
                 k = self.o3.k
                 self.g_o3_head = _Replay(self._o3_head_fn, cap)
@@ -503,7 +330,7 @@ class CudaGraphBS1:
         if self.tok.shape == x0.shape:  # ViT: step 0 reads the embedding from tok; VCNet reads x0
             self.tok.copy_(x0)
 
-    def _decide_core_impl(self, z, prev_logp, prev_pred, run, lam, t: int):
+    def _decide_core(self, z, prev_logp, prev_pred, run, lam, t: int):
         p, logp = self._probs(z, t)
         prev = (prev_logp, prev_pred, run) if t > 0 else (None, None, None)
         feats, pred, run = online_s0(p, logp, *prev, t, self.T)
@@ -527,26 +354,6 @@ class CudaGraphBS1:
         self.run_.copy_(run)
         self.stop.copy_(stop)
         self.pred.copy_(pred)
-
-    def _embed_latch_fn(self):
-        self._embed_fn()
-        self.done.zero_()
-        self.s.fill_(self.T - 1)
-
-    def _step_latch_fn(self, t: int):
-        """``_step_fn`` with the answer latched: once ``done`` is set, ``pred`` and ``s`` no longer change."""
-        tok, z = self._model_step(self.tok, self.x0, t)
-        self.tok.copy_(tok)
-        if t == self.T - 1:
-            self.pred.copy_(torch.where(self.done, self.pred, z.argmax(-1)))
-            return
-        stop, pred, logp, run = self._decide_core(z, self.prev_logp, self.prev_pred, self.run_, self.lam, t)
-        self.prev_logp.copy_(logp)
-        self.prev_pred.copy_(pred)
-        self.run_.copy_(run)
-        self.pred.copy_(torch.where(self.done, self.pred, pred))
-        self.s.copy_(torch.where(stop & ~self.done, torch.full_like(self.s, t), self.s))
-        self.done.copy_(self.done | stop)
 
     def _o3_head_fn(self):
         k = self.o3.k
@@ -593,42 +400,6 @@ class CudaGraphBS1:
         return self.pred.clone(), self.T - 1
 
     @torch.no_grad()
-    def run_pipelined(self, x: torch.Tensor, lam: float | None = None, lookahead: int = 1) -> tuple[torch.Tensor, int]:
-        """O1 without the per-step stall: the CPU keeps up to ``lookahead`` step graphs queued ahead
-        of the last stop flag it has read, and reads flags with non-blocking event queries.
-        Steps launched after the image stopped are wasted compute but cannot change the answer."""
-        self.x.copy_(x)
-        if lam is not None:
-            self.lam.fill_(float(lam))
-        T, ev = self.T, self.events
-        self.g_embed_latch()
-        checked, s = 0, None  # flags of steps < checked have been read and were False
-        for t in range(T):
-            self.g_step_latch[t]()
-            if t == T - 1:
-                break
-            self.done_host[t].copy_(self.done[0], non_blocking=self.captured)
-            if ev is not None:
-                ev[t].record()
-            # read every flag that has arrived; wait only for the flag of step t - lookahead
-            while checked <= t and (checked <= t - lookahead or (ev is not None and ev[checked].query())):
-                if ev is not None:
-                    ev[checked].synchronize()
-                if bool(self.done_host[checked]):
-                    s = checked
-                    break
-                checked += 1
-            if s is not None:
-                break
-        while s is None and checked < min(t, T - 1):  # flags still in flight when the last step was launched
-            if ev is not None:
-                ev[checked].synchronize()
-            if bool(self.done_host[checked]):
-                s = checked
-            checked += 1
-        return self.pred.clone(), (T - 1 if s is None else s)
-
-    @torch.no_grad()
     def run_known_depth(self, x: torch.Tensor, s: int, lam: float | None = None) -> torch.Tensor:
         """Timing bound, not an inference method: replay the O1 step graphs (policy included) for
         steps 0..s without reading anything back, as if the stop step s were known in advance.
@@ -637,9 +408,9 @@ class CudaGraphBS1:
         self.x.copy_(x)
         if lam is not None:
             self.lam.fill_(float(lam))
-        self.g_embed_latch()
+        self.g_embed()
         for t in range(s + 1):
-            self.g_step_latch[t]()
+            self.g_step[t]()
         return self.pred.clone()
 
     @torch.no_grad()

@@ -1,14 +1,13 @@
 """Synthetic timing of the per-step CPU-GPU synchronisation (no checkpoint needed).
 
-    python scripts/bench_sync.py --model bvit_s --steps 3.5 --lookahead 1 2
+    python scripts/bench_sync.py --model bvit_s --steps 3.5
 
 Random weights and a random S0 halting policy whose bias is tuned so the mean number of
 steps is about --steps. Times, back to back in one process:
   * fixed depth (the number of steps closest to the adaptive mean, and one more);
   * O1 with one wait per step (``AdaptiveRunner.run``, ``CudaGraphBS1.run``);
-  * O1 pipelined (``run_pipelined``): the CPU keeps launching steps and polls the results;
-  * O1 with features + policy fused into one Triton kernel, and with torch.compile;
-  * O1 interleaved (``run_interleaved``): k batches in flight, round robin (batch 256 only).
+  * O1 with features + policy fused into one Triton kernel;
+  * O1 "no sync" bound: the step graphs replayed for a known depth (what sync costs).
 Batch 256 throughput (eager) and batch-1 latency (eager and CUDA graphs). Accuracy is
 meaningless here; only the timing and the agreement of the decisions are reported.
 """
@@ -52,16 +51,11 @@ def main(argv=None):
     p.add_argument("--t-max", type=int, default=8)
     p.add_argument("--classes", type=int, default=100)
     p.add_argument("--steps", type=float, default=3.5, help="target mean number of steps of the policy")
-    p.add_argument("--lookahead", type=int, nargs="+", default=[1, 2])
-    p.add_argument("--inflight", type=int, nargs="+", default=[1, 2, 3],
-                   help="batches in flight for the interleaved runner (batch-256 throughput)")
     p.add_argument("--images", type=int, default=4096)
     p.add_argument("--batch-size", type=int, default=256)
     p.add_argument("--bs1-images", type=int, default=300)
     p.add_argument("--repeats", type=int, default=5)
     p.add_argument("--out", default="")
-    p.add_argument("--no-compile-decide", dest="compile_decide", action="store_false",
-                   help="skip the CUDA-graph variant with the feature + policy kernels fused by torch.compile")
     a = p.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     sync = torch.cuda.synchronize if dev.type == "cuda" else (lambda: None)
@@ -93,16 +87,10 @@ def main(argv=None):
     cg = CudaGraphBS1(model, temps, dev, amp, policy=policy)
     ref1 = [runner.run(X[i:i + 1]) for i in range(n1)]
     s1 = [int(r[1]) for r in ref1]
-    cgc = None
     from fsv.halting.fused import triton_usable
 
     rft = AdaptiveRunner(model, policy, temps, dev, amp, fused=True) if triton_usable(dev) else None
     cgt = CudaGraphBS1(model, temps, dev, amp, policy=policy, fused=True) if rft is not None else None
-    if a.compile_decide and dev.type == "cuda":
-        try:
-            cgc = CudaGraphBS1(model, temps, dev, amp, policy=policy, compile_decide=True)
-        except Exception as e:  # keep the other rows
-            print(f"[bench_sync] compile_decide failed: {e!r}"[:300])
 
     chunks = [X[i:i + bs] for i in range(0, N, bs)]
 
@@ -132,28 +120,11 @@ def main(argv=None):
             row(f"fixed t={t}", lambda xb, t=t: runner.run_fixed(xb, t), lambda xb, t=t: runner.run_fixed(xb, t),
                 lambda xb, t=t: cg.run_fixed(xb, t), steps=t + 1)
         row("O1 sync per step", runner.run, runner.run, cg.run, steps=mean_steps, check=True)
-        for k in a.lookahead:
-            row(f"O1 pipelined L={k}", lambda xb, k=k: runner.run_pipelined(xb, None, k),
-                lambda xb, k=k: runner.run_pipelined(xb, None, k), lambda xb, k=k: cg.run_pipelined(xb, None, k),
-                steps=mean_steps, check=True)
-        for k in a.inflight:  # k batches in flight, round robin: the GPU works on one while the CPU waits for another
-            row(f"O1 interleaved k={k}", f_all=lambda c, k=k: runner.run_interleaved(c, None, k), steps=mean_steps,
-                check=True)
-            if rft is not None:
-                row(f"O1 triton interleaved k={k}", f_all=lambda c, k=k: rft.run_interleaved(c, None, k),
-                    steps=mean_steps, check=True)
         row("O1 graphs, no sync (bound)", f_g=lambda xb, i: cg.run_known_depth(xb, s1[i]), steps=mean_steps,
             indexed=True)
         if cgt is not None:  # features + policy in ONE Triton kernel
             row("O1 triton-fused sync", rft.run, rft.run, cgt.run, steps=mean_steps, check=True)
             row("O1 triton-fused bound", f_g=lambda xb, i: cgt.run_known_depth(xb, s1[i]), steps=mean_steps,
-                indexed=True)
-        if cgc is not None:
-            row("O1 fused-decide sync", f_g=cgc.run, steps=mean_steps, check=True)
-            for k in a.lookahead:
-                row(f"O1 fused-decide pipe L={k}", f_g=lambda xb, k=k: cgc.run_pipelined(xb, None, k),
-                    steps=mean_steps, check=True)
-            row("O1 fused-decide bound", f_g=lambda xb, i: cgc.run_known_depth(xb, s1[i]), steps=mean_steps,
                 indexed=True)
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)

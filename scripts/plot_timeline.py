@@ -33,8 +33,7 @@ GROUPS = [  # (label, colour, parts)
 OTHER = ("other", "#d4d3cd")
 COLOR = {p: c for _, c, ps in GROUPS for p in ps}
 SURFACE, INK, INK2, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e4e3de"
-PANEL_TITLE = {"graph-bs1": "batch 1, CUDA graphs", "eager-bs1": "batch 1, eager", "eager-bs256": "batch 256, eager",
-               "eager-bs256x2": "batch 256, eager, two batches"}
+PANEL_TITLE = {"graph-bs1": "batch 1, CUDA graphs", "eager-bs1": "batch 1, eager", "eager-bs256": "batch 256, eager"}
 
 
 def style(ax):
@@ -93,7 +92,7 @@ def plot_timeline(model: str, panel: str, cfgs: dict, out: Path, unit_ms: bool):
     ax.set_yticks(yt, yl)
     ax.set_xlim(0, end * 1.16)
     ax.set_xlabel("time since the call started (" + ("ms" if unit_ms else "µs") + ")", color=INK2, fontsize=9)
-    ax.set_title(f"{model} - {PANEL_TITLE.get(panel, panel)}: {'two batches of 256' if panel.endswith('x2') else 'one batch of 256' if '256' in panel else 'one image'}"
+    ax.set_title(f"{model} - {PANEL_TITLE.get(panel, panel)}: {'one batch of 256' if '256' in panel else 'one image'}"
                  " (under torch.profiler: host times inflated)", loc="left", fontsize=10.5, color=INK)
     handles = [Patch(facecolor=c, label=lab) for lab, c in used_groups(parts)]
     fig.legend(handles=handles, loc="lower left", bbox_to_anchor=(0.01, 0.0), ncol=min(4, len(handles)),
@@ -108,7 +107,7 @@ def plot_breakdown(res: dict, out: Path):
     fixed_ts = res["fixed_ts"]
     panels = [("graph-bs1", "batch 1, CUDA graphs (µs / image)"), ("eager-bs1", "batch 1, eager (µs / image)"),
               ("eager-bs256", "batch 256, eager (ms / batch)")]
-    n256 = 4 + sum(f"eager-bs256/{v}-interleaved{n}" in res["modes"] for v in ("O1", "O1-fused") for n in (2, 3))
+    n256 = 4
     fig, axes = plt.subplots(len(panels), 1, figsize=(11, 5.6 + 0.5 * n256), dpi=150,
                              gridspec_kw={"height_ratios": [4, 4, n256]})
     fig.patch.set_facecolor(SURFACE)
@@ -125,9 +124,7 @@ def plot_breakdown(res: dict, out: Path):
                 gpu, wall = {q: v["gpu_us"] for q, v in m["parts"].items()}, m["wall_us"]
             labels.append(f"fixed {t + 1} steps")
             bars.append((gpu, wall))
-        for k, name in (("O1", "O1"), ("O1-fused", "O1, features + policy fused"),
-                        *((f"{v}-interleaved{n}", f"{lab}, {n} batches in flight")
-                          for n in (2, 3) for v, lab in (("O1", "O1"), ("O1-fused", "O1 fused")))):
+        for k, name in (("O1", "O1"), ("O1-fused", "O1, features + policy fused")):
             m = res["modes"].get(f"{panel}/{k}")
             if m:
                 labels.append(name)

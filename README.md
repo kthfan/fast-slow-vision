@@ -386,6 +386,9 @@ benchmark 預設量測（`cudagraph-bs1`、`o3k*-cudagraph-bs1`；`--no-cudagrap
 
 ### CPU 與 GPU 迴圈並行（0.9.0）
 
+> **0.12.0 起已移除這部分程式碼**（量測結果保留於此與 `results/`）：`run_pipelined`、benchmark 的 `*-pipelined` 模式與 `compile_decide`（`cudagraph-bs1-fused`）；後者已由 Triton 融合 kernel 取代。`bench_sync.py` 的不同步下限（`run_known_depth`）保留。
+
+
 想法：GPU 一路往下跑、不等 CPU；CPU 只在旁邊輪詢結果，決定停止後才停掉 GPU 迴圈。實作：
 
 - `AdaptiveRunner.run_pipelined(x, lam, lookahead)`（batch）與 `CudaGraphBS1.run_pipelined`（batch 1，CUDA graphs）：
@@ -463,6 +466,9 @@ Kaggle T4、torch 2.6.0+cu124、隨機權重（`results/t4_fused/`，圖在 `res
   畫出單次呼叫的 CPU / GPU 時間線（每個 kernel 依發出它的部分著色）與每部分耗時長條圖。
 
 ### 兩個 batch 交錯執行（0.11.0，`AdaptiveRunner.run_interleaved`）
+
+> **0.12.0 起已移除這部分程式碼**（量測結果保留於此與 `results/`）：`run_interleaved`、`*-interleaved*` 模式與 `profile_breakdown.py` 的兩個 batch 時間線。下一步改為固定槽位池。
+
 
 k 個 batch 同時在途、輪流推進：CPU 等 A 的第 t 步結果時，GPU 執行已排入的 B 的 kernel；有 batch 完成就補下一個。
 停止數量改用非同步讀回（pinned 記憶體 + event），不用 `nonzero`（它會等佇列裡所有工作，包含另一個 batch 的）。

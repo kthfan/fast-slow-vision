@@ -15,15 +15,9 @@ Measured on the test set, preloaded on the GPU (no data-loading time):
 CUDA-graph modes ("cudagraph-bs1", "o3k1-cudagraph-bs1"; skip with --no-cudagraph) time batch 1
 with every per-step computation captured as a graph: fixed depth = one graph for the whole
 forward pass, O1 = one graph per step + one host read of the stop flag, O3 = two graphs +
-one host read; "cudagraph-bs1-fused" also fuses each step's feature + policy kernels with torch.compile,
-"cudagraph-bs1-triton" / "eager-triton" compute them in ONE Triton kernel (fsv/halting/fused.py; GPU only). They report latency only (accuracy is taken from the eager modes).
-Interleaved modes ("eager-interleaved2", "triton-interleaved2"; --inflight) keep several batches in
-flight, round robin: while the CPU waits for one batch's step result the GPU runs the next batch's
-queued kernels (batch-256 throughput only).
-Pipelined modes ("eager-pipelined", "compiled-pipelined", "cudagraph-bs1-pipelined"; skip with
---no-pipelined) run the O1 policy without the per-step stall: the CPU keeps launching steps and
-only polls the per-step results (copied to pinned memory, with events), waiting at most
---lookahead steps behind; compaction lags accordingly and decisions are latched on the GPU.
+one host read. They report latency only (accuracy is taken from the eager modes).
+"eager-triton" / "cudagraph-bs1-triton" compute each step's features + policy in ONE Triton kernel
+(fsv/halting/fused.py; GPU only).
 O3 modes ("o3k0-eager", "o3k1-compiled", ...) time step predictors that decide every
 image's depth once after step k (one host sync per batch); they need the O3 policy
 files written by ``halting_study.py --o3-ks``.
@@ -70,12 +64,6 @@ def parse_args(argv=None):
     p.add_argument("--no-compile", dest="compile", action="store_false",
                    help="skip the torch.compile variant (measured by default; eager is always measured)")
     p.add_argument("--naive", action="store_true", help="also time the first runner (several syncs per step)")
-    p.add_argument("--no-pipelined", dest="pipelined", action="store_false",
-                   help="skip the pipelined O1 modes (CPU polls results without stalling the GPU)")
-    p.add_argument("--lookahead", type=int, default=1,
-                   help="pipelined modes: steps the CPU may launch beyond the last result it has read")
-    p.add_argument("--inflight", type=int, nargs="*", default=[2],
-                   help="interleaved modes: batches in flight (round robin); pass the flag alone to skip")
     p.add_argument("--no-cudagraph", dest="cudagraph", action="store_false",
                    help="skip the batch-1 CUDA-graph modes (measured by default)")
     p.add_argument("--o3-policies", nargs="*", default=["S0-o3k0-reward_acc", "S0-o3k1-reward_acc"],
@@ -138,18 +126,6 @@ def measure_cudagraph(res, model, policy, pc, o3_loaded, device, amp, T, X, n1, 
         except Exception as e:
             res["cudagraph_triton_error"] = repr(e)[:500]
             print(f"[benchmark] cudagraph-bs1-triton failed, skipped: {res['cudagraph_triton_error']}")
-    if device.type == "cuda":  # feature + policy kernels fused by torch.compile inside the same per-step graphs
-        try:
-            cgf = CudaGraphBS1(model, pc["temperatures"], device, amp, policy=policy, compile_decide=True)
-            res["modes"]["cudagraph-bs1-fused"] = {"fixed": fixed, "adaptive": adaptive_rows(
-                cgf.run, res["modes"]["eager"]["adaptive"], eager, lams)}
-        except Exception as e:
-            res["cudagraph_fused_error"] = repr(e)[:500]
-            print(f"[benchmark] cudagraph-bs1-fused failed, skipped: {res['cudagraph_fused_error']}")
-    if args.pipelined:  # same graphs with latched decisions; the CPU polls the stop flags
-        res["modes"]["cudagraph-bs1-pipelined"] = {"fixed": fixed, "adaptive": adaptive_rows(
-            lambda xb, lam: cg.run_pipelined(xb, lam, args.lookahead), res["modes"]["eager"]["adaptive"], eager,
-            lams)}
     for tag, (sp, oc) in o3_loaded.items():
         cg3 = CudaGraphBS1(model, oc["temperatures"], device, amp, o3_policy=sp)
         cg3.g_fixed = cg.g_fixed  # same fixed-depth graphs
@@ -229,15 +205,12 @@ def main(argv=None):
                                      "steps_hist": torch.bincount(steps.long(), minlength=T).tolist()})
                 return {"fixed": fixed, "adaptive": adaptive}
 
-            res = {"run": run, "policy": args.policy if policy is not None else None, "lookahead": args.lookahead,
-                   "amp": amp, "batch_size": bs, "bs1_images": n1,
+            res = {"run": run, "policy": args.policy if policy is not None else None, "amp": amp, "batch_size": bs,
+                   "bs1_images": n1,
                    "code_version": code_info()["code_version"],
                    "device": torch.cuda.get_device_name() if device.type == "cuda" else "cpu", "modes": {}}
             eager = AdaptiveRunner(model, policy, pc["temperatures"], device, amp)
             res["modes"]["eager"] = measure(eager, "run")
-            if args.pipelined:  # CPU polls the per-step results instead of waiting for them
-                res["modes"]["eager-pipelined"] = measure(
-                    eager, lambda xb, lam: eager.run_pipelined(xb, lam, args.lookahead), fixed=res["modes"]["eager"]["fixed"])
             from fsv.halting.fused import triton_usable
 
             if triton_usable(device):  # features + policy as ONE Triton kernel per step
@@ -247,21 +220,6 @@ def main(argv=None):
                 except Exception as e:
                     res["triton_error"] = repr(e)[:500]
                     print(f"[benchmark] eager-triton failed, skipped: {res['triton_error']}")
-            if args.inflight:  # several batches in flight, round robin (batch-256 throughput only)
-                chunks = [X[i:i + bs] for i in range(0, N, bs)]
-                runners = [("eager", eager)] + ([("triton", tri)] if "eager-triton" in res["modes"] else [])
-                for tag, rr in runners:
-                    for k in args.inflight:
-                        rows = []
-                        for lam in lams:
-                            sec, out = timed(lambda: rr.run_interleaved(chunks, lam, k), args.repeats, sync)
-                            pred = torch.cat([o[0] for o in out])
-                            steps = torch.cat([o[1] for o in out]).float()
-                            rows.append({"lam": lam, "acc": float((pred == Y).float().mean()),
-                                         "mean_steps": float(steps.mean()) + 1, "img_per_s": N / sec, "bs1_ms": None,
-                                         "steps_hist": torch.bincount(steps.long(), minlength=T).tolist()})
-                        res["modes"][f"{tag}-interleaved{k}"] = {"fixed": res["modes"]["eager"]["fixed"],
-                                                                 "adaptive": rows}
             if args.naive:  # the first runner: boolean-mask indexing, several host syncs per step
                 res["modes"]["eager-naive"] = measure(eager, "run_naive")
             compiled = None
@@ -269,10 +227,6 @@ def main(argv=None):
                 try:
                     compiled = AdaptiveRunner(model, policy, pc["temperatures"], device, amp, compile=True)
                     res["modes"]["compiled"] = measure(compiled, "run")
-                    if args.pipelined:
-                        res["modes"]["compiled-pipelined"] = measure(
-                            compiled, lambda xb, lam: compiled.run_pipelined(xb, lam, args.lookahead),
-                            fixed=res["modes"]["compiled"]["fixed"])
                 except Exception as e:  # keep the eager numbers if compilation is unavailable
                     compiled = None
                     res["compile_error"] = repr(e)[:500]
