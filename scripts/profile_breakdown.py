@@ -17,7 +17,9 @@ For each part it reports, per forward call (one batch of 256, or one image at ba
              and for ``sync`` the time the CPU waits for the GPU);
   * gpu_us   GPU kernel time of the part (torch.profiler, kernels attributed to the part);
   * kernels  number of GPU kernels / copies it launches.
-plus wall time (no profiler), total GPU busy time and GPU idle = wall - busy.
+plus wall time (no profiler), total GPU busy time and GPU idle = wall - busy. The GPU is warmed up
+before timing (clocks ramp up under load); the kernel times come from a separate profiled pass,
+so busy and wall can disagree by a few % when the clock drifts.
 
 Batch 1 with CUDA graphs ("graph-bs1") cannot be profiled per kernel inside one graph, so
 every part is captured as its own graph: model step (+ readout), features, policy; each
@@ -240,20 +242,32 @@ class SplitGraphs:
         return cg.pred.clone(), cg.T - 1
 
 
-def graph_gpu_us(g, n=200, cuda=True) -> tuple[float, float]:
-    """(GPU us, CPU launch us) per replay of one graph, from n back-to-back replays."""
+def warm_gpu(fn, seconds: float, sync):
+    """Run fn until `seconds` have passed, so the GPU clock has ramped up before timing."""
+    t0 = time.perf_counter()
+    while time.perf_counter() - t0 < seconds:
+        fn()
+        sync()
+
+
+def graph_gpu_us(g, n=200, cuda=True, rounds=3) -> tuple[float, float]:
+    """(GPU us, CPU launch us) per replay of one graph: n back-to-back replays, min over rounds."""
     if not cuda:
         return float("nan"), float("nan")
-    torch.cuda.synchronize()
-    e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
-    e0.record()
-    t0 = time.perf_counter()
-    for _ in range(n):
-        g()
-    t1 = time.perf_counter()
-    e1.record()
-    torch.cuda.synchronize()
-    return e0.elapsed_time(e1) * 1e3 / n, (t1 - t0) * 1e6 / n
+    gpu, cpu = [], []
+    for _ in range(rounds):
+        torch.cuda.synchronize()
+        e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+        e0.record()
+        t0 = time.perf_counter()
+        for _ in range(n):
+            g()
+        t1 = time.perf_counter()
+        e1.record()
+        torch.cuda.synchronize()
+        gpu.append(e0.elapsed_time(e1) * 1e3 / n)
+        cpu.append((t1 - t0) * 1e6 / n)
+    return min(gpu), min(cpu)
 
 
 def breakdown_graph(cg: CudaGraphBS1, sg: SplitGraphs, X, lam, s_ref, fixed_ts, sync, repeats, cuda):
@@ -271,6 +285,7 @@ def breakdown_graph(cg: CudaGraphBS1, sg: SplitGraphs, X, lam, s_ref, fixed_ts, 
             ts.append(time.perf_counter() - t0)
         return st.median(ts) / n1 * 1e6, out
 
+    warm_gpu(lambda: [gr() for gr in cg.g_fixed], 2.0 if cuda else 0.0, sync)
     # GPU time and launch cost of every graph (state of the buffers does not matter for timing)
     g = {"embed": graph_gpu_us(cg.g_embed, cuda=cuda)}
     per_t = {k: [graph_gpu_us(gr, cuda=cuda) for gr in lst] for k, lst in
@@ -360,7 +375,8 @@ def print_table(title, res):
     for p, r in res["parts"].items():
         print(f"    {p:<12}{r['cpu_us']:10.1f}{r['gpu_us']:10.1f}{r.get('kernels', float('nan')):9.1f}")
     if "cpu_parts_sum_us" in res:
-        print(f"    {'(other cpu)':<12}{res['wall_us'] - res['cpu_parts_sum_us']:10.1f}")
+        print(f"    {'(rest)':<12}{res['wall_us'] - res['cpu_parts_sum_us']:10.1f}"
+              "   <- host time outside the parts: Python loop, and waiting for the GPU at the end")
 
 
 def main(argv=None):
@@ -402,6 +418,7 @@ def main(argv=None):
         chunks = {"eager-bs256": [X[i:i + bs] for i in range(0, X.shape[0], bs)],
                   "eager-bs1": [X[i:i + 1] for i in range(n1)]}
         with torch.no_grad():
+            warm_gpu(lambda: r.run_fixed(X[:bs], T - 1), 3.0 if cuda else 0.0, sync)
             for mode, ch in chunks.items():
                 ref = [r.run(c, lam) for c in ch]
                 o1 = breakdown_eager(lambda c, P: o1_eager(r, c, lam, P), ch, sync, a.repeats, cuda)
