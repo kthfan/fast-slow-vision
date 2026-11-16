@@ -10,7 +10,8 @@ Both methods are split into the same parts and run with the same code as the run
   readout      head at step t                     features     softmax / log / S0 features
   policy       halting MLP                        record       write finished predictions
   sync         ``nonzero`` (GPU -> CPU read)      compaction   drop finished images
-  argmax       final prediction (fixed depth)
+  argmax       final prediction (fixed depth)     fused_decide features + policy as ONE Triton kernel
+                                                               (``--fused`` variants, fsv/halting/fused.py)
 
 For each part it reports, per forward call (one batch of 256, or one image at batch 1):
   * cpu_us   host time spent inside the part, without the profiler (kernel launches, Python,
@@ -49,7 +50,8 @@ from fsv.halting.online import AdaptiveRunner, CudaGraphBS1, _Replay, online_s0 
 from fsv.halting.policy import HaltMLP  # noqa: E402
 from fsv.models.bvit import build_model  # noqa: E402
 
-PARTS = ["embed", "model_step", "readout", "features", "policy", "record", "sync", "compaction", "argmax"]
+PARTS = ["embed", "model_step", "readout", "features", "policy", "fused_decide", "record", "sync", "compaction",
+         "argmax"]
 
 
 # --------------------------------------------------------------------------- instrumentation
@@ -69,7 +71,7 @@ class Parts:
             self.cpu[name] += time.perf_counter() - t0
 
 
-def o1_eager(r: AdaptiveRunner, x, lam, P):
+def o1_eager(r: AdaptiveRunner, x, lam, P, fused: bool = False):
     """``AdaptiveRunner.run`` with every part timed (same operations, same order)."""
     B, T, dev = x.shape[0], r.T, x.device
     preds = torch.zeros(B, dtype=torch.long, device=dev)
@@ -90,12 +92,17 @@ def o1_eager(r: AdaptiveRunner, x, lam, P):
                 preds.index_copy_(0, idx, z.argmax(-1))
             break
         n = idx.shape[0]
-        with P("features"):
-            p = (z.float() / r.temps[t]).softmax(-1).clamp_min(1e-12)
-            logp = p.log()
-            feats, pred, run = online_s0(p, logp, prev_logp, prev_pred, run, t, T)
-        with P("policy"):
-            stop = r.policy(feats[None], None if lam_all is None else lam_all[:n])[0] > 0
+        if fused:  # r._decide is the Triton kernel
+            with P("fused_decide"):
+                stop, pred, logp, run = r._decide(z, prev_logp, prev_pred, run,
+                                                  None if lam_all is None else lam_all[:n], t)
+        else:
+            with P("features"):
+                p = (z.float() / r.temps[t]).softmax(-1).clamp_min(1e-12)
+                logp = p.log()
+                feats, pred, run = online_s0(p, logp, prev_logp, prev_pred, run, t, T)
+            with P("policy"):
+                stop = r.policy(feats[None], None if lam_all is None else lam_all[:n])[0] > 0
         with P("record"):
             preds.index_copy_(0, idx, torch.where(stop, pred, preds.index_select(0, idx)))
             steps.index_copy_(0, idx, torch.where(stop, torch.full_like(idx, t), steps.index_select(0, idx)))
@@ -194,7 +201,7 @@ class SplitGraphs:
             self.feats = torch.zeros(1, 10 + T, device=dev)
             self.g_model = [_Replay(lambda t=t: self._model_fn(t), cap) for t in range(T)]
             self.g_feat = [_Replay(lambda t=t: self._feat_fn(t), cap) for t in range(T - 1)]
-            self.g_pol = _Replay(self._pol_fn, cap)
+            self.g_pol = _Replay(self._pol_fn, cap) if cg.fd is None else None
 
     def _model_fn(self, t):
         cg = self.cg
@@ -206,6 +213,10 @@ class SplitGraphs:
 
     def _feat_fn(self, t):
         cg = self.cg
+        if cg.fd is not None:  # fused: features + policy + state update in one kernel
+            cg.fd(self.z, cg.prev_logp, cg.prev_pred, cg.run_, cg.lam, t,
+                  out={"stop": cg.stop, "pred": cg.prev_pred, "pred2": cg.pred, "logp": cg.prev_logp, "run": cg.run_})
+            return
         p, logp = cg._probs(self.z, t)
         prev = (cg.prev_logp, cg.prev_pred, cg.run_) if t > 0 else (None, None, None)
         feats, pred, run = online_s0(p, logp, *prev, t, cg.T)
@@ -232,10 +243,14 @@ class SplitGraphs:
                 self.g_model[t]()
             if t == cg.T - 1:
                 break
-            with P("features"):
-                self.g_feat[t]()
-            with P("policy"):
-                self.g_pol()
+            if self.g_pol is None:
+                with P("fused_decide"):
+                    self.g_feat[t]()
+            else:
+                with P("features"):
+                    self.g_feat[t]()
+                with P("policy"):
+                    self.g_pol()
             with P("sync"):
                 if bool(cg.stop.item()):
                     return cg.pred.clone(), t
@@ -270,6 +285,15 @@ def graph_gpu_us(g, n=200, cuda=True, rounds=3) -> tuple[float, float]:
     return min(gpu), min(cpu)
 
 
+def _fixed_graph(cg: CudaGraphBS1, x, t, P):
+    """The fixed-depth forward pass is ONE graph (embed + all steps); shown as one part."""
+    cg.x.copy_(x)
+    with P("model_step"):
+        cg.g_fixed[t]()
+    with P("argmax"):
+        return cg.pred.clone()
+
+
 def breakdown_graph(cg: CudaGraphBS1, sg: SplitGraphs, X, lam, s_ref, fixed_ts, sync, repeats, cuda):
     n1, T = X.shape[0], cg.T
     single = lambda fn: (lambda: [fn(X[i:i + 1]) for i in range(n1)])  # noqa: E731
@@ -291,7 +315,8 @@ def breakdown_graph(cg: CudaGraphBS1, sg: SplitGraphs, X, lam, s_ref, fixed_ts, 
     per_t = {k: [graph_gpu_us(gr, cuda=cuda) for gr in lst] for k, lst in
              (("model_step", sg.g_model), ("features", sg.g_feat), ("o1_step_graph", cg.g_step),
               ("fixed_graph", cg.g_fixed))}
-    g["policy"] = graph_gpu_us(sg.g_pol, cuda=cuda)
+    fused = sg.g_pol is None
+    g["policy"] = (0.0, 0.0) if fused else graph_gpu_us(sg.g_pol, cuda=cuda)
 
     # split O1 run: host time per part, and how many times each part ran per image
     walls, cpus = [], []
@@ -309,8 +334,9 @@ def breakdown_graph(cg: CudaGraphBS1, sg: SplitGraphs, X, lam, s_ref, fixed_ts, 
     n_model = sum(s + 1 for s in steps) / n1
     n_dec = sum(min(s, T - 2) + 1 for s in steps) / n1  # features/policy/sync run at steps 0..min(s, T-2)
     mean_model = lambda k: st.mean(v[0] for v in per_t[k])  # noqa: E731
+    dec = st.mean(v[0] for v in per_t["features"]) * n_dec
     gpu = {"embed": g["embed"][0], "model_step": mean_model("model_step") * n_model,
-           "features": st.mean(v[0] for v in per_t["features"]) * n_dec, "policy": g["policy"][0] * n_dec,
+           **({"fused_decide": dec} if fused else {"features": dec, "policy": g["policy"][0] * n_dec}),
            "sync": 0.0}
     cpu = {k: st.median([c.get(k, 0.0) for c in cpus]) / n1 * 1e6 for k in gpu}
     w = st.median(walls) / n1 * 1e6
@@ -330,6 +356,55 @@ def breakdown_graph(cg: CudaGraphBS1, sg: SplitGraphs, X, lam, s_ref, fixed_ts, 
     o1["launch_us"] = {"embed": g["embed"][1], "policy": g["policy"][1],
                        **{k: st.mean(v[1] for v in per_t[k]) for k in per_t}}
     return o1
+
+
+# --------------------------------------------------------------------------- timelines
+def trace_timeline(fn, sync, cuda, reps: int = 3):
+    """Profile fn(P) a few times and return the CPU and GPU activity of the last call.
+
+    CPU lane: the part ranges (record_function). GPU lane: every kernel / copy, assigned to the
+    part whose host range launched it (kernel correlation id -> CUDA runtime/driver call ->
+    enclosing part). Times in microseconds from the start of the call."""
+    if not cuda:
+        return None
+    import os
+    import tempfile
+
+    from torch.profiler import ProfilerActivity, profile
+
+    for _ in range(3):
+        fn(Parts())
+        sync()
+    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
+        for _ in range(reps):
+            with torch.profiler.record_function("call"):
+                fn(Parts(profile=True))
+            sync()
+    fd, path = tempfile.mkstemp(suffix=".json")
+    os.close(fd)
+    prof.export_chrome_trace(path)
+    ev = json.loads(Path(path).read_text())["traceEvents"]
+    Path(path).unlink()
+    ua = [e for e in ev if e.get("cat") == "user_annotation" and "dur" in e]
+    last = max((e for e in ua if e["name"] == "call"), key=lambda e: e["ts"])
+    t0, t1 = last["ts"], last["ts"] + last["dur"]
+    parts = sorted((e for e in ua if e["name"] in PARTS and t0 <= e["ts"] <= t1), key=lambda e: e["ts"])
+    calls = {e["args"]["correlation"]: e for e in ev if e.get("cat") in ("cuda_runtime", "cuda_driver")
+             and "correlation" in e.get("args", {}) and t0 <= e["ts"] <= t1}
+
+    def part_at(ts):
+        inner = [e for e in parts if e["ts"] <= ts <= e["ts"] + e["dur"]]
+        return min(inner, key=lambda e: e["dur"])["name"] if inner else "other"
+
+    gpu = sorted(((part_at(calls[e["args"]["correlation"]]["ts"]), e["ts"] - t0, e["ts"] + e["dur"] - t0)
+                  for e in ev if e.get("cat") in ("kernel", "gpu_memcpy", "gpu_memset")
+                  and e.get("args", {}).get("correlation") in calls), key=lambda x: x[1])
+    waits = [(e["name"], e["ts"] - t0, e["ts"] + e["dur"] - t0) for e in calls.values()
+             if e["dur"] > 5 and any(k in e["name"] for k in ("Synchronize", "Memcpy"))]
+    cpu = [(e["name"], e["ts"] - t0, e["ts"] + e["dur"] - t0) for e in parts]
+    end = max([t1 - t0] + [g[2] for g in gpu])
+    return {"cpu": cpu, "gpu": gpu, "waits": waits, "end_us": end, "cpu_end_us": t1 - t0,
+            "gpu_busy_us": sum(g[2] - g[1] for g in gpu), "n_kernels": len(gpu)}
 
 
 # --------------------------------------------------------------------------- setup and report
@@ -395,6 +470,10 @@ def main(argv=None):
     p.add_argument("--bs1-images", type=int, default=200)
     p.add_argument("--repeats", type=int, default=3)
     p.add_argument("--out", default="")
+    p.add_argument("--no-fused", dest="fused", action="store_false",
+                   help="skip the variants with features + policy fused into one Triton kernel")
+    p.add_argument("--no-trace", dest="trace", action="store_false",
+                   help="skip the per-call CPU/GPU timelines (for scripts/plot_timeline.py)")
     a = p.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     cuda = dev.type == "cuda"
@@ -417,37 +496,79 @@ def main(argv=None):
         bs, n1 = a.batch_size, min(a.bs1_images, X.shape[0])
         chunks = {"eager-bs256": [X[i:i + bs] for i in range(0, X.shape[0], bs)],
                   "eager-bs1": [X[i:i + 1] for i in range(n1)]}
+        from fsv.halting.fused import triton_usable
+
+        use_fused = a.fused and triton_usable(dev)
+        rf = AdaptiveRunner(model, policy, temps, dev, amp, fused=True) if use_fused else None
         with torch.no_grad():
             warm_gpu(lambda: r.run_fixed(X[:bs], T - 1), 3.0 if cuda else 0.0, sync)
             for mode, ch in chunks.items():
                 ref = [r.run(c, lam) for c in ch]
-                o1 = breakdown_eager(lambda c, P: o1_eager(r, c, lam, P), ch, sync, a.repeats, cuda)
-                o1["agree_with_runner"] = float(torch.cat([o1_eager(r, c, lam, Parts())[1] for c in ch]).eq(
-                    torch.cat([x[1] for x in ref])).float().mean())
-                res["modes"][f"{mode}/O1"] = o1
-                print_table(f"{mode} O1, lam={lam}, mean steps "
-                            f"{float(torch.cat([x[1] for x in ref]).float().mean()) + 1:.2f}", o1)
+                s_cat = torch.cat([x[1] for x in ref])
+                variants = [("O1", r, False)] + ([("O1-fused", rf, True)] if use_fused else [])
+                for vname, rr, fz in variants:
+                    o1 = breakdown_eager(lambda c, P, rr=rr, fz=fz: o1_eager(rr, c, lam, P, fz), ch, sync,
+                                         a.repeats, cuda)
+                    o1["agree_with_runner"] = float(torch.cat([o1_eager(rr, c, lam, Parts(), fz)[1] for c in ch])
+                                                    .eq(s_cat).float().mean())
+                    res["modes"][f"{mode}/{vname}"] = o1
+                    print_table(f"{mode} {vname}, lam={lam}, mean steps {float(s_cat.float().mean()) + 1:.2f}, "
+                                f"decisions agree {o1['agree_with_runner'] * 100:.2f}%", o1)
                 for t in fixed_ts:
                     fx = breakdown_eager(lambda c, P, t=t: fixed_eager(r, c, t, P), ch, sync, a.repeats, cuda)
                     res["modes"][f"{mode}/fixed_t{t}"] = fx
                     print_table(f"{mode} fixed {t + 1} steps", fx)
-            cg = CudaGraphBS1(model, temps, dev, amp, policy=policy)
-            sg = SplitGraphs(cg)
             Xs = X[:n1]
             s_ref = [int(r.run(Xs[i:i + 1], lam)[1]) for i in range(n1)]
-            gr = breakdown_graph(cg, sg, Xs, lam, s_ref, fixed_ts, sync, a.repeats, cuda)
-            res["modes"]["graph-bs1/O1"] = gr
-            print_table(f"graph-bs1 O1 split into part graphs, mean steps {gr['model_steps_per_image']:.2f}, "
-                        f"decisions agree {gr['agree_with_eager'] * 100:.0f}%", gr)
-            print("    reference wall us/img (real graphs): "
-                  + ", ".join(f"{k} {v:.1f}" for k, v in gr["reference_wall_us"].items()))
-            print("    reference GPU us/img (real graphs):  "
-                  + ", ".join(f"{k} {v:.1f}" for k, v in gr["reference_gpu_us"].items()))
-            pg = gr["per_graph_us"]
-            print(f"    per graph GPU us: embed {pg['embed'][0]:.1f}, model step {pg['model_step']}, "
-                  f"features {pg['features']}, policy {pg['policy'][0]:.1f}, "
-                  f"O1 step graph {pg['o1_step_graph']}")
-            print("    per graph launch us (CPU): " + ", ".join(f"{k} {v:.1f}" for k, v in gr["launch_us"].items()))
+            graphs = {"O1": CudaGraphBS1(model, temps, dev, amp, policy=policy)}
+            if use_fused:
+                graphs["O1-fused"] = CudaGraphBS1(model, temps, dev, amp, policy=policy, fused=True)
+            split = {}
+            for vname, cg in graphs.items():
+                sg = split[vname] = SplitGraphs(cg)
+                gr = breakdown_graph(cg, sg, Xs, lam, s_ref, fixed_ts, sync, a.repeats, cuda)
+                res["modes"][f"graph-bs1/{vname}"] = gr
+                print_table(f"graph-bs1 {vname} split into part graphs, mean steps "
+                            f"{gr['model_steps_per_image']:.2f}, decisions agree {gr['agree_with_eager'] * 100:.1f}%",
+                            gr)
+                print("    reference wall us/img (real graphs): "
+                      + ", ".join(f"{k} {v:.1f}" for k, v in gr["reference_wall_us"].items()))
+                print("    reference GPU us/img (real graphs):  "
+                      + ", ".join(f"{k} {v:.1f}" for k, v in gr["reference_gpu_us"].items()))
+                pg = gr["per_graph_us"]
+                print(f"    per graph GPU us: embed {pg['embed'][0]:.1f}, model step {pg['model_step']}, "
+                      f"features{'+policy (fused)' if vname.endswith('fused') else ''} {pg['features']}, "
+                      f"policy {pg['policy'][0]:.1f}, O1 step graph {pg['o1_step_graph']}")
+                print("    per graph launch us (CPU): "
+                      + ", ".join(f"{k} {v:.1f}" for k, v in gr["launch_us"].items()))
+
+            # ---- timelines of one call: an image that stops after the depth of the deepest fixed setting
+            if a.trace and cuda:
+                tf = max(fixed_ts)
+                i1 = next((i for i, s_ in enumerate(s_ref) if s_ == tf), 0)
+                xi = Xs[i1:i1 + 1]
+                cg0 = graphs["O1"]
+                tl = {"image_stop_step": s_ref[i1], "fixed_t": tf, "panels": {}}
+                cfgs = {
+                    "graph-bs1": {f"fixed {tf + 1} steps": lambda P: _fixed_graph(cg0, xi, tf, P),
+                                  "O1": lambda P: split["O1"].run(xi, lam, P)},
+                    "eager-bs1": {f"fixed {tf + 1} steps": lambda P: fixed_eager(r, xi, tf, P),
+                                  "O1": lambda P: o1_eager(r, xi, lam, P)},
+                    "eager-bs256": {f"fixed {tf + 1} steps": lambda P: fixed_eager(r, X[:bs], tf, P),
+                                    "O1": lambda P: o1_eager(r, X[:bs], lam, P)},
+                }
+                if use_fused:
+                    cfgs["graph-bs1"]["O1 fused"] = lambda P: split["O1-fused"].run(xi, lam, P)
+                    cfgs["eager-bs1"]["O1 fused"] = lambda P: o1_eager(rf, xi, lam, P, True)
+                    cfgs["eager-bs256"]["O1 fused"] = lambda P: o1_eager(rf, X[:bs], lam, P, True)
+                for panel, cs in cfgs.items():
+                    tl["panels"][panel] = {}
+                    for cname, fn in cs.items():
+                        tr = trace_timeline(fn, sync, cuda)
+                        tl["panels"][panel][cname] = tr
+                        print(f"  [timeline {panel} / {cname}] {tr['end_us']:.0f} us, GPU busy "
+                              f"{tr['gpu_busy_us']:.0f} us, {tr['n_kernels']} kernels")
+                res["timelines"] = tl
         all_res.append(res)
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)

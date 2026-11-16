@@ -6,7 +6,8 @@ Random weights and a random S0 halting policy whose bias is tuned so the mean nu
 steps is about --steps. Times, back to back in one process:
   * fixed depth (the number of steps closest to the adaptive mean, and one more);
   * O1 with one wait per step (``AdaptiveRunner.run``, ``CudaGraphBS1.run``);
-  * O1 pipelined (``run_pipelined``): the CPU keeps launching steps and polls the results.
+  * O1 pipelined (``run_pipelined``): the CPU keeps launching steps and polls the results;
+  * O1 with features + policy fused into one Triton kernel, and with torch.compile.
 Batch 256 throughput (eager) and batch-1 latency (eager and CUDA graphs). Accuracy is
 meaningless here; only the timing and the agreement of the decisions are reported.
 """
@@ -90,6 +91,10 @@ def main(argv=None):
     ref1 = [runner.run(X[i:i + 1]) for i in range(n1)]
     s1 = [int(r[1]) for r in ref1]
     cgc = None
+    from fsv.halting.fused import triton_usable
+
+    rft = AdaptiveRunner(model, policy, temps, dev, amp, fused=True) if triton_usable(dev) else None
+    cgt = CudaGraphBS1(model, temps, dev, amp, policy=policy, fused=True) if rft is not None else None
     if a.compile_decide and dev.type == "cuda":
         try:
             cgc = CudaGraphBS1(model, temps, dev, amp, policy=policy, compile_decide=True)
@@ -128,6 +133,10 @@ def main(argv=None):
                 steps=mean_steps, check=True)
         row("O1 graphs, no sync (bound)", f_g=lambda xb, i: cg.run_known_depth(xb, s1[i]), steps=mean_steps,
             indexed=True)
+        if cgt is not None:  # features + policy in ONE Triton kernel
+            row("O1 triton-fused sync", rft.run, rft.run, cgt.run, steps=mean_steps, check=True)
+            row("O1 triton-fused bound", f_g=lambda xb, i: cgt.run_known_depth(xb, s1[i]), steps=mean_steps,
+                indexed=True)
         if cgc is not None:
             row("O1 fused-decide sync", f_g=cgc.run, steps=mean_steps, check=True)
             for k in a.lookahead:

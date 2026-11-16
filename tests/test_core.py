@@ -385,3 +385,85 @@ def test_cudagraph_bs1_on_gpu():
             assert int(p3) == int(po) and s3 == int(so)
     for t in range(T):
         assert int(cg.run_fixed(xd[:1], t)) == int(eager.run_fixed(xd[:1], t))
+    # features + policy in one Triton kernel: same decisions up to float rounding of the policy logit
+    from fsv.halting.fused import triton_usable
+
+    if triton_usable(dev):
+        cgt = CudaGraphBS1(model, temps, dev, amp, policy=pol, fused=True)
+        tri = AdaptiveRunner(model, pol, temps, dev, amp, fused=True)
+        agree, n = 0, 0
+        for lam in (1e-3, 0.3):
+            pe, se = eager.run(xd, lam)
+            pt, s_t = tri.run(xd, lam)
+            assert (s_t == se).float().mean() >= 0.9 and (pt == pe).float().mean() >= 0.9
+            for i in range(N):
+                p1, s1 = eager.run(xd[i:i + 1], lam)
+                p2, s2 = cgt.run(xd[i:i + 1], lam)
+                agree += int(int(p2) == int(p1) and s2 == int(s1))
+                n += 1
+        assert agree / n >= 0.95, agree / n
+
+
+_FUSED_CHECK = r"""
+import torch
+from fsv.halting.features import build_features
+from fsv.halting.fused import FusedDecide
+from fsv.halting.online import AdaptiveRunner, CudaGraphBS1, online_s0
+from fsv.halting.policy import HaltMLP, train_policy
+from fsv.models.bvit import build_model
+
+torch.manual_seed(0)
+T, N, C = 4, 24, 10
+model = build_model("bvit_tiny", num_classes=C, t_max=T).eval()
+x = torch.randn(N, 3, 32, 32)
+labels = torch.randint(0, C, (N,))
+temps = torch.tensor([1.2, 1.0, 0.9, 0.8])
+with torch.no_grad():
+    logits = model(x)
+feats = build_features({"logits": logits}, temps, "S0")
+p_off = (logits / temps[:, None, None]).softmax(-1)
+dev = torch.device("cpu")
+for use_lam in (False, True):
+    pol, _ = train_policy(feats, p_off, labels, "reward_acc" if use_lam else "oracle_any", iters=40)
+    assert pol.use_lambda == use_lam
+    ref, fus = AdaptiveRunner(model, pol, temps, dev), AdaptiveRunner(model, pol, temps, dev, fused=True)
+    cg = CudaGraphBS1(model, temps, dev, policy=pol, fused=True)
+    for lam in (1e-3, 0.3):
+        pr, sr = ref.run(x, lam)
+        for fn in (fus.run, lambda a, b: fus.run_pipelined(a, b, 1)):
+            pf, sf = fn(x, lam)
+            assert torch.equal(pf, pr) and torch.equal(sf, sr), (use_lam, lam)
+        for i in range(N):
+            for f in (cg.run, cg.run_pipelined):
+                p1, s1 = f(x[i:i + 1], lam)
+                assert int(p1) == int(pr[i]) and s1 == int(sr[i])
+    # features and state written by the kernel equal the PyTorch ones
+    fd = FusedDecide(pol, temps, T)
+    lam = torch.full((N,), 0.05)
+    prev = (None, None, None)
+    st = (None, None, None)
+    for t in range(T - 1):
+        p = p_off[t].clamp_min(1e-12)
+        f_ref, pred, run = online_s0(p, p.log(), *prev, t, T)
+        fo = torch.empty(N, 10 + T)
+        stop, pf, lp, rf = fd(logits[t], *st, lam if use_lam else None, t, feats_out=fo)
+        torch.testing.assert_close(fo, f_ref, atol=1e-5, rtol=1e-5)
+        assert torch.equal(pf, pred) and torch.equal(rf, run)
+        prev, st = (p.log(), pred, run), (lp, pf, rf)
+print("FUSED_OK")
+"""
+
+
+def test_fused_decide_kernel_matches_pytorch_in_triton_interpreter():
+    # The Triton kernel runs on the CPU through TRITON_INTERPRET=1 (env var must be set before import).
+    pytest.importorskip("triton")
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    r = subprocess.run([sys.executable, "-c", _FUSED_CHECK], cwd=root, capture_output=True, text=True,
+                       env={**os.environ, "TRITON_INTERPRET": "1", "CUDA_VISIBLE_DEVICES": "",
+                            "PYTHONPATH": str(root)}, timeout=900)
+    assert "FUSED_OK" in r.stdout, r.stdout[-2000:] + r.stderr[-4000:]

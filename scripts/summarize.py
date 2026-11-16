@@ -72,7 +72,7 @@ def benchmark_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
                        "compared with the most accurate one")
             T = len(ms_[0]["fixed"])
             # O3 and pipelined modes reuse the eager/compiled/cudagraph fixed rows
-            for t in range(T) if not (mode.startswith("o3") or mode.endswith(("pipelined", "fused"))) else []:
+            for t in range(T) if not (mode.startswith("o3") or mode.endswith(("pipelined", "fused", "triton"))) else []:
                 rows = [m["fixed"][t] for m in ms_]
                 out.append(f"  fixed t={t:<12}" + ms([r["acc"] for r in rows], 2, 100).rjust(13) + f"{t + 1:15.2f}"
                            + ms([r["img_per_s"] for r in rows], 0).rjust(16) + ms([r["bs1_ms"] for r in rows], 3).rjust(16))

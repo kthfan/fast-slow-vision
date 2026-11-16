@@ -15,7 +15,8 @@ Measured on the test set, preloaded on the GPU (no data-loading time):
 CUDA-graph modes ("cudagraph-bs1", "o3k1-cudagraph-bs1"; skip with --no-cudagraph) time batch 1
 with every per-step computation captured as a graph: fixed depth = one graph for the whole
 forward pass, O1 = one graph per step + one host read of the stop flag, O3 = two graphs +
-one host read; "cudagraph-bs1-fused" also fuses each step's feature + policy kernels with torch.compile. They report latency only (accuracy is taken from the eager modes).
+one host read; "cudagraph-bs1-fused" also fuses each step's feature + policy kernels with torch.compile,
+"cudagraph-bs1-triton" / "eager-triton" compute them in ONE Triton kernel (fsv/halting/fused.py; GPU only). They report latency only (accuracy is taken from the eager modes).
 Pipelined modes ("eager-pipelined", "compiled-pipelined", "cudagraph-bs1-pipelined"; skip with
 --no-pipelined) run the O1 policy without the per-step stall: the CPU keeps launching steps and
 only polls the per-step results (copied to pinned memory, with events), waiting at most
@@ -122,6 +123,16 @@ def measure_cudagraph(res, model, policy, pc, o3_loaded, device, amp, T, X, n1, 
 
     res["modes"]["cudagraph-bs1"] = {"fixed": fixed, "adaptive": adaptive_rows(
         cg.run, res["modes"]["eager"]["adaptive"], eager, lams)}
+    from fsv.halting.fused import triton_usable
+
+    if triton_usable(device):  # features + policy as ONE Triton kernel inside each step graph
+        try:
+            cgt = CudaGraphBS1(model, pc["temperatures"], device, amp, policy=policy, fused=True)
+            res["modes"]["cudagraph-bs1-triton"] = {"fixed": fixed, "adaptive": adaptive_rows(
+                cgt.run, res["modes"]["eager"]["adaptive"], eager, lams)}
+        except Exception as e:
+            res["cudagraph_triton_error"] = repr(e)[:500]
+            print(f"[benchmark] cudagraph-bs1-triton failed, skipped: {res['cudagraph_triton_error']}")
     if device.type == "cuda":  # feature + policy kernels fused by torch.compile inside the same per-step graphs
         try:
             cgf = CudaGraphBS1(model, pc["temperatures"], device, amp, policy=policy, compile_decide=True)
@@ -222,6 +233,15 @@ def main(argv=None):
             if args.pipelined:  # CPU polls the per-step results instead of waiting for them
                 res["modes"]["eager-pipelined"] = measure(
                     eager, lambda xb, lam: eager.run_pipelined(xb, lam, args.lookahead), fixed=res["modes"]["eager"]["fixed"])
+            from fsv.halting.fused import triton_usable
+
+            if triton_usable(device):  # features + policy as ONE Triton kernel per step
+                try:
+                    tri = AdaptiveRunner(model, policy, pc["temperatures"], device, amp, fused=True)
+                    res["modes"]["eager-triton"] = measure(tri, "run", fixed=res["modes"]["eager"]["fixed"])
+                except Exception as e:
+                    res["triton_error"] = repr(e)[:500]
+                    print(f"[benchmark] eager-triton failed, skipped: {res['triton_error']}")
             if args.naive:  # the first runner: boolean-mask indexing, several host syncs per step
                 res["modes"]["eager-naive"] = measure(eager, "run_naive")
             compiled = None

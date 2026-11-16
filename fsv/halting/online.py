@@ -61,7 +61,7 @@ def online_s0(p: torch.Tensor, logp: torch.Tensor, prev_logp, prev_pred, run, t:
 
 class AdaptiveRunner:
     def __init__(self, model, policy: HaltMLP, temps: torch.Tensor, device, amp: str = "none",
-                 compile: bool = False):
+                 compile: bool = False, fused: bool = False):
         # policy=None: only run_fixed is usable (fixed-depth timing of a model without a halting policy)
         self.model, self.policy = model.eval(), (policy.eval() if policy is not None else None)
         self.temps = temps.float().to(device)
@@ -81,6 +81,10 @@ class AdaptiveRunner:
             self._decide = torch.compile(self._decide_impl, dynamic=True)
         else:
             self._step, self._decide = self._step_impl, self._decide_impl
+        if fused and self.policy is not None:  # features + policy in ONE Triton kernel per step (fused.py)
+            from .fused import FusedDecide
+
+            self._decide = FusedDecide(self.policy, self.temps, self.T)
 
     # ------------------------------------------------------------------ pieces
     def _step_impl(self, tok, x0, t: int):
@@ -334,7 +338,7 @@ class CudaGraphBS1:
     """
 
     def __init__(self, model, temps: torch.Tensor, device, amp: str = "none", policy=None, o3_policy=None,
-                 compile_decide: bool = False):
+                 compile_decide: bool = False, fused: bool = False):
         cfg = model.cfg
         # optional: fuse the ~40 small feature + policy kernels of each step with torch.compile
         # (compiled during the warm-up, then captured in the same graph)
@@ -346,6 +350,13 @@ class CudaGraphBS1:
                 if hasattr(dynamo.config, key):
                     setattr(dynamo.config, key, max(getattr(dynamo.config, key), 256))
             self._decide_core = torch.compile(self._decide_core_impl, dynamic=False)
+        # optional: features + policy (and the state update) as ONE Triton kernel per step
+        self.fd = None
+        if fused and policy is not None:
+            from .fused import FusedDecide
+
+            self.fd = FusedDecide(policy.eval(), temps, cfg.t_max)
+            self._decide_core = lambda z, pl, pp, r, lam, t: self.fd(z, pl, pp, r, lam, t)
         self.model, self.device, self.amp, self.T = model.eval(), device, amp, cfg.t_max
         self.temps = temps.float().to(device)
         self.policy = policy.eval() if policy is not None else None
@@ -418,6 +429,11 @@ class CudaGraphBS1:
         self.tok.copy_(tok)
         if t == self.T - 1:
             self.pred.copy_(z.argmax(-1))
+            return
+        if self.fd is not None:  # one kernel updates every state buffer in place
+            self.fd(z, self.prev_logp, self.prev_pred, self.run_, self.lam, t,
+                    out={"stop": self.stop, "pred": self.prev_pred, "pred2": self.pred, "logp": self.prev_logp,
+                         "run": self.run_})
             return
         stop, pred, logp, run = self._decide_core(z, self.prev_logp, self.prev_pred, self.run_, self.lam, t)
         self.prev_logp.copy_(logp)
