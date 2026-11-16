@@ -438,6 +438,30 @@ batch 256（eager）：bViT-S 11,989 → 10,439 img/s（L=1），bViT-B 3,720 �
   每步同步後 GPU 要等 CPU 重新發送，而後段步驟只剩少數影像，GPU 工作量小於 CPU 發送時間。bViT-B 的閒置只佔 4%。
   （bViT-B 固定深度的 profiler GPU 時間比牆鐘大 9–15%，是 T4 降頻造成的量測誤差。）
 
+### 特徵 + 策略融合成單一 kernel（0.10.0，`fsv/halting/fused.py`）
+
+O1 每步的特徵與策略原本約 40 個小 kernel（softmax、log、top-5、熵、KL、cat、正規化、兩層 Linear、GELU、比較、狀態複製）。
+`FusedDecide` 用一個 Triton kernel、每張影像一個 program 完成：校準機率 → S0 特徵 → 策略 MLP → 寫回 stop / pred / logp / run。
+輸出可以與輸入共用記憶體，所以 CUDA graph 的狀態緩衝區直接原地更新。用法：`AdaptiveRunner(..., fused=True)`、`CudaGraphBS1(..., fused=True)`；
+benchmark 模式 `eager-triton`、`cudagraph-bs1-triton`。測試：在 Triton CPU 直譯器（`TRITON_INTERPRET=1`）上與 PyTorch 逐項相同；
+T4 上所有計時影像的決策 100% 一致。
+
+Kaggle T4、torch 2.6.0+cu124、隨機權重（`results/t4_fused/`，圖在 `results/t4_fused/plots/`）：
+
+| | 每步特徵 + 策略的 GPU 時間 | O1 每步 graph | bViT-S bs1 graph | bViT-B bs1 graph | bViT-S bs1 eager | bViT-B bs1 eager |
+|---|---|---|---|---|---|---|
+| 原本 | 63 + 28 = 91 µs（約 40 個 kernel） | 246 µs | 1,072 µs | 1,752 µs | 7,537 µs | 7,262 µs |
+| 融合 | **22 µs**（1 個 kernel） | **160 µs** | **784 µs** | **1,456 µs** | **5,478 µs** | **5,193 µs** |
+| 固定 4 步 | — | 155 µs（只有模型步） | 620 µs | 1,527 µs | 4,133 µs | 4,152 µs |
+
+（O1 平均 bViT-S 3.69 步、bViT-B 3.31 步；三次 T4 執行的數字相差 < 3%。）
+
+- 融合後每步 graph 只比純模型步多約 5 µs；batch 1 CUDA graph 下 O1 快 17–27%，bViT-B 已比固定 4 步快約 5%。
+- eager batch 1 快 27–28%：每張圖少發約 75 個 kernel。
+- batch 256 不變（±4%，在 T4 降頻的量測誤差內）：那裡的瓶頸是同步後的 GPU 閒置，不是這些 kernel。
+- 時間圖：`python scripts/profile_breakdown.py --out X.json` 後 `python scripts/plot_timeline.py X.json`，
+  畫出單次呼叫的 CPU / GPU 時間線（每個 kernel 依發出它的部分著色）與每部分耗時長條圖。
+
 ## VCNet：原始 vs 自適應步數（`dev/vcnet` 分支，0.9.0 起）
 
 使用者決定改用 VCNet，目標是比較**原始 VCNet**與 **VCNet + 自適應步數**。架構、論文沒寫而由我們補上的假設、

@@ -148,6 +148,10 @@ def plot_breakdown(res: dict, out: Path):
             ax.text(max(x + idle, x) + wall * scale * 0.01, y, f"{wall * scale:,.{2 if scale < 1 else 0}f}",
                     va="center", fontsize=9, color=INK)
         ax.set_yticks(ys, labels)
+        if panel == "graph-bs1":  # the O1 bars come from one graph per part (a few extra launches)
+            real = [res["modes"][k]["reference_wall_us"]["o1_one_graph_per_step"] for k in
+                    ("graph-bs1/O1", "graph-bs1/O1-fused") if k in res["modes"]]
+            title += "; O1 bars: one graph per part, real O1 graphs " + " / ".join(f"{v:,.0f}" for v in real) + " µs"
         ax.set_title(title + ("  - bars scaled to wall where the profiled GPU time exceeded it (clock drift)"
                               if scaled else ""), loc="left", fontsize=10, color=INK)
         ax.set_xlim(0, max(b[1] for b in bars) * scale * 1.12)
