@@ -79,7 +79,7 @@ def main(argv=None):
         m = float(runner.run(X[:1024])[1].float().mean()) + 1
         lo, hi = (lo, mid) if m < a.steps else (mid, hi)
     policy.net[-1].bias.data.fill_((lo + hi) / 2)
-    _, s_ref = runner.run(X)
+    s_ref = torch.cat([runner.run(X[i:i + a.batch_size])[1] for i in range(0, X.shape[0], a.batch_size)])
     mean_steps = float(s_ref.float().mean()) + 1
     res = {"device": torch.cuda.get_device_name() if dev.type == "cuda" else "cpu", "model": a.model,
            "amp": amp, "T": T, "mean_steps": mean_steps, "rows": []}
