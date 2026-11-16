@@ -59,6 +59,8 @@ def parse_args(argv=None):
     p.add_argument("--input-inject", action="store_true", help="re-inject gated patch embeddings at every step")
     p.add_argument("--layerscale-init", type=float, default=0.0)
     p.add_argument("--ait-carry", action="store_true", help="VCNet: carry AIT_{t-1} into AIT_t (zero-init gate)")
+    p.add_argument("--lateral", action="store_true", help="VCNet: every area keeps a state across steps")
+    p.add_argument("--topdown", action="store_true", help="VCNet: BLT-style top-down from the area above")
     # optimisation
     p.add_argument("--epochs", type=int, default=200)
     p.add_argument("--batch-size", type=int, default=256, help="global batch size")
@@ -191,7 +193,7 @@ def main(argv=None):
     num_classes = NUM_CLASSES[args.dataset]
     if args.model.startswith("vcnet"):
         model = build_model(args.model, num_classes=num_classes, t_max=args.t_max,
-                            ait_carry=args.ait_carry).to(device)
+                            ait_carry=args.ait_carry, lateral=args.lateral, topdown=args.topdown).to(device)
     else:
         model = build_model(args.model, num_classes=num_classes, t_max=args.t_max, n_blocks=args.n_blocks,
                             patch_size=args.patch_size,

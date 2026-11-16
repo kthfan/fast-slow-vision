@@ -1,8 +1,8 @@
-# VCNet round 1 (H100, pasted by the user)
+# VCNet round 1, adaptive runs (H100, pasted by the user)
 
 Code 0.9.0 (`dev/vcnet`). Adaptive VCNet runs only: `c100_vcnet_adapt` and `c100_vcnet_adapt_carry`, 3 seeds each,
 with `--halting`, then `scripts/benchmark_adaptive.py` on both. The original-model runs
-(`c100_vcnet_orig`, `c100_vcnet_orig_ff`) are **not** in this paste.
+(`c100_vcnet_orig`, `c100_vcnet_orig_ff`) were pasted separately: see [`original.md`](original.md).
 
 Notes on reading it:
 

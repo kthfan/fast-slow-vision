@@ -52,7 +52,8 @@ def online_s0(p: torch.Tensor, logp: torch.Tensor, prev_logp, prev_pred, run, t:
 class AdaptiveRunner:
     def __init__(self, model, policy: HaltMLP, temps: torch.Tensor, device, amp: str = "none",
                  compile: bool = False):
-        self.model, self.policy = model.eval(), policy.eval()
+        # policy=None: only run_fixed is usable (fixed-depth timing of a model without a halting policy)
+        self.model, self.policy = model.eval(), (policy.eval() if policy is not None else None)
         self.temps = temps.float().to(device)
         self.device, self.amp = device, amp
         self.T = model.cfg.t_max

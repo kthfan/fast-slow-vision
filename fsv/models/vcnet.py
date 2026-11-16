@@ -25,6 +25,12 @@ V2 ... AIT again. V1 itself is computed once (``embed``). The original model
 has ``t_max = 2`` (one feedback correction) and is read out at its last step
 only; the adaptive variant unrolls more steps with a readout after every step.
 
+Extensions (off by default, ``lateral`` / ``topdown``): every area V2, MT, V4,
+PIT, CIT, MST, AIT keeps a state across steps through a zero-init 1 x 1
+convolution (CORnet-RT-style lateral recurrence), and every area receives the
+previous step of the area above it (BLT-style top-down). The step state then
+holds all seven area maps, packed into one tensor so the runners stay unchanged.
+
 Normalisation is GroupNorm (TODO.md sections 2.1 and 4: no BatchNorm with
 per-step statistics). The readout is the same shared head as bViT:
 ``Linear(LN(avgpool(AIT_t)) + step_emb(t))``.
@@ -61,6 +67,10 @@ class VCNetConfig:
     gn_groups: int = 8  # GroupNorm groups (largest divisor of the width <= this)
     cbam_reduction: int = 8
     ait_carry: bool = False  # AIT_t += g * AIT_{t-1} (zero-init gate): state carried across steps
+    # Extensions beyond the paper (docs/vcnet.md, "跨步狀態"); both zero-init, so a new model starts
+    # out identical to the plain loop:
+    lateral: bool = False  # every area keeps its own state: A_t = F(input_t) + R_A(A_{t-1}) (CORnet-RT style)
+    topdown: bool = False  # BLT-style top-down: A_t += T_A(up(B_{t-1})), B = the next area up (Spoerer et al.)
 
     @property
     def dim(self) -> int:  # feature size of the readout input (halting features use it)
@@ -189,6 +199,10 @@ class Residual(nn.Module):
 
 
 # --------------------------------------------------------------------------- the network
+AREAS = ("v2", "mt", "v4", "pit", "cit", "mst", "ait")  # packing order (AIT last)
+# top-down source of each area (BLT): the next area up in its stream
+TOPDOWN = {"v2": "v4", "v4": "pit", "pit": "cit", "cit": "ait", "mt": "mst", "mst": "ait"}
+
 class VCNet(nn.Module):
     """VCNet with the predictive-coding loop exposed as recurrent steps and a readout per step."""
 
@@ -234,6 +248,18 @@ class VCNet(nn.Module):
         self.err_in = nn.Conv2d(c.c_v1, c.c_v1, 1, bias=False)
         self.carry_gate = nn.Parameter(torch.zeros(1, c.c_ait, 1, 1)) if c.ait_carry else None
 
+        # per-area state across steps (lateral) and top-down from the area above (BLT)
+        self.area_ch = {"v2": c.c_v2, "mt": c.c_mt, "v4": c.c_v4, "pit": c.c_pit, "cit": c.c_cit,
+                        "mst": c.c_mst, "ait": c.c_ait}
+        h = c.img_size
+        h2, h4, h8 = -(-h // 2), -(-h // 4), -(-h // 8)
+        self.area_hw = {"v2": h2, "mt": h4, "v4": h4, "pit": h4, "cit": h8, "mst": h8, "ait": h8}
+        self.packed = c.lateral or c.topdown
+        self.lat = nn.ModuleDict({a: nn.Conv2d(ch, ch, 1, bias=False) for a, ch in self.area_ch.items()}) \
+            if c.lateral else None
+        self.td = nn.ModuleDict({a: nn.Conv2d(self.area_ch[src], self.area_ch[a], 1, bias=False)
+                                 for a, src in TOPDOWN.items()}) if c.topdown else None
+
         # shared readout: head(LN(avgpool AIT_t) + step_emb(t))
         self.head_norm = nn.LayerNorm(c.c_ait, eps=1e-6)
         self.step_out = nn.Parameter(torch.zeros(c.t_max, c.c_ait))
@@ -250,6 +276,9 @@ class VCNet(nn.Module):
                 nn.init.trunc_normal_(m.weight, std=0.02)
                 nn.init.zeros_(m.bias)
         nn.init.zeros_(self.err_in.weight)
+        for mods in (self.lat, self.td):
+            for m in (mods.values() if mods is not None else []):
+                nn.init.zeros_(m.weight)
         nn.init.trunc_normal_(self.td_pred.weight, std=0.02)
 
     def no_weight_decay(self) -> set[str]:
@@ -268,35 +297,74 @@ class VCNet(nn.Module):
         """eps = ReLU(V1_bottom-up - AIT_top-down)."""
         return F.relu(v1 - self.predict_v1(ait, v1.shape[-2:]))
 
-    def sweep(self, z: torch.Tensor) -> torch.Tensor:
-        """One bottom-up pass V2 ... AIT from the (corrected) V1 activity z."""
-        v2 = self.v2_mix(torch.cat([self.v2_inter(z), self.v2_thin(z)], 1))
-        mt = self.mt(self.v2_thick(z))
-        v4 = self.v4_post(self.v4_in(v2) + self.mt_to_v4(mt))
-        cit = self.cit(self.pit(v4))
-        mst = self.mst(mt)
-        return self.ait(self.ait_in(torch.cat([cit, mst], 1)))
+    # ------------------------------------------------------- step state (packed when areas keep state)
+    def pack(self, areas: dict[str, torch.Tensor]) -> torch.Tensor:
+        """All area maps -> one [B, N] tensor (AIT last), so the runners can index and buffer it."""
+        return torch.cat([areas[a].flatten(1) for a in AREAS], 1)
+
+    def unpack(self, state: torch.Tensor) -> dict[str, torch.Tensor]:
+        sizes = [self.area_ch[a] * self.area_hw[a] ** 2 for a in AREAS]
+        parts = state.split(sizes, 1)
+        return {a: p.view(-1, self.area_ch[a], self.area_hw[a], self.area_hw[a]) for a, p in zip(AREAS, parts)}
+
+    def ait_of(self, state: torch.Tensor) -> torch.Tensor:
+        if not self.packed:
+            return state
+        hw = self.area_hw["ait"]
+        n = self.area_ch["ait"] * hw * hw
+        return state[:, -n:].view(-1, self.area_ch["ait"], hw, hw)
+
+    def _recur(self, name: str, a: torch.Tensor, prev: dict | None) -> torch.Tensor:
+        """Add the area's own previous state (lateral) and the previous state of the area above (top-down)."""
+        if prev is None:
+            return a
+        if self.lat is not None:
+            a = a + self.lat[name](prev[name])
+        if self.td is not None and name in self.td:
+            above = self.td[name](prev[TOPDOWN[name]])
+            if above.shape[-1] != a.shape[-1]:
+                above = F.interpolate(above, size=a.shape[-2:], mode="bilinear", align_corners=False)
+            a = a + above
+        return a
+
+    def sweep(self, z: torch.Tensor, prev: dict | None = None) -> dict[str, torch.Tensor]:
+        """One bottom-up pass V2 ... AIT from the (corrected) V1 activity z; ``prev`` = the
+        previous step's area maps (used only with ``lateral`` / ``topdown``)."""
+        v2 = self._recur("v2", self.v2_mix(torch.cat([self.v2_inter(z), self.v2_thin(z)], 1)), prev)
+        mt = self._recur("mt", self.mt(self.v2_thick(z)), prev)
+        v4 = self._recur("v4", self.v4_post(self.v4_in(v2) + self.mt_to_v4(mt)), prev)
+        pit = self._recur("pit", self.pit(v4), prev)
+        cit = self._recur("cit", self.cit(pit), prev)
+        mst = self._recur("mst", self.mst(mt), prev)
+        ait = self._recur("ait", self.ait(self.ait_in(torch.cat([cit, mst], 1))), prev)
+        return {"v2": v2, "mt": mt, "v4": v4, "pit": pit, "cit": cit, "mst": mst, "ait": ait}
 
     def forward_step(self, state: torch.Tensor, t: int, x0: torch.Tensor | None = None) -> torch.Tensor:
-        """Step t. ``x0`` is the V1 activity from ``embed``; ``state`` is AIT_{t-1} for t >= 1
-        (at t = 0 it is ignored, the runners pass the embedding there). Returns AIT_t [B, c_ait, h, w]."""
+        """Step t. ``x0`` is the V1 activity from ``embed``; ``state`` is the previous step's state for
+        t >= 1 (at t = 0 it is ignored, the runners pass the embedding there).
+
+        The state is AIT_t [B, c_ait, h, w], or, with ``lateral`` / ``topdown``, all area maps packed
+        into [B, N] (see ``pack``)."""
         if t == 0:
-            v1 = x0 if x0 is not None else state
-            return self.sweep(v1)
+            areas = self.sweep(x0 if x0 is not None else state)
+            return self.pack(areas) if self.packed else areas["ait"]
         assert x0 is not None, "VCNet steps t >= 1 need x0 = model.embed(x)"
-        z = x0 + self.err_in(self.prediction_error(x0, state))
-        ait = self.sweep(z)
+        prev = self.unpack(state) if self.packed else None
+        ait_prev = prev["ait"] if prev is not None else state
+        z = x0 + self.err_in(self.prediction_error(x0, ait_prev))
+        areas = self.sweep(z, prev)
         if self.carry_gate is not None:
-            ait = ait + self.carry_gate * state
-        return ait
+            areas["ait"] = areas["ait"] + self.carry_gate * ait_prev
+        return self.pack(areas) if self.packed else areas["ait"]
 
     def readout(self, state: torch.Tensor, t: int) -> torch.Tensor:
-        return self.head(self.head_norm(state.mean((2, 3))) + self.step_out[t])
+        return self.head(self.head_norm(self.ait_of(state).mean((2, 3))) + self.step_out[t])
 
     def features(self, state: torch.Tensor) -> dict[str, torch.Tensor]:
         """Per-step features for halting research: 'cls' = what the head reads (avg-pooled AIT),
         'pool' = max-pooled AIT."""
-        return {"cls": self.head_norm(state.mean((2, 3))), "pool": self.head_norm(state.amax((2, 3)))}
+        ait = self.ait_of(state)
+        return {"cls": self.head_norm(ait.mean((2, 3))), "pool": self.head_norm(ait.amax((2, 3)))}
 
     # ----------------------------------------------------------- full pass
     def forward(self, x: torch.Tensor, t_max: int | None = None, return_feats: bool = False):

@@ -125,4 +125,14 @@ EXPERIMENTS: dict[str, dict] = {
         "desc": "Adaptive VCNet + AIT state carried across steps (AIT_t += g * AIT_{t-1}, zero-init gate).",
         "train": _VC_ADAPT + ["--ait-carry"],
     },
+    # ---- VCNet round 2: state across steps in every area (docs/vcnet.md, "跨步狀態")
+    "c100_vcnet_adapt_lat": {
+        "desc": "Adaptive VCNet + every area (V2, MT, V4, PIT, CIT, MST, AIT) keeps its own state across steps "
+                "(A_t = F(input_t) + R(A_{t-1}), 1x1 zero-init).",
+        "train": _VC_ADAPT + ["--lateral"],
+    },
+    "c100_vcnet_adapt_blt": {
+        "desc": "Adaptive VCNet + per-area state + BLT-style top-down from the next area up (previous step).",
+        "train": _VC_ADAPT + ["--lateral", "--topdown"],
+    },
 }

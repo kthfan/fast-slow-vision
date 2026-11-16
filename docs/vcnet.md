@@ -93,3 +93,45 @@ python scripts/benchmark_adaptive.py c100_vcnet_adapt c100_vcnet_adapt_carry --s
 3. 自適應 VCNet 固定跑 2 步（t = 1）時與原始模型的差距：每一步都讀出、都算損失的代價或好處。
 4. `orig_ff` 對 `orig`：回饋修正本身有沒有用。
 5. `adapt_carry` 對 `adapt`：步與步之間保留 AIT 狀態，後段步數是否更有用。
+
+## 跨步狀態（0.10.0 起，論文以外的延伸）
+
+第 1 輪發現預測編碼迴圈修正 1 次後就飽和。原因推測是：每一步唯一的新資訊只有 V1 輸入的小修正，
+V2…AIT 每步從零重算，不記得上一步。使用者同意加入跨步狀態，並可融合其他仿皮層方法。
+示意圖：<https://claude.ai/artifact/8JwLgaThQ8iG12xfgeMn5X>
+
+| 開關 | 做法 | 來源 |
+|---|---|---|
+| `--lateral` | 每一區 A ∈ {V2, MT, V4, PIT, CIT, MST, AIT}：A_t = F(這一步的輸入) + R_A(A_{t−1})，R_A 為 1×1 卷積 | CORnet-RT（Kubilius et al., 2019）的區內遞迴 |
+| `--topdown` | 每一區再加上一層上一步的輸出：A_t += T_A(上採樣(B_{t−1}))；V2←V4、V4←PIT、PIT←CIT、CIT←AIT、MT←MST、MST←AIT | BLT 網路（Spoerer et al., 2017、2020）的 top-down 連線 |
+
+- R、T 都初始為 0：新模型一開始和原本的迴圈完全相同，用不用、用多少由訓練決定。
+- AIT→V1 的預測編碼回饋保留；兩個開關都在它之外加連線。
+- 第 0 步沒有上一步，計算不變。
+- 狀態包含 7 個腦區的特徵圖，打包成一個張量（`VCNet.pack` / `unpack`），所以停止策略、線上推論、CUDA graph 都不用改。
+- 成本（CIFAR-100，`vcnet`）：
+
+| 變體 | 參數 | 每步 FLOPs（第 1 步起） |
+|---|---|---|
+| 原本的迴圈 | 1.02M | 113.4 M |
+| `--lateral` | 1.09M（+6.8%） | 119.2 M（+5.1%） |
+| `--lateral --topdown` | 1.15M（+12.7%） | 122.2 M（+7.8%） |
+
+### 第 2 輪實驗
+
+```bash
+python scripts/run_experiment.py c100_vcnet_adapt_lat c100_vcnet_adapt_blt --seeds 0 1 2 --halting
+```
+
+```bash
+python scripts/benchmark_adaptive.py c100_vcnet_orig c100_vcnet_adapt_carry c100_vcnet_adapt_lat c100_vcnet_adapt_blt --seeds 0 1 2 --lams 0.0001 0.0003 0.001 0.003 0.01 0.03 0.1 0.3
+```
+
+- benchmark 從 0.10.0 起也會量沒有停止策略的模型（固定深度），所以原始 VCNet 和自適應版能在同一個行程裡比延遲。
+- λ 格點加入更小的值：第 1 輪 `adapt` 的策略在 0.001–0.3 全部停在第 0 步。
+
+要回答的問題：
+
+1. 第 3 步以後準確率是否繼續上升（第 1 輪在第 2 步飽和）。
+2. 自適應版與原始 VCNet 在同樣準確率下的 FLOPs 與延遲。
+3. `blt` 對 `lat`：由上而下連線是否再多帶來增益。
