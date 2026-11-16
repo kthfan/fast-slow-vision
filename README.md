@@ -390,6 +390,20 @@ benchmark 預設量測（`cudagraph-bs1`、`o3k*-cudagraph-bs1`；`--no-cudagrap
 實驗計畫見 [`docs/vcnet.md`](docs/vcnet.md)。取得程式時，把第 1 步指令裡的分支名稱 `claude/charming-ritchie-qycdtj` 換成 `dev/vcnet`。登記的實驗：`vcnet_smoke`、`c100_vcnet_orig`、`c100_vcnet_orig_ff`、
 `c100_vcnet_adapt`、`c100_vcnet_adapt_carry`。
 
+**第 1 輪（自適應版，3 個種子，[`results/vcnet_round1_h100`](results/vcnet_round1_h100/summary.md)）**：
+
+| | t=0 | t=1 | t=2 | t=7 | 原始模型 |
+|---|---|---|---|---|---|
+| `adapt` test acc % | 63.75±1.13 | 64.91±0.94 | 64.85±1.11 | 64.88±1.03 | 尚未回報 |
+| `adapt_carry` test acc % | 63.69±0.61 | 65.30±0.41 | 65.44±0.53 | 65.39±0.51 | 尚未回報 |
+| GFLOPs（累計） | 0.161 | 0.275 | 0.388 | 0.955 | 0.275（2 步） |
+
+- 預測編碼迴圈修正 1 次後就飽和：第 3–8 步沒有任何增益，固定 2 步（全長計算量的 29%）就達到最終準確率。
+- AIT 狀態延續（carry）在 t ≥ 1 多 0.4–0.6 點，種子間差異也較小。
+- 停止策略只在「平均 1–2 步」之間有用：carry 的 S0-reward_acc 在平均 1.09–1.36 步時比隨機混合固定深度高 0.4–0.6 點，
+  但到不了 2 步的準確率；`adapt` 的策略在 benchmark 的所有 λ 下都在第 0 步停。batch 256 時自適應不比固定深度快。
+- 未校準時信心偏低（溫度約 0.745，ECE 約 12.7%），每步溫度縮放後 ECE 約 2.5%。
+
 ## 下一階段方向（討論中）
 
 使用者決定：之後尋找**適合此架構的任務**，並考慮加入**仿皮層遞迴網路**（TODO.md 第 4 節）。
