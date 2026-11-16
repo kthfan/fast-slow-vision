@@ -571,6 +571,7 @@ def main(argv=None):
                 xi = X[i1:i1 + 1]
                 s1_img = int(r.run(xi, lam)[1])
                 tf = s1_img
+                cg0 = graphs["O1"]
                 tl = {"image_index": i1, "image_stop_step": s1_img, "fixed_t": tf, "panels": {}}
                 o1n, o1f = f"O1 ({s1_img + 1} steps)", f"O1 fused ({s1_img + 1} steps)"
                 cfgs = {
