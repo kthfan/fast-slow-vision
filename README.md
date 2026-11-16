@@ -416,6 +416,28 @@ batch 256（eager）：bViT-S 11,989 → 10,439 img/s（L=1），bViT-B 3,720 �
 - **有效的方向是把策略變便宜**：`compile_decide=True` 融合特徵 + 策略後，bViT-S 0.988 → 0.822 ms、bViT-B 1.720 → 1.545 ms，
   效果比去掉同步還大。H100 的單步更快、同步佔比可能較高，數字需在 H100 上用 `bench_sync.py` / benchmark 的新模式確認。
 
+### O1 與固定深度的逐部分耗時（0.9.0，`scripts/profile_breakdown.py`）
+
+把兩種方法拆成相同的部分（embed、model_step、readout、features、policy、record、sync、compaction），
+每部分量 CPU 時間（不開 profiler）、GPU kernel 時間（torch.profiler）、kernel 數；CUDA graph 模式把每部分各錄成一張 graph，
+以 event 計時。Kaggle T4、torch 2.6.0+cu124、隨機權重（平均約 3.5 步），原始輸出在 `results/t4_profile_breakdown/`。
+與「固定 4 步」比較，O1 多出的時間（µs/張；batch 256 為 µs/batch）：
+
+| 設定 | O1 牆鐘 | 固定 4 步 | 差 | 少算的遞迴步 | features + policy + record | 同步 / GPU 閒置 |
+|---|---|---|---|---|---|---|
+| bViT-S，batch 1，CUDA graph | 1,085 | 625 | +460 | −43（GPU） | **+296（GPU）** | +187 |
+| bViT-B，batch 1，CUDA graph | 1,759 | 1,527 | +232 | −244（GPU） | **+296（GPU）** | +200 |
+| bViT-S，batch 1，eager | 7,746 | 4,461 | +3,285 | −420（CPU） | **+3,259（CPU 發送）** | +326（sync） |
+| bViT-S，batch 256，eager | 20,654 | 22,279 | −1,625 | −7,560（GPU，壓縮） | +950（GPU） | **+3,900 GPU 閒置** |
+
+- **CUDA graph，batch 1**：每步 graph 245 µs = 模型步 152 + 特徵 63 + 策略 28；特徵 + 策略的 GPU 時間（約 90 µs/步）是最大的額外成本，
+  同步造成的 GPU 閒置約 50 µs/步（每張 190–200 µs）。
+- **eager，batch 1**：完全受 CPU 發送限制（GPU 閒置 70–78%）。O1 每張多發 ~125 個小 kernel（features 78、policy 23、record 24），
+  每個約 10–20 µs 的 CPU 時間；sync 本身只有 326 µs（4%）。
+- **eager，batch 256**：O1 靠壓縮少算 7.6 ms 的模型步，比固定 4 步快 7%；但比固定 3 步（16,801）慢 3.9 ms，差距幾乎全是 GPU 閒置：
+  每步同步後 GPU 要等 CPU 重新發送，而後段步驟只剩少數影像，GPU 工作量小於 CPU 發送時間。bViT-B 的閒置只佔 4%。
+  （bViT-B 固定深度的 profiler GPU 時間比牆鐘大 9–15%，是 T4 降頻造成的量測誤差。）
+
 ## VCNet：原始 vs 自適應步數（`dev/vcnet` 分支，0.9.0 起）
 
 使用者決定改用 VCNet，目標是比較**原始 VCNet**與 **VCNet + 自適應步數**。架構、論文沒寫而由我們補上的假設、
