@@ -561,10 +561,10 @@ def main(argv=None):
             # ---- timelines of one call: an image that stops after the depth of the deepest fixed setting
             if a.trace and cuda:
                 # one image, and the fixed depth equal to that image's O1 depth, so both do the same model
-                # steps and the difference is the O1 overhead. Most common stop step in 1..T-2 (decided at
+                # steps and the difference is the O1 overhead. Most common stop step >= 1 (decided at
                 # batch 1, the setting being traced).
                 cnt = torch.bincount(s_all, minlength=T)
-                mid = cnt[1:T - 1]
+                mid = cnt[1:]  # at least two steps, so the per-step pattern is visible
                 s_pick = int(mid.argmax()) + 1 if int(mid.sum()) > 0 else int(cnt.argmax())
                 cand = [i for i in range(X.shape[0]) if int(s_all[i]) == s_pick][:64]
                 i1 = next((i for i in cand if int(r.run(X[i:i + 1], lam)[1]) == s_pick), cand[0] if cand else 0)
@@ -572,6 +572,7 @@ def main(argv=None):
                 s1_img = int(r.run(xi, lam)[1])
                 tf = s1_img
                 cg0 = graphs["O1"]
+                tb = max(fixed_ts)  # batch 256: compare with the fixed depth around the O1 mean
                 tl = {"image_index": i1, "image_stop_step": s1_img, "fixed_t": tf, "panels": {}}
                 o1n, o1f = f"O1 ({s1_img + 1} steps)", f"O1 fused ({s1_img + 1} steps)"
                 cfgs = {
@@ -579,7 +580,7 @@ def main(argv=None):
                                   o1n: lambda P: split["O1"].run(xi, lam, P)},
                     "eager-bs1": {f"fixed {tf + 1} steps": lambda P: fixed_eager(r, xi, tf, P),
                                   o1n: lambda P: o1_eager(r, xi, lam, P)},
-                    "eager-bs256": {f"fixed {tf + 1} steps": lambda P: fixed_eager(r, X[:bs], tf, P),
+                    "eager-bs256": {f"fixed {tb + 1} steps": lambda P: fixed_eager(r, X[:bs], tb, P),
                                     "O1": lambda P: o1_eager(r, X[:bs], lam, P)},
                 }
                 if use_fused:
