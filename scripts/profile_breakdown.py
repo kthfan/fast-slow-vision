@@ -560,14 +560,17 @@ def main(argv=None):
 
             # ---- timelines of one call: an image that stops after the depth of the deepest fixed setting
             if a.trace and cuda:
-                tf = max(fixed_ts)
-                # an image whose O1 stop step equals the fixed depth (same number of model steps);
-                # decided at batch 1, the setting being traced
-                cand = sorted(range(X.shape[0]), key=lambda i: abs(int(s_all[i]) - tf))[:64]
-                i1 = min(cand, key=lambda i: abs(int(r.run(X[i:i + 1], lam)[1]) - tf))
+                # one image, and the fixed depth equal to that image's O1 depth, so both do the same model
+                # steps and the difference is the O1 overhead. Most common stop step in 1..T-2 (decided at
+                # batch 1, the setting being traced).
+                cnt = torch.bincount(s_all, minlength=T)
+                mid = cnt[1:T - 1]
+                s_pick = int(mid.argmax()) + 1 if int(mid.sum()) > 0 else int(cnt.argmax())
+                cand = [i for i in range(X.shape[0]) if int(s_all[i]) == s_pick][:64]
+                i1 = next((i for i in cand if int(r.run(X[i:i + 1], lam)[1]) == s_pick), cand[0] if cand else 0)
                 xi = X[i1:i1 + 1]
                 s1_img = int(r.run(xi, lam)[1])
-                cg0 = graphs["O1"]
+                tf = s1_img
                 tl = {"image_index": i1, "image_stop_step": s1_img, "fixed_t": tf, "panels": {}}
                 o1n, o1f = f"O1 ({s1_img + 1} steps)", f"O1 fused ({s1_img + 1} steps)"
                 cfgs = {

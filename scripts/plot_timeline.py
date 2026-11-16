@@ -64,7 +64,7 @@ def used_groups(parts):
 
 def plot_timeline(model: str, panel: str, cfgs: dict, out: Path, unit_ms: bool):
     names = list(cfgs)
-    fig_h = 1.0 + 1.05 * len(names)
+    fig_h = 1.6 + 1.05 * len(names)
     fig, ax = plt.subplots(figsize=(11, fig_h), dpi=150)
     fig.patch.set_facecolor(SURFACE)
     style(ax)
@@ -80,9 +80,10 @@ def plot_timeline(model: str, panel: str, cfgs: dict, out: Path, unit_ms: bool):
             segs = merge(segs) if lane == 1 else sorted(segs, key=lambda s: s[2] - s[1], reverse=True)
             for part, a, b in segs:
                 parts.add(part)
-                w = max((b - a) * scale, end * 0.0008)
+                w = max((b - a) * scale, end * 0.0015)  # keep microsecond kernels visible
+                thin = w < end * 0.004  # no surface-coloured gap on slivers, it would hide them
                 ax.broken_barh([(a * scale, w)], (y, lane_h), facecolors=COLOR.get(part, OTHER[1]),
-                               edgecolor=SURFACE, linewidth=0.6)
+                               edgecolor=SURFACE, linewidth=0 if thin else 0.6)
             yt.append(y + lane_h / 2)
             yl.append(f"{name}  {'CPU' if lane == 0 else 'GPU'}")
         busy = c["gpu_busy_us"] / c["end_us"] * 100
@@ -91,12 +92,12 @@ def plot_timeline(model: str, panel: str, cfgs: dict, out: Path, unit_ms: bool):
     ax.set_yticks(yt, yl)
     ax.set_xlim(0, end * 1.16)
     ax.set_xlabel("time since the call started (" + ("ms" if unit_ms else "µs") + ")", color=INK2, fontsize=9)
-    ax.set_title(f"{model} - {PANEL_TITLE.get(panel, panel)}: one {'batch of 256' if '256' in panel else 'image'}",
-                 loc="left", fontsize=11, color=INK, pad=26)
+    ax.set_title(f"{model} - {PANEL_TITLE.get(panel, panel)}: one {'batch of 256' if '256' in panel else 'image'}"
+                 " (under torch.profiler: host times inflated)", loc="left", fontsize=10.5, color=INK)
     handles = [Patch(facecolor=c, label=lab) for lab, c in used_groups(parts)]
-    ax.legend(handles=handles, loc="lower left", bbox_to_anchor=(0, 1.0), ncol=min(4, len(handles)), frameon=False,
-              fontsize=8.5, handlelength=1.2, columnspacing=1.2, labelcolor=INK)
-    fig.tight_layout()
+    fig.legend(handles=handles, loc="lower left", bbox_to_anchor=(0.01, 0.0), ncol=min(4, len(handles)),
+               frameon=False, fontsize=8.5, handlelength=1.2, columnspacing=1.4, labelcolor=INK)
+    fig.tight_layout(rect=(0, 0.72 / fig_h, 1, 1))
     fig.savefig(out, facecolor=SURFACE)
     plt.close(fig)
 
@@ -128,8 +129,13 @@ def plot_breakdown(res: dict, out: Path):
                 bars.append(({q: v["gpu_us"] for q, v in m["parts"].items()}, m["wall_us"]))
         ys = list(range(len(labels)))[::-1]
         parts = set()
+        scaled = False
         for y, (gpu, wall) in zip(ys, bars):
             x = 0.0
+            busy = sum(gpu.values())
+            if busy > wall:  # profiled kernel time above the (unprofiled) wall time: clock drift on the GPU
+                gpu = {q: v * wall / busy for q, v in gpu.items()}
+                scaled = True
             for lab, c, ps in GROUPS:
                 v = sum(gpu.get(p, 0.0) for p in ps) * scale
                 if v <= 0:
@@ -142,7 +148,8 @@ def plot_breakdown(res: dict, out: Path):
             ax.text(max(x + idle, x) + wall * scale * 0.01, y, f"{wall * scale:,.{2 if scale < 1 else 0}f}",
                     va="center", fontsize=9, color=INK)
         ax.set_yticks(ys, labels)
-        ax.set_title(title, loc="left", fontsize=10, color=INK)
+        ax.set_title(title + ("  - bars scaled to wall where the profiled GPU time exceeded it (clock drift)"
+                              if scaled else ""), loc="left", fontsize=10, color=INK)
         ax.set_xlim(0, max(b[1] for b in bars) * scale * 1.12)
     handles = [Patch(facecolor=c, label=lab) for lab, c, _ in GROUPS] + [
         Patch(facecolor=SURFACE, edgecolor="#b5b4ae", hatch="////", label="GPU idle")]
