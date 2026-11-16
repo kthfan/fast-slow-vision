@@ -263,7 +263,9 @@ def test_online_features_and_runner_match_offline():
     for lam in (1e-3, 0.3, 3.0):
         with torch.no_grad():
             stop = stop_steps(policy(feats, torch.full((N,), lam)))
-        for fn in (runner.run, runner.run_naive):
+        fns = (runner.run, runner.run_naive, *(lambda x, lam, k=k: runner.run_pipelined(x, lam, lookahead=k)
+                                              for k in (0, 1, 2, 8)))
+        for fn in fns:
             preds, steps = fn(x, lam)
             assert torch.equal(steps, stop)
             assert torch.equal(preds, p_off.argmax(-1)[stop, torch.arange(N)])
@@ -327,6 +329,9 @@ def test_cudagraph_bs1_logic_matches_eager_runners():
         for i in range(N):
             p1, s1 = cg.run(x[i:i + 1], lam)
             assert int(p1) == int(pe[i]) and s1 == int(se[i])
+            for k in (0, 1, 3):
+                p2, s2 = cg.run_pipelined(x[i:i + 1], lam, lookahead=k)
+                assert int(p2) == int(pe[i]) and s2 == int(se[i])
             p3, s3 = cg.run_o3(x[i:i + 1], lam)
             assert int(p3) == int(po[i]) and s3 == int(so[i])
     for t in range(T):
@@ -366,6 +371,15 @@ def test_cudagraph_bs1_on_gpu():
             pe, se = eager.run(xi, lam)
             p1, s1 = cg.run(xi, lam)
             assert int(p1) == int(pe) and s1 == int(se)
+            for k in (0, 1, 3):
+                p2, s2 = cg.run_pipelined(xi, lam, lookahead=k)
+                assert int(p2) == int(pe) and s2 == int(se)
+        # batch: the pipelined runner (real events, pinned counts) reproduces the synchronous one
+        pe, se = eager.run(xd, lam)
+        for k in (0, 1, 2):
+            pp, sp = eager.run_pipelined(xd, lam, lookahead=k)
+            # rows are batched differently (no compaction yet), so bf16 kernels may differ slightly
+            assert (pp == pe).float().mean() >= 0.9 and (sp == se).float().mean() >= 0.9
             po, so = o3_eager.run(xi, lam)
             p3, s3 = cg.run_o3(xi, lam)
             assert int(p3) == int(po) and s3 == int(so)
