@@ -56,6 +56,8 @@ def main(argv=None):
     p.add_argument("--bs1-images", type=int, default=300)
     p.add_argument("--repeats", type=int, default=5)
     p.add_argument("--out", default="")
+    p.add_argument("--no-compile-decide", dest="compile_decide", action="store_false",
+                   help="skip the CUDA-graph variant with the feature + policy kernels fused by torch.compile")
     a = p.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     sync = torch.cuda.synchronize if dev.type == "cuda" else (lambda: None)
@@ -86,8 +88,15 @@ def main(argv=None):
     single = lambda fn: (lambda: [fn(X[i:i + 1]) for i in range(n1)])  # noqa: E731
     cg = CudaGraphBS1(model, temps, dev, amp, policy=policy)
     ref1 = [runner.run(X[i:i + 1]) for i in range(n1)]
+    s1 = [int(r[1]) for r in ref1]
+    cgc = None
+    if a.compile_decide and dev.type == "cuda":
+        try:
+            cgc = CudaGraphBS1(model, temps, dev, amp, policy=policy, compile_decide=True)
+        except Exception as e:  # keep the other rows
+            print(f"[bench_sync] compile_decide failed: {e!r}"[:300])
 
-    def row(name, f_b=None, f_1=None, f_g=None, steps=None, check=None):
+    def row(name, f_b=None, f_1=None, f_g=None, steps=None, check=None, indexed=False):
         r = {"setting": name, "steps": steps}
         if f_b:
             sec, out = timed(batched(f_b), a.repeats, sync)
@@ -97,7 +106,8 @@ def main(argv=None):
         if f_1:
             r["bs1_ms"] = timed(single(f_1), max(1, a.repeats // 2), sync)[0] / n1 * 1e3
         if f_g:
-            sec, out = timed(single(f_g), max(1, a.repeats // 2), sync)
+            g = (lambda: [f_g(X[i:i + 1], i) for i in range(n1)]) if indexed else single(f_g)
+            sec, out = timed(g, max(1, a.repeats // 2), sync)
             r["cg_bs1_ms"] = sec / n1 * 1e3
             if check:
                 r["agree_cg"] = sum(int(o[1]) == int(rf[1]) and int(o[0]) == int(rf[0])
@@ -116,6 +126,15 @@ def main(argv=None):
             row(f"O1 pipelined L={k}", lambda xb, k=k: runner.run_pipelined(xb, None, k),
                 lambda xb, k=k: runner.run_pipelined(xb, None, k), lambda xb, k=k: cg.run_pipelined(xb, None, k),
                 steps=mean_steps, check=True)
+        row("O1 graphs, no sync (bound)", f_g=lambda xb, i: cg.run_known_depth(xb, s1[i]), steps=mean_steps,
+            indexed=True)
+        if cgc is not None:
+            row("O1 fused-decide sync", f_g=cgc.run, steps=mean_steps, check=True)
+            for k in a.lookahead:
+                row(f"O1 fused-decide pipe L={k}", f_g=lambda xb, k=k: cgc.run_pipelined(xb, None, k),
+                    steps=mean_steps, check=True)
+            row("O1 fused-decide bound", f_g=lambda xb, i: cgc.run_known_depth(xb, s1[i]), steps=mean_steps,
+                indexed=True)
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         Path(a.out).write_text(json.dumps(res, indent=2))

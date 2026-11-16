@@ -333,8 +333,19 @@ class CudaGraphBS1:
     the same functions are called directly, which is how the logic is tested.
     """
 
-    def __init__(self, model, temps: torch.Tensor, device, amp: str = "none", policy=None, o3_policy=None):
+    def __init__(self, model, temps: torch.Tensor, device, amp: str = "none", policy=None, o3_policy=None,
+                 compile_decide: bool = False):
         cfg = model.cfg
+        # optional: fuse the ~40 small feature + policy kernels of each step with torch.compile
+        # (compiled during the warm-up, then captured in the same graph)
+        self._decide_core = self._decide_core_impl
+        if compile_decide:
+            import torch._dynamo as dynamo
+
+            for key in ("cache_size_limit", "recompile_limit"):
+                if hasattr(dynamo.config, key):
+                    setattr(dynamo.config, key, max(getattr(dynamo.config, key), 256))
+            self._decide_core = torch.compile(self._decide_core_impl, dynamic=False)
         self.model, self.device, self.amp, self.T = model.eval(), device, amp, cfg.t_max
         self.temps = temps.float().to(device)
         self.policy = policy.eval() if policy is not None else None
@@ -395,16 +406,20 @@ class CudaGraphBS1:
         if self.tok.shape == x0.shape:  # ViT: step 0 reads the embedding from tok; VCNet reads x0
             self.tok.copy_(x0)
 
+    def _decide_core_impl(self, z, prev_logp, prev_pred, run, lam, t: int):
+        p, logp = self._probs(z, t)
+        prev = (prev_logp, prev_pred, run) if t > 0 else (None, None, None)
+        feats, pred, run = online_s0(p, logp, *prev, t, self.T)
+        stop = self.policy(feats[None], lam if self.policy.use_lambda else None)[0] > 0
+        return stop, pred, logp, run
+
     def _step_fn(self, t: int):
         tok, z = self._model_step(self.tok, self.x0, t)
         self.tok.copy_(tok)
         if t == self.T - 1:
             self.pred.copy_(z.argmax(-1))
             return
-        p, logp = self._probs(z, t)
-        prev = (self.prev_logp, self.prev_pred, self.run_) if t > 0 else (None, None, None)
-        feats, pred, run = online_s0(p, logp, *prev, t, self.T)
-        stop = self.policy(feats[None], self.lam if self.policy.use_lambda else None)[0] > 0
+        stop, pred, logp, run = self._decide_core(z, self.prev_logp, self.prev_pred, self.run_, self.lam, t)
         self.prev_logp.copy_(logp)
         self.prev_pred.copy_(pred)
         self.run_.copy_(run)
@@ -423,10 +438,7 @@ class CudaGraphBS1:
         if t == self.T - 1:
             self.pred.copy_(torch.where(self.done, self.pred, z.argmax(-1)))
             return
-        p, logp = self._probs(z, t)
-        prev = (self.prev_logp, self.prev_pred, self.run_) if t > 0 else (None, None, None)
-        feats, pred, run = online_s0(p, logp, *prev, t, self.T)
-        stop = self.policy(feats[None], self.lam if self.policy.use_lambda else None)[0] > 0
+        stop, pred, logp, run = self._decide_core(z, self.prev_logp, self.prev_pred, self.run_, self.lam, t)
         self.prev_logp.copy_(logp)
         self.prev_pred.copy_(pred)
         self.run_.copy_(run)
@@ -513,6 +525,20 @@ class CudaGraphBS1:
                 s = checked
             checked += 1
         return self.pred.clone(), (T - 1 if s is None else s)
+
+    @torch.no_grad()
+    def run_known_depth(self, x: torch.Tensor, s: int, lam: float | None = None) -> torch.Tensor:
+        """Timing bound, not an inference method: replay the O1 step graphs (policy included) for
+        steps 0..s without reading anything back, as if the stop step s were known in advance.
+        The time of ``run`` minus this is what host synchronisation costs; no scheme that keeps
+        the policy on the GPU (pipelining, conditional graph nodes) can be faster than this."""
+        self.x.copy_(x)
+        if lam is not None:
+            self.lam.fill_(float(lam))
+        self.g_embed_latch()
+        for t in range(s + 1):
+            self.g_step_latch[t]()
+        return self.pred.clone()
 
     @torch.no_grad()
     def run_o3(self, x: torch.Tensor, lam: float) -> tuple[torch.Tensor, int]:
