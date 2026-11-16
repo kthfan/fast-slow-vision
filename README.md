@@ -493,6 +493,31 @@ Kaggle T4、batch 256、隨機權重（`results/t4_interleaved/`；每 batch，�
   時間圖 `timeline_bvit_s_eager-bs256x2.png` 可見 CPU 線全程忙碌。兩個 batch 同步前進，後段步驟同時只剩少數影像，交錯無法用前段的大工作量填補。
 - 要再進一步，必須減少發送次數：融合 kernel（536 → 359 個）已把閒置降到 7%；下一步是 CUDA graph（依大小分級）或固定槽位池，讓每步只發送一次。
 
+### 固定大小的槽位池（0.13.0，`fsv/halting/slots.py`）
+
+`SlotPoolRunner`：S 個槽位同時在途，每個槽位各自在自己的步數；每個 tick 依序做補位（空槽位從 GPU 上的佇列取下一張圖，
+裝置端指標，不經 CPU）→ 所有槽位走一步 → 停止決策（第 T−1 步強制停止）→ 記錄已停止者並釋放槽位。形狀固定，整個 tick 是一張
+CUDA graph；CPU 只重播 graph，並晚一個 tick 非同步讀「已完成張數」。模型改動：`forward_step` / `readout` 接受每列的步數 tensor
+（只支援 `n_blocks == 1`，權重跨步共用）；融合 kernel 新增每列模式。測試：與 `AdaptiveRunner.run` 的預測與停止步數逐位元相同（CPU、
+Triton 直譯器），GPU 上 100% 一致。benchmark 模式 `slots`、`slots-triton`（`--slots`）。
+
+Kaggle T4、隨機權重、10,240 張圖（`results/t4_slots/`；吞吐量 img/s）：
+
+| | bViT-S | bViT-B |
+|---|---|---|
+| 固定 4 步（batch 256） | 11,519 | 3,116 |
+| O1（壓縮，每步同步） | **11,715** | **3,778** |
+| 槽位池 S=256（補位上限 R=256） | 8,391 | 3,016 |
+| 槽位池 S=256，R=128 | 9,218 | 3,285 |
+| 槽位池 S=512，R=128，融合 | 7,711 | 2,934 |
+
+- 目標本身達成：GPU 閒置約 0%，槽位使用率 96%（剩下 4% 是佇列用完後的收尾），決策 100% 一致。
+- 但吞吐量比現在的 O1 低 20–28%：一個 tick（256 槽位走一步）在 bViT-S 要 8.4 ms，而 batch 256 的一個模型步約 5.3 ms，
+  每個 tick 多約 3 ms 的 GPU 工作。R=128 少約 0.8 ms，表示補位（每 tick embed R 張圖、搬移 token 緩衝區）是主要來源之一；
+  其餘部分待逐 kernel 剖析確認。S=512 更慢（tick 時間超過線性成長）。
+- 可行的改進：補位上限依平均停止率設定（約 1.5 × S / 平均步數）、不使用 input injection 時不保存 `x0`、
+  token 緩衝區雙緩衝以省去每 tick 的整份複製。
+
 ## VCNet：原始 vs 自適應步數（`dev/vcnet` 分支，0.9.0 起）
 
 使用者決定改用 VCNet，目標是比較**原始 VCNet**與 **VCNet + 自適應步數**。架構、論文沒寫而由我們補上的假設、
