@@ -75,17 +75,23 @@ if HAVE_TRITON:
     @triton.jit
     def _decide_kernel(z_ptr, z_stride, plogp_ptr, ppred_ptr, prun_ptr, lam_ptr, lam_stride,
                        mu_ptr, sd_ptr, w1_ptr, b1_ptr, w2_ptr, b2_ptr,
-                       stop_ptr, pred_ptr, pred2_ptr, logp_ptr, run_ptr, feats_ptr,
+                       stop_ptr, pred_ptr, pred2_ptr, logp_ptr, run_ptr, feats_ptr, t_ptr, temps_ptr,
                        temp, t, inv_T, inv_logC, log_lo, inv_log_range,
                        C: tl.constexpr, T: tl.constexpr, F: tl.constexpr, IN: tl.constexpr, H: tl.constexpr,
                        BLOCK_C: tl.constexpr, BLOCK_F: tl.constexpr,
                        HAS_PREV: tl.constexpr, USE_LAM: tl.constexpr, HAS_PRED2: tl.constexpr,
-                       WRITE_FEATS: tl.constexpr, ACC: tl.constexpr):
+                       WRITE_FEATS: tl.constexpr, ACC: tl.constexpr, ROWS: tl.constexpr):
         row = tl.program_id(0)
+        if ROWS:  # every row at its own step (slot pool): t and its temperature per row
+            tt = tl.load(t_ptr + row)
+            tmp = tl.load(temps_ptr + tt)
+        else:
+            tt = t
+            tmp = temp
         oc = tl.arange(0, BLOCK_C)
         cm = oc < C
         # ---- calibrated probabilities
-        z = tl.load(z_ptr + row * z_stride + oc, mask=cm, other=float("-inf")).to(tl.float32) / temp
+        z = tl.load(z_ptr + row * z_stride + oc, mask=cm, other=float("-inf")).to(tl.float32) / tmp
         zmax = tl.max(z, axis=0)
         e = tl.where(cm, _exp(z - zmax, ACC), 0.0)
         p = tl.maximum(e / tl.sum(e, axis=0), 1e-12)
@@ -115,6 +121,11 @@ if HAVE_TRITON:
             changed = (pred != tl.load(ppred_ptr + row)).to(tl.float32)
             kl = tl.sum(p * (logp - plogp), axis=0)
             run = (tl.load(prun_ptr + row) + 1.0) * (1.0 - changed)
+            if ROWS:  # a row at step 0 has no previous step (its state buffers hold another image)
+                first = tt == 0
+                changed = tl.where(first, 0.0, changed)
+                kl = tl.where(first, 0.0, kl)
+                run = tl.where(first, 0.0, run)
         else:
             changed = 0.0
             kl = 0.0
@@ -131,7 +142,7 @@ if HAVE_TRITON:
         f = tl.where(of == 7, changed, f)
         f = tl.where(of == 8, kl, f)
         f = tl.where(of == 9, run * inv_T, f)
-        f = tl.where(of == 10 + t, 1.0, f)
+        f = tl.where(of == 10 + tt, 1.0, f)
         if WRITE_FEATS:
             tl.store(feats_ptr + row * F + of, f, mask=of < F)
         fm = of < F
@@ -147,7 +158,10 @@ if HAVE_TRITON:
         h = 0.5 * h * (1.0 + _erf(h * 0.7071067811865476, ACC))
         logit = tl.sum(h * tl.load(w2_ptr + oh), axis=0) + tl.load(b2_ptr)
         # ---- outputs (each program owns its row, so outputs may alias the inputs)
-        tl.store(stop_ptr + row, logit > 0)
+        if ROWS:  # the last step always stops
+            tl.store(stop_ptr + row, (logit > 0) | (tt == T - 1))
+        else:
+            tl.store(stop_ptr + row, logit > 0)
         tl.store(pred_ptr + row, pred)
         if HAS_PRED2:
             tl.store(pred2_ptr + row, pred)
@@ -173,9 +187,18 @@ class FusedDecide:
         self.log_lo = float(policy.log_lo)
         self.inv_log_range = 1.0 / float(policy.log_hi - policy.log_lo)
         self.BLOCK_F = triton.next_power_of_2(self.IN) if HAVE_TRITON else 0
+        self._temps_dev = None
+
+    def rows(self, z, prev_logp, prev_pred, run, lam, t: torch.Tensor, out: dict | None = None,
+             feats_out: torch.Tensor | None = None):
+        """As ``__call__`` with every row at its own step ``t`` (long tensor [N]); rows at step 0
+        ignore the previous-step state, and rows at step T-1 always stop (slot-pool runner)."""
+        if self._temps_dev is None or self._temps_dev.device != z.device:
+            self._temps_dev = torch.tensor(self.temps, dtype=torch.float32, device=z.device)
+        return self(z, prev_logp, prev_pred, run, lam, 1, out, feats_out, t_rows=t)
 
     def __call__(self, z, prev_logp, prev_pred, run, lam, t: int, out: dict | None = None,
-                 feats_out: torch.Tensor | None = None):
+                 feats_out: torch.Tensor | None = None, t_rows: torch.Tensor | None = None):
         """z [N, C] logits -> (stop bool [N], pred long [N], logp float [N, C], run float [N]).
 
         ``out`` may give destination tensors ("stop", "pred", "logp", "run", optional "pred2");
@@ -206,9 +229,10 @@ class FusedDecide:
             self.policy.mu, self.policy.sd, w1, b1, w2, b2,
             stop, pred, pred2 if pred2 is not None else pred, logp, run_o,
             feats_out if feats_out is not None else dummy,
-            self.temps[t], t, 1.0 / self.T, 1.0 / math.log(C), self.log_lo, self.inv_log_range,
+            t_rows if t_rows is not None else pred, self._temps_dev if t_rows is not None else logp,
+            self.temps[0] if t_rows is not None else self.temps[t], 0 if t_rows is not None else t, 1.0 / self.T, 1.0 / math.log(C), self.log_lo, self.inv_log_range,
             C=C, T=self.T, F=self.F, IN=self.IN, H=self.H, BLOCK_C=triton.next_power_of_2(C),
             BLOCK_F=self.BLOCK_F, HAS_PREV=has_prev, USE_LAM=use_lam, HAS_PRED2=pred2 is not None,
-            WRITE_FEATS=feats_out is not None, ACC=_ACCURATE, num_warps=4,
+            WRITE_FEATS=feats_out is not None, ACC=_ACCURATE, ROWS=t_rows is not None, num_warps=4,
         )
         return stop, pred, logp, run_o

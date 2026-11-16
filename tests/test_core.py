@@ -371,6 +371,15 @@ def test_cudagraph_bs1_on_gpu():
             assert int(p3) == int(po) and s3 == int(so)
     for t in range(T):
         assert int(cg.run_fixed(xd[:1], t)) == int(eager.run_fixed(xd[:1], t))
+    # slot pool, one CUDA graph per tick: same decisions as the batch runner up to float rounding
+    from fsv.halting.slots import SlotPoolRunner
+
+    for fz in (False, True) if __import__("fsv.halting.fused", fromlist=["x"]).triton_usable(dev) else (False,):
+        sp = SlotPoolRunner(model, pol, temps, dev, amp, slots=8, fused=fz)
+        for lam in (1e-3, 0.3):
+            pe, se = eager.run(xd, lam)
+            pp, ss = sp.run(xd, lam)
+            assert sp.graph and (ss == se).float().mean() >= 0.9 and (pp == pe).float().mean() >= 0.9
     # features + policy in one Triton kernel: same decisions up to float rounding of the policy logit
     from fsv.halting.fused import triton_usable
 
@@ -421,6 +430,12 @@ for use_lam in (False, True):
         for i in range(N):
             p1, s1 = cg.run(x[i:i + 1], lam)
             assert int(p1) == int(pr[i]) and s1 == int(sr[i])
+    from fsv.halting.slots import SlotPoolRunner
+
+    for lam in (1e-3, 0.3):  # per-row kernel mode (each slot at its own step)
+        pr, sr = ref.run(x, lam)
+        pp, ss = SlotPoolRunner(model, pol, temps, dev, slots=8, fused=True).run(x, lam)
+        assert torch.equal(pp, pr) and torch.equal(ss, sr), ("slots", use_lam, lam)
     # features and state written by the kernel equal the PyTorch ones
     fd = FusedDecide(pol, temps, T)
     lam = torch.full((N,), 0.05)
@@ -451,3 +466,71 @@ def test_fused_decide_kernel_matches_pytorch_in_triton_interpreter():
                        env={**os.environ, "TRITON_INTERPRET": "1", "CUDA_VISIBLE_DEVICES": "",
                             "PYTHONPATH": str(root)}, timeout=900)
     assert "FUSED_OK" in r.stdout, r.stdout[-2000:] + r.stderr[-4000:]
+
+
+def _varied_policy(model, x, temps):
+    """A random S0 policy whose bias is chosen so images stop at many different steps."""
+    from fsv.halting.features import build_features
+    from fsv.halting.online import AdaptiveRunner
+    from fsv.halting.policy import HaltMLP
+
+    T = model.cfg.t_max
+    pol = HaltMLP(10 + T).eval()
+    with torch.no_grad():
+        pol.set_normalization(build_features({"logits": model(x)}, temps, "S0"))
+        pol.net[0].weight.mul_(4)
+    r = AdaptiveRunner(model, pol, temps, torch.device("cpu"))
+    best = None
+    for b in torch.linspace(-3, 3, 25).tolist():
+        pol.net[-1].bias.data.fill_(b)
+        k = len(set(r.run(x[:64])[1].tolist()))
+        best = (k, b) if best is None or k > best[0] else best
+    pol.net[-1].bias.data.fill_(best[1])
+    return pol
+
+
+def test_per_row_steps_match_scalar_steps():
+    torch.manual_seed(0)
+    for kw in ({}, {"step_embed_in": True, "input_inject": True}):
+        m = build_model("bvit_tiny", num_classes=10, t_max=6, **kw).eval()
+        with torch.no_grad():
+            for prm in (m.step_in, m.inject_gate, m.step_out):
+                if prm is not None:
+                    prm.normal_()
+            x = torch.randn(8, 3, 32, 32)
+            x0 = m.embed(x)
+            tok = torch.randn_like(x0)
+            tv = torch.tensor([0, 1, 2, 3, 4, 5, 0, 3])
+            rows = m.forward_step(tok, tv, x0)
+            z = m.readout(rows, tv)
+            for i in range(8):
+                ri = m.forward_step(tok[i:i + 1], int(tv[i]), x0[i:i + 1])
+                torch.testing.assert_close(ri, rows[i:i + 1])
+                torch.testing.assert_close(m.readout(ri, int(tv[i])), z[i:i + 1])
+    with pytest.raises(NotImplementedError):  # different weights per step cannot be batched across steps
+        build_model("bvit_tiny", num_classes=10, t_max=4, n_blocks=4).forward_step(tok[:, :, :192][:2], tv[:2], None)
+
+
+def test_slot_pool_matches_adaptive_runner():
+    from fsv.halting.online import AdaptiveRunner
+    from fsv.halting.slots import SlotPoolRunner
+
+    torch.manual_seed(0)
+    T = 6
+    for kw in ({}, {"step_embed_in": True, "input_inject": True}):
+        model = build_model("bvit_tiny", num_classes=10, t_max=T, **kw).eval()
+        with torch.no_grad():
+            if model.inject_gate is not None:
+                model.inject_gate.normal_()
+                model.step_in.normal_(std=0.1)
+        x = torch.randn(150, 3, 32, 32)
+        temps = torch.linspace(1.3, 0.8, T)
+        pol = _varied_policy(model, x, temps)
+        pr, sr = AdaptiveRunner(model, pol, temps, torch.device("cpu")).run(x)
+        assert len(set(sr.tolist())) >= 2  # images stop at different steps, so slots are refilled unevenly
+        for S, R in ((8, None), (16, 3), (200, None)):  # fewer, more slots than images; capped refill
+            sp = SlotPoolRunner(model, pol, temps, torch.device("cpu"), slots=S, refill=R)
+            for n in (150, 37):  # a second, smaller run reuses the buffers
+                pp, ss = sp.run(x[:n])
+                assert torch.equal(ss, sr[:n]) and torch.equal(pp, pr[:n]), (S, R, n)
+                assert 0 < sp.occupancy(ss) <= 1

@@ -7,7 +7,9 @@ steps is about --steps. Times, back to back in one process:
   * fixed depth (the number of steps closest to the adaptive mean, and one more);
   * O1 with one wait per step (``AdaptiveRunner.run``, ``CudaGraphBS1.run``);
   * O1 with features + policy fused into one Triton kernel;
-  * O1 "no sync" bound: the step graphs replayed for a known depth (what sync costs).
+  * O1 "no sync" bound: the step graphs replayed for a known depth (what sync costs);
+  * O1 slot pool (``SlotPoolRunner``): --slots images in flight, each at its own step, one CUDA
+    graph per tick (batch-256 column: throughput over all images; occupancy = useful slot-steps).
 Batch 256 throughput (eager) and batch-1 latency (eager and CUDA graphs). Accuracy is
 meaningless here; only the timing and the agreement of the decisions are reported.
 """
@@ -55,6 +57,8 @@ def main(argv=None):
     p.add_argument("--batch-size", type=int, default=256)
     p.add_argument("--bs1-images", type=int, default=300)
     p.add_argument("--repeats", type=int, default=5)
+    p.add_argument("--slots", type=int, nargs="+", default=[256])
+    p.add_argument("--refill", type=int, nargs="*", default=[0], help="slot pool refill cap per tick (0 = slots)")
     p.add_argument("--out", default="")
     a = p.parse_args(argv)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -120,6 +124,29 @@ def main(argv=None):
             row(f"fixed t={t}", lambda xb, t=t: runner.run_fixed(xb, t), lambda xb, t=t: runner.run_fixed(xb, t),
                 lambda xb, t=t: cg.run_fixed(xb, t), steps=t + 1)
         row("O1 sync per step", runner.run, runner.run, cg.run, steps=mean_steps, check=True)
+        from fsv.halting.slots import SlotPoolRunner
+
+        for S in a.slots:  # continuous batching: fixed shapes, one graph per tick
+            for R in a.refill:
+                for fz in (False, True) if rft is not None else (False,):
+                    sp = SlotPoolRunner(model, policy, temps, dev, amp, slots=S, refill=R or None, fused=fz)
+                    name = f"slot pool S={S}" + (f" R={R}" if R else "") + (" triton" if fz else "")
+                    row(name, f_all=lambda c, sp=sp: [sp.run(X, None)], steps=mean_steps, check=True)
+                    r_ = res["rows"][-1]
+                    r_["ticks"], r_["occupancy"] = sp.last_ticks, sp.occupancy(sp.run(X, None)[1])
+                    if dev.type == "cuda":  # GPU time of one tick -> GPU idle of the run
+                        sync()
+                        e0, e1 = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+                        e0.record()
+                        for _ in range(50):
+                            sp.g_tick()
+                        e1.record()
+                        sync()
+                        r_["tick_gpu_ms"] = e0.elapsed_time(e1) / 50
+                        wall_ms = N / r_["img_per_s"] * 1e3
+                        r_["gpu_idle"] = 1 - r_["tick_gpu_ms"] * r_["ticks"] / wall_ms
+                    print(f"    ticks {r_['ticks']}, occupancy {r_['occupancy']:.3f}, tick GPU "
+                          f"{r_.get('tick_gpu_ms', float('nan')):.3f} ms, GPU idle {r_.get('gpu_idle', float('nan')):.1%}")
         row("O1 graphs, no sync (bound)", f_g=lambda xb, i: cg.run_known_depth(xb, s1[i]), steps=mean_steps,
             indexed=True)
         if cgt is not None:  # features + policy in ONE Triton kernel
