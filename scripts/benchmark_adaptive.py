@@ -17,6 +17,9 @@ with every per-step computation captured as a graph: fixed depth = one graph for
 forward pass, O1 = one graph per step + one host read of the stop flag, O3 = two graphs +
 one host read; "cudagraph-bs1-fused" also fuses each step's feature + policy kernels with torch.compile,
 "cudagraph-bs1-triton" / "eager-triton" compute them in ONE Triton kernel (fsv/halting/fused.py; GPU only). They report latency only (accuracy is taken from the eager modes).
+Interleaved modes ("eager-interleaved2", "triton-interleaved2"; --inflight) keep several batches in
+flight, round robin: while the CPU waits for one batch's step result the GPU runs the next batch's
+queued kernels (batch-256 throughput only).
 Pipelined modes ("eager-pipelined", "compiled-pipelined", "cudagraph-bs1-pipelined"; skip with
 --no-pipelined) run the O1 policy without the per-step stall: the CPU keeps launching steps and
 only polls the per-step results (copied to pinned memory, with events), waiting at most
@@ -71,6 +74,8 @@ def parse_args(argv=None):
                    help="skip the pipelined O1 modes (CPU polls results without stalling the GPU)")
     p.add_argument("--lookahead", type=int, default=1,
                    help="pipelined modes: steps the CPU may launch beyond the last result it has read")
+    p.add_argument("--inflight", type=int, nargs="*", default=[2],
+                   help="interleaved modes: batches in flight (round robin); pass the flag alone to skip")
     p.add_argument("--no-cudagraph", dest="cudagraph", action="store_false",
                    help="skip the batch-1 CUDA-graph modes (measured by default)")
     p.add_argument("--o3-policies", nargs="*", default=["S0-o3k0-reward_acc", "S0-o3k1-reward_acc"],
@@ -242,6 +247,21 @@ def main(argv=None):
                 except Exception as e:
                     res["triton_error"] = repr(e)[:500]
                     print(f"[benchmark] eager-triton failed, skipped: {res['triton_error']}")
+            if args.inflight:  # several batches in flight, round robin (batch-256 throughput only)
+                chunks = [X[i:i + bs] for i in range(0, N, bs)]
+                runners = [("eager", eager)] + ([("triton", tri)] if "eager-triton" in res["modes"] else [])
+                for tag, rr in runners:
+                    for k in args.inflight:
+                        rows = []
+                        for lam in lams:
+                            sec, out = timed(lambda: rr.run_interleaved(chunks, lam, k), args.repeats, sync)
+                            pred = torch.cat([o[0] for o in out])
+                            steps = torch.cat([o[1] for o in out]).float()
+                            rows.append({"lam": lam, "acc": float((pred == Y).float().mean()),
+                                         "mean_steps": float(steps.mean()) + 1, "img_per_s": N / sec, "bs1_ms": None,
+                                         "steps_hist": torch.bincount(steps.long(), minlength=T).tolist()})
+                        res["modes"][f"{tag}-interleaved{k}"] = {"fixed": res["modes"]["eager"]["fixed"],
+                                                                 "adaptive": rows}
             if args.naive:  # the first runner: boolean-mask indexing, several host syncs per step
                 res["modes"]["eager-naive"] = measure(eager, "run_naive")
             compiled = None
@@ -291,10 +311,10 @@ def main(argv=None):
                 print(f"  [{mode}] setting   acc %   steps   img/s (bs {bs})   bs1 ms")
                 for r in m["fixed"]:
                     print(f"  fixed t={r['step']}      {r['acc'] * 100:6.2f}  {r['step'] + 1:6.2f}  "
-                          f"{(r['img_per_s'] or float('nan')):14.0f}  {r['bs1_ms']:7.3f}")
+                          f"{(r['img_per_s'] or float('nan')):14.0f}  {(r['bs1_ms'] or float('nan')):7.3f}")
                 for r in m["adaptive"]:
                     print(f"  lam={r['lam']!s:<10}  {r['acc'] * 100:6.2f}  {r['mean_steps']:6.2f}  "
-                          f"{(r['img_per_s'] or float('nan')):14.0f}  {r['bs1_ms']:7.3f}")
+                          f"{(r['img_per_s'] or float('nan')):14.0f}  {(r['bs1_ms'] or float('nan')):7.3f}")
 
 
 if __name__ == "__main__":

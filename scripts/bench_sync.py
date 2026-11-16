@@ -7,7 +7,8 @@ steps is about --steps. Times, back to back in one process:
   * fixed depth (the number of steps closest to the adaptive mean, and one more);
   * O1 with one wait per step (``AdaptiveRunner.run``, ``CudaGraphBS1.run``);
   * O1 pipelined (``run_pipelined``): the CPU keeps launching steps and polls the results;
-  * O1 with features + policy fused into one Triton kernel, and with torch.compile.
+  * O1 with features + policy fused into one Triton kernel, and with torch.compile;
+  * O1 interleaved (``run_interleaved``): k batches in flight, round robin (batch 256 only).
 Batch 256 throughput (eager) and batch-1 latency (eager and CUDA graphs). Accuracy is
 meaningless here; only the timing and the agreement of the decisions are reported.
 """
@@ -52,6 +53,8 @@ def main(argv=None):
     p.add_argument("--classes", type=int, default=100)
     p.add_argument("--steps", type=float, default=3.5, help="target mean number of steps of the policy")
     p.add_argument("--lookahead", type=int, nargs="+", default=[1, 2])
+    p.add_argument("--inflight", type=int, nargs="+", default=[1, 2, 3],
+                   help="batches in flight for the interleaved runner (batch-256 throughput)")
     p.add_argument("--images", type=int, default=4096)
     p.add_argument("--batch-size", type=int, default=256)
     p.add_argument("--bs1-images", type=int, default=300)
@@ -101,10 +104,12 @@ def main(argv=None):
         except Exception as e:  # keep the other rows
             print(f"[bench_sync] compile_decide failed: {e!r}"[:300])
 
-    def row(name, f_b=None, f_1=None, f_g=None, steps=None, check=None, indexed=False):
+    chunks = [X[i:i + bs] for i in range(0, N, bs)]
+
+    def row(name, f_b=None, f_1=None, f_g=None, steps=None, check=None, indexed=False, f_all=None):
         r = {"setting": name, "steps": steps}
-        if f_b:
-            sec, out = timed(batched(f_b), a.repeats, sync)
+        if f_b or f_all:  # f_all: one call over all batches (e.g. several batches in flight)
+            sec, out = timed((lambda: f_all(chunks)) if f_all else batched(f_b), a.repeats, sync)
             r["img_per_s"] = N / sec
             if check:
                 r["agree_bs256"] = float((torch.cat([o[1] for o in out]) == s_ref).float().mean())
@@ -131,6 +136,12 @@ def main(argv=None):
             row(f"O1 pipelined L={k}", lambda xb, k=k: runner.run_pipelined(xb, None, k),
                 lambda xb, k=k: runner.run_pipelined(xb, None, k), lambda xb, k=k: cg.run_pipelined(xb, None, k),
                 steps=mean_steps, check=True)
+        for k in a.inflight:  # k batches in flight, round robin: the GPU works on one while the CPU waits for another
+            row(f"O1 interleaved k={k}", f_all=lambda c, k=k: runner.run_interleaved(c, None, k), steps=mean_steps,
+                check=True)
+            if rft is not None:
+                row(f"O1 triton interleaved k={k}", f_all=lambda c, k=k: rft.run_interleaved(c, None, k),
+                    steps=mean_steps, check=True)
         row("O1 graphs, no sync (bound)", f_g=lambda xb, i: cg.run_known_depth(xb, s1[i]), steps=mean_steps,
             indexed=True)
         if cgt is not None:  # features + policy in ONE Triton kernel

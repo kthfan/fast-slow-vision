@@ -136,6 +136,92 @@ class AdaptiveRunner:
             prev_logp, prev_pred = logp, pred
         return preds, steps
 
+    def _batch_gen(self, x: torch.Tensor, lam):
+        """One batch of ``run`` as a generator: it launches a step, then yields the event that
+        marks the end of that step's work. When resumed it waits only for that event, reads the
+        number of images still running (copied asynchronously to pinned memory; no ``nonzero``,
+        which would wait for everything queued on the GPU, other batches included), compacts
+        and launches the next step. Returns (predictions, stop steps)."""
+        B, T, dev = x.shape[0], self.T, x.device
+        cuda = dev.type == "cuda"
+        preds = torch.zeros(B, dtype=torch.long, device=dev)
+        steps = torch.full((B,), T - 1, dtype=torch.long, device=dev)
+        idx = torch.arange(B, device=dev)
+        counts = torch.empty(T, dtype=torch.long, pin_memory=cuda)
+        with autocast_ctx(self.device, self.amp):
+            x0 = tok = self.model.embed(x)
+        lam_all = self._lam(B, lam)
+        prev_logp = prev_pred = run = None
+        for t in range(T):
+            tok, z = self._step(tok, x0, t)
+            if t == T - 1:
+                preds.index_copy_(0, idx, z.argmax(-1))
+                break
+            n = idx.shape[0]
+            stop, pred, logp, run = self._decide(z, prev_logp, prev_pred, run,
+                                                 None if lam_all is None else lam_all[:n], t)
+            preds.index_copy_(0, idx, torch.where(stop, pred, preds.index_select(0, idx)))
+            steps.index_copy_(0, idx, torch.where(stop, torch.full_like(idx, t), steps.index_select(0, idx)))
+            order = torch.argsort(stop.to(torch.uint8), stable=True)  # running rows first
+            if cuda:
+                counts[t].copy_((~stop).sum(), non_blocking=True)
+                ev = torch.cuda.Event()
+                ev.record()
+            else:
+                counts[t] = (~stop).sum()
+                ev = None
+            yield ev  # the caller launches other batches' work here
+            if ev is not None:
+                ev.synchronize()
+            n_keep = int(counts[t])
+            if n_keep == 0:
+                break
+            if n_keep < n:
+                keep = order[:n_keep]
+                idx, tok, x0 = idx.index_select(0, keep), tok.index_select(0, keep), x0.index_select(0, keep)
+                logp, pred, run = logp.index_select(0, keep), pred.index_select(0, keep), run.index_select(0, keep)
+            prev_logp, prev_pred = logp, pred
+        return preds, steps
+
+    @torch.no_grad()
+    def run_interleaved(self, xs: list[torch.Tensor], lam: float | None = None,
+                        inflight: int = 2) -> list[tuple[torch.Tensor, torch.Tensor]]:
+        """``run`` on several batches with ``inflight`` of them in progress at once, round robin.
+
+        While the CPU waits for batch A's step-t result, the GPU works on the kernels already
+        queued for batch B, so the queue never drains; when a batch finishes, the next one from
+        ``xs`` takes its place. No speculative work: every launched step is needed. Same results
+        as calling ``run`` on each batch. ``inflight=1`` is ``run`` with the asynchronous read
+        instead of ``nonzero``."""
+        results: list = [None] * len(xs)
+        pending = iter(enumerate(xs))
+        active: deque = deque()
+
+        def advance(i, g) -> bool:  # resume one batch: wait for its last step, launch the next one
+            try:
+                next(g)
+                return True
+            except StopIteration as e:
+                results[i] = e.value
+                return False
+
+        def start() -> None:
+            for i, x in pending:
+                g = self._batch_gen(x, lam)
+                if advance(i, g):
+                    active.append((i, g))
+                    return
+
+        for _ in range(max(1, inflight)):
+            start()
+        while active:
+            i, g = active.popleft()
+            if advance(i, g):
+                active.append((i, g))
+            else:
+                start()
+        return results
+
     @torch.no_grad()
     def run_pipelined(self, x: torch.Tensor, lam: float | None = None,
                       lookahead: int = 1) -> tuple[torch.Tensor, torch.Tensor]:

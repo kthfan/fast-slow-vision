@@ -269,6 +269,12 @@ def test_online_features_and_runner_match_offline():
             preds, steps = fn(x, lam)
             assert torch.equal(steps, stop)
             assert torch.equal(preds, p_off.argmax(-1)[stop, torch.arange(N)])
+        # several batches in flight (round robin) give the same answers as one batch at a time
+        chunks = [x[i:i + 20] for i in range(0, N, 20)]
+        ref = [runner.run(c, lam) for c in chunks]
+        for k in (1, 2, 3):
+            out = runner.run_interleaved(chunks, lam, inflight=k)
+            assert all(torch.equal(a[0], b[0]) and torch.equal(a[1], b[1]) for a, b in zip(out, ref))
     assert torch.equal(runner.run_fixed(x, 2), logits[2].argmax(-1))
 
 
@@ -430,7 +436,8 @@ for use_lam in (False, True):
     cg = CudaGraphBS1(model, temps, dev, policy=pol, fused=True)
     for lam in (1e-3, 0.3):
         pr, sr = ref.run(x, lam)
-        for fn in (fus.run, lambda a, b: fus.run_pipelined(a, b, 1)):
+        for fn in (fus.run, lambda a, b: fus.run_pipelined(a, b, 1),
+                   lambda a, b: tuple(torch.cat(v) for v in zip(*fus.run_interleaved([a[:10], a[10:]], b, 2)))):
             pf, sf = fn(x, lam)
             assert torch.equal(pf, pr) and torch.equal(sf, sr), (use_lam, lam)
         for i in range(N):
@@ -467,3 +474,37 @@ def test_fused_decide_kernel_matches_pytorch_in_triton_interpreter():
                        env={**os.environ, "TRITON_INTERPRET": "1", "CUDA_VISIBLE_DEVICES": "",
                             "PYTHONPATH": str(root)}, timeout=900)
     assert "FUSED_OK" in r.stdout, r.stdout[-2000:] + r.stderr[-4000:]
+
+
+def test_interleaved_and_pipelined_runners_with_varied_stop_steps():
+    # A random policy whose bias is chosen so images stop at many different steps: the
+    # asynchronous runners (several batches in flight, lagged compaction) must match ``run``.
+    from fsv.halting.online import AdaptiveRunner
+    from fsv.halting.policy import HaltMLP
+
+    torch.manual_seed(0)
+    T, C = 6, 10
+    model = build_model("bvit_tiny", num_classes=C, t_max=T).eval()
+    pol = HaltMLP(10 + T).eval()
+    x = torch.randn(150, 3, 32, 32)
+    from fsv.halting.features import build_features
+
+    with torch.no_grad():
+        pol.set_normalization(build_features({"logits": model(x)}, torch.ones(T), "S0"))
+        pol.net[0].weight.mul_(4)
+    r = AdaptiveRunner(model, pol, torch.ones(T), torch.device("cpu"))
+    best = None
+    for b in torch.linspace(-3, 3, 25).tolist():  # the bias giving the most distinct stop steps
+        pol.net[-1].bias.data.fill_(b)
+        k = len(set(r.run(x[:64])[1].tolist()))
+        best = (k, b) if best is None or k > best[0] else best
+    pol.net[-1].bias.data.fill_(best[1])
+    chunks = [x[i:i + 32] for i in range(0, 150, 32)]  # last chunk smaller
+    ref = [r.run(c) for c in chunks]
+    assert len(set(torch.cat([s_ for _, s_ in ref]).tolist())) >= 3
+    for k in (1, 2, 3):
+        out = r.run_interleaved(chunks, None, inflight=k)
+        assert all(torch.equal(a[0], b[0]) and torch.equal(a[1], b[1]) for a, b in zip(out, ref))
+    for c, (pr, sr) in zip(chunks, ref):
+        pp, sp = r.run_pipelined(c, None, lookahead=1)
+        assert torch.equal(pp, pr) and torch.equal(sp, sr)
