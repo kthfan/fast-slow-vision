@@ -16,7 +16,14 @@ stopped. It replays the tick graph and reads the number of finished images one t
 late (pinned memory + event), so the GPU always has the next tick queued.
 
 Costs: slots that are free (queue exhausted, at the very end) are still computed;
-``refill`` caps how many slots one tick can refill (embedding cost per tick).
+``refill`` caps how many slots one tick can refill (embedding cost per tick; default S/2,
+about 1.5x the slots freed per tick at 3-4 steps per image).
+
+Per-tick traffic is kept small (profile in results/t4_slots/): refilled rows are written with
+ONE scatter into the token buffer, whose extra last row is a sink for candidate slots that
+are not refilled (no gather + where + scatter of the whole candidate set); ``x0`` is only kept
+when the model uses input injection; the model step writes its result in place
+(``forward_step(..., out=tok)``), so no copy of the token buffer is needed.
 Same decisions as ``AdaptiveRunner.run`` up to float rounding (different batch shapes).
 """
 
@@ -59,7 +66,8 @@ class SlotPoolRunner:
         self.model, self.policy = model.eval(), policy.eval()
         self.device, self.amp = device, amp
         self.T, self.S = model.cfg.t_max, slots
-        self.R = min(refill or slots, slots)
+        self.R = min(refill or max(1, slots // 2), slots)
+        self.keep_x0 = model.inject_gate is not None  # x0 is only read by input injection
         self.temps = temps.float().to(device)
         self.graph = (device.type == "cuda") if graph is None else graph
         self.fd = None
@@ -84,8 +92,11 @@ class SlotPoolRunner:
             self.done = torch.zeros((), dtype=torch.long, device=dev)
             self.out_pred = torch.zeros(Q + 1, dtype=torch.long, device=dev)  # row Q: sink for idle slots
             self.out_step = torch.zeros(Q + 1, dtype=torch.long, device=dev)
-            self.tok = torch.zeros(S, *probe.shape[1:], dtype=probe.dtype, device=dev)
-            self.x0 = torch.zeros_like(self.tok)
+            # S slots + 1 sink row that absorbs the writes of candidate slots that are not refilled
+            self.tok_buf = torch.zeros(S + 1, *probe.shape[1:], dtype=probe.dtype, device=dev)
+            self.tok = self.tok_buf[:S]
+            self.x0_buf = torch.zeros_like(self.tok_buf) if self.keep_x0 else None
+            self.x0 = self.x0_buf[:S] if self.keep_x0 else None
             self.t = torch.zeros(S, dtype=torch.long, device=dev)
             self.img = torch.full((S,), Q, dtype=torch.long, device=dev)
             self.active = torch.zeros(S, dtype=torch.bool, device=dev)
@@ -117,18 +128,18 @@ class SlotPoolRunner:
         qi = torch.where(take, qi, torch.zeros_like(qi))
         with autocast_ctx(self.device, self.amp, cache_enabled=False):
             emb = self.model.embed(self.queue.index_select(0, qi)).to(self.tok.dtype)
-        tk = take[:, None, None]
-        self.tok.index_copy_(0, order, torch.where(tk, emb, self.tok.index_select(0, order)))
-        self.x0.index_copy_(0, order, torch.where(tk, emb, self.x0.index_select(0, order)))
+        dest = torch.where(take, order, torch.full_like(order, self.S))  # not taken -> sink row S
+        self.tok_buf.index_copy_(0, dest, emb)
+        if self.keep_x0:
+            self.x0_buf.index_copy_(0, dest, emb)
         self.t.index_copy_(0, order, torch.where(take, torch.zeros_like(qi), self.t.index_select(0, order)))
         self.img.index_copy_(0, order, torch.where(take, qi, self.img.index_select(0, order)))
         self.active.index_copy_(0, order, self.active.index_select(0, order) | take)
         self.next_ptr.add_(take.sum())
         # 2. one recurrent step for every slot, each at its own step
         with autocast_ctx(self.device, self.amp, cache_enabled=False):
-            tok = self.model.forward_step(self.tok, self.t, self.x0)
-            z = self.model.readout(tok, self.t)
-        self.tok.copy_(tok)
+            self.model.forward_step(self.tok, self.t, self.x0, out=self.tok)  # in place: no buffer copy
+            z = self.model.readout(self.tok, self.t)
         # 3. decide (state updated in place; step T-1 always stops)
         if self.fd is not None:
             self.fd.rows(z, self.prev_logp, self.prev_pred, self.run_, self.lam, self.t,
