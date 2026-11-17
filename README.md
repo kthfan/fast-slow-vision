@@ -514,7 +514,11 @@ Kaggle T4、隨機權重、10,240 張圖（`results/t4_slots/`；吞吐量 img/s
 - 目標本身達成：GPU 閒置約 0%，槽位使用率 96%（剩下 4% 是佇列用完後的收尾），決策 100% 一致。
 - 但吞吐量比現在的 O1 低 20–28%：一個 tick（256 槽位走一步）在 bViT-S 要 8.4 ms，而 batch 256 的一個模型步約 5.3 ms，
   每個 tick 多約 3 ms 的 GPU 工作。R=128 少約 0.8 ms，表示補位（每 tick embed R 張圖、搬移 token 緩衝區）是主要來源之一；
-  其餘部分待逐 kernel 剖析確認。S=512 更慢（tick 時間超過線性成長）。
+  S=512 更慢（tick 時間超過線性成長）。
+- 逐 kernel 剖析（`results/t4_slots/tick_profile.txt`，bViT-S，S=256）：一個 tick 的 GPU 時間中，模型步本身約 4.3 ms，
+  補位與記錄約 2.6 ms（R=256）/ 1.5 ms（R=128），其他約 0.3 ms。補位的成本來自：tok 與 x0 兩份 [256, 65, 384] fp32 緩衝區
+  的 gather（indexSelect，0.53 ms）→ `where`（約 0.6 ms）→ scatter 回去（index_copy，0.46 ms）、每 tick 整份複製 tok（DtoD，0.23 ms）、
+  以及對 R 張圖做 embed（約 0.7 ms，R=128 時減半）。停止決策與記錄本身很小。
 - 可行的改進：補位上限依平均停止率設定（約 1.5 × S / 平均步數）、不使用 input injection 時不保存 `x0`、
   token 緩衝區雙緩衝以省去每 tick 的整份複製。
 
