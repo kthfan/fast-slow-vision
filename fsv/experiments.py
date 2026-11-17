@@ -135,4 +135,16 @@ EXPERIMENTS: dict[str, dict] = {
         "desc": "Adaptive VCNet + per-area state + BLT-style top-down from the next area up (previous step).",
         "train": _VC_ADAPT + ["--lateral", "--topdown"],
     },
+    # ---- VCNet round 3: the blt architecture trained like the original VCNet (fixed steps, one readout, CE only),
+    # to separate the architecture gain from the per-step-readout + halting gain
+    "c100_vcnet_blt_orig2": {
+        "desc": "Same architecture as c100_vcnet_adapt_blt, trained like the original VCNet: "
+                "2 fixed steps, readout at the last step only, cross-entropy only.",
+        "train": [*_VC_ORIG, "--lateral", "--topdown"],
+    },
+    "c100_vcnet_blt_orig4": {
+        "desc": "Same as c100_vcnet_blt_orig2 with 4 fixed steps (the best fixed depth of c100_vcnet_adapt_blt).",
+        "train": [*_VC_ORIG[:_VC_ORIG.index("--t-max") + 1], "4", *_VC_ORIG[_VC_ORIG.index("--t-max") + 2:],
+                  "--lateral", "--topdown"],
+    },
 }

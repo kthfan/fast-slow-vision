@@ -135,3 +135,28 @@ python scripts/benchmark_adaptive.py c100_vcnet_orig c100_vcnet_adapt_carry c100
 1. 第 3 步以後準確率是否繼續上升（第 1 輪在第 2 步飽和）。
 2. 自適應版與原始 VCNet 在同樣準確率下的 FLOPs 與延遲。
 3. `blt` 對 `lat`：由上而下連線是否再多帶來增益。
+
+### 第 2 輪結果與第 3 輪
+
+結果見 [`results/vcnet_round2_h100`](../results/vcnet_round2_h100/summary.md)。跨步狀態解除了飽和（`blt` 到第 4 步仍在進步），
+停止策略也第一次在同一個模型內勝過固定深度。但相對原始 VCNet 的增益，大部分來自架構。
+
+第 3 輪把「架構」和「每步讀出 + 停止策略」分開：同樣的 `blt` 架構照原始 VCNet 的方式訓練（固定步數、只在最後讀出、只用 CE）。
+
+```bash
+python scripts/run_experiment.py c100_vcnet_blt_orig2 c100_vcnet_blt_orig4 --seeds 0 1 2
+```
+
+在沒有其他程式的 GPU 上重量延遲（先用 `nvidia-smi` 確認沒有其他行程）：
+
+```bash
+python scripts/benchmark_adaptive.py c100_vcnet_orig c100_vcnet_blt_orig2 c100_vcnet_blt_orig4 c100_vcnet_adapt_blt --seeds 0 1 2 --lams 0.003 0.01 0.03 0.1 0.3
+```
+
+比較方式：
+
+| 問題 | 比較 |
+|---|---|
+| 每步讀出 + 停止策略本身的價值 | `adapt_blt` + 停止策略 vs `blt_orig2`（約 0.28 GFLOPs）、`blt_orig4`（約 0.53 GFLOPs） |
+| 跨步狀態本身的價值 | `blt_orig2` vs `orig`（都是固定 2 步、單一讀出） |
+| 每步讀出是否拖累最終準確率 | `adapt_blt` 固定 4 步 vs `blt_orig4` |
