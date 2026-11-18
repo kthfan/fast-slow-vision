@@ -1,0 +1,684 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VCNet 自適應步數報告</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one report column (~860px) with numbered sections; figures and tables break out to the column width and scroll inside their own box */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --fg: #16191f;
+  --fg2: #4f5866;
+  --line: #d5dae1;
+  --grid: #e7eaef;
+  --accent: #1f5fbf;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --fb: #c2410c; --state: #1d4ed8; --td: #6250d6;
+  --hl: #eaf1fc;
+  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111418; --surface: #191d23; --fg: #e8eaee; --fg2: #a3acb9; --line: #313842; --grid: #252b33;
+    --accent: #6ea3f0; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --fb: #fb923c; --state: #7aa7ff; --td: #9085e9; --hl: #1b2638;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111418; --surface: #191d23; --fg: #e8eaee; --fg2: #a3acb9; --line: #313842; --grid: #252b33;
+  --accent: #6ea3f0; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --fb: #fb923c; --state: #7aa7ff; --td: #9085e9; --hl: #1b2638;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.75; }
+.wrap {
+  max-width: 860px; margin: 0 auto; display: grid; gap: 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 48px 80px;
+}
+h1, h2, h3 { margin: 0; line-height: 1.3; text-wrap: balance; }
+h1 { font-size: 2rem; font-weight: 700; }
+h2 { font-size: 1.4rem; font-weight: 700; display: flex; gap: 12px; align-items: baseline; }
+h2 .no { font-family: var(--font-mono); font-size: 0.95rem; color: var(--accent); font-weight: 500; }
+h3 { font-size: 1.08rem; font-weight: 700; }
+p, li { max-width: 68ch; }
+p { margin: 0; }
+ul, ol { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+section { display: grid; gap: 18px; }
+.sub { display: grid; gap: 12px; }
+.meta { font-family: var(--font-mono); font-size: 0.8rem; color: var(--fg2); letter-spacing: 0.03em; }
+header { display: grid; gap: 14px; }
+.lead { color: var(--fg2); font-size: 1.05rem; }
+.toc { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.92rem; }
+.toc a { text-decoration: none; }
+.toc a span { font-family: var(--font-mono); color: var(--fg2); margin-right: 4px; }
+.findings { display: grid; gap: 10px; padding: 0; list-style: none; }
+.findings li { display: grid; grid-template-columns: 7.5em 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); max-width: none; }
+.findings li:last-child { border-bottom: 1px solid var(--line); }
+.findings b { font-family: var(--font-mono); font-weight: 500; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.findings small { display: block; color: var(--fg2); font-size: 0.78rem; line-height: 1.4; }
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font-weight: 500; color: var(--fg2); font-size: 0.82rem; white-space: nowrap; background: var(--bg); }
+td.n, th.n { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.ref td { font-weight: 700; }
+tr.hl td { background: var(--hl); }
+td .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+figure { margin: 0; display: grid; gap: 10px; }
+figcaption { font-size: 0.86rem; color: var(--fg2); max-width: 72ch; }
+.fig { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; position: relative; }
+.fig svg { display: block; width: 100%; height: auto; }
+.fig.diagram svg { min-width: 560px; }
+.fig.diagram.unroll svg { min-width: 360px; }
+.fig.chart svg { min-width: 520px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.82rem; color: var(--fg2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { display: inline-block; width: 20px; height: 0; border-top: 2px solid; }
+.legend i.dash { border-top-style: dashed; }
+.legend i.dot { width: 9px; height: 9px; border: 2px solid; border-radius: 50%; }
+.legend i.dia { width: 9px; height: 9px; border: 0; background: var(--fg); transform: rotate(45deg); }
+.legend i.dia.hollow { background: transparent; border: 2px solid var(--fg); }
+.tip { position: absolute; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 0.78rem; line-height: 1.45; padding: 6px 9px; border-radius: 6px; white-space: nowrap; font-family: var(--font-mono); }
+.note { border-left: 3px solid var(--line); padding: 4px 0 4px 14px; color: var(--fg2); font-size: 0.92rem; }
+.eq { font-family: var(--font-mono); font-size: 0.92rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; overflow-x: auto; white-space: nowrap; }
+pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; overflow-x: auto; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.two > * { min-width: 0; }
+@media (max-width: 640px) {
+  h1 { font-size: 1.6rem; }
+  .two { grid-template-columns: 1fr; }
+  .findings li { grid-template-columns: 1fr; gap: 2px; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="meta">fast-slow-vision · VCNet 分支（dev/vcnet → main） · CIFAR-100 · H100 · 2026 年 11 月</div>
+  <h1>VCNet 自適應步數報告</h1>
+  <p class="lead">本報告說明 VCNet（仿視覺皮層 CNN）的實作、我們把它改成「步數可變」模型的方式，以及到第 2 輪為止的實驗結果。
+    研究問題是：<strong>原始 VCNet</strong> 與 <strong>VCNet + 自適應步數</strong> 在準確率、計算量、延遲、校準度上差多少。</p>
+  <nav class="toc" aria-label="目錄">
+    <a href="#summary"><span>1</span>摘要</a>
+    <a href="#background"><span>2</span>背景</a>
+    <a href="#method"><span>3</span>方法</a>
+    <a href="#setup"><span>4</span>實驗設定</a>
+    <a href="#results"><span>5</span>結果</a>
+    <a href="#discussion"><span>6</span>討論與限制</a>
+    <a href="#next"><span>7</span>下一步</a>
+    <a href="#appendix"><span>A</span>附錄</a>
+  </nav>
+</header>
+
+<!-- ================================================================ 1 -->
+<section id="summary">
+  <h2><span class="no">1</span>摘要</h2>
+  <ul class="findings">
+    <li><div><b>64.55%</b><small>原始 VCNet<br>0.275 GFLOPs</small></div>
+      <p>依論文重新實作的原始 VCNet（1.02M 參數，由下而上一次 + 預測編碼修正一次），CIFAR-100 測試準確率，3 個種子平均。</p></li>
+    <li><div><b>65.30%</b><small>adapt_carry 固定 2 步</small></div>
+      <p>第 1 輪：把預測編碼迴圈展開成最多 8 步、每步讀出。迴圈修正一次後就飽和，第 3–8 步沒有增益；停止策略贏不了固定步數。</p></li>
+    <li><div><b>67.27%</b><small>adapt_blt 固定 2 步<br>0.284 GFLOPs</small></div>
+      <p>第 2 輪：讓每個腦區保留跨步狀態，並加入 BLT 式由上而下連線。同樣計算量下比原始高 2.7 點，而且一直進步到第 4 步（68.68%）。</p></li>
+    <li><div><b>67.77%</b><small>adapt_blt + 停止策略<br>0.252 GFLOPs</small></div>
+      <p>加上停止策略後，以原始模型 91% 的計算量高 3.2 點。這是停止策略第一次在同一個模型內勝過固定步數（2 步的計算量下 68.18% vs 67.27%）。</p></li>
+    <li><div><b>待第 3 輪</b><small>架構 vs 自適應</small></div>
+      <p>相對原始模型的增益大部分來自架構（跨步狀態），不是自適應。第 3 輪用同樣架構、照原始方式訓練，把兩者分開。</p></li>
+  </ul>
+</section>
+
+<!-- ================================================================ 2 -->
+<section id="background">
+  <h2><span class="no">2</span>背景</h2>
+  <div class="sub">
+    <h3>2.1 專案目標</h3>
+    <p>fast-slow-vision 研究「校準過的快慢視覺」：一個權重共用的遞迴模型，每算一步就輸出一次校準過的類別機率，
+      再由小型停止策略依目前狀態與計算價格 λ 決定停或繼續。簡單的圖早停、難的圖多想，單一模型涵蓋整條準確率–計算量曲線。
+      先前的骨幹是 bViT（單區塊遞迴 ViT）；本分支改用 VCNet。</p>
+  </div>
+  <div class="sub">
+    <h3>2.2 VCNet 論文</h3>
+    <p>Hill, Zhang &amp; Prasetio（2025），<a href="https://arxiv.org/abs/2508.02995">arXiv 2508.02995</a>，NeurIPS 2025 workshop。
+      模仿靈長類視覺皮層的巨觀結構：腹側流（V1→V2→V4→PIT→CIT→AIT）、背側流（V1→V2→MT→MST）、
+      AIT 對 V1 的預測編碼回饋。論文在 Spots-10（32×32 灰階）上報告 92.08%、光場資料上 74.42%。</p>
+    <p class="note">論文沒有程式碼，也沒有通道寬度、步長、正規化方式、分類頭與回饋迴路的接法；實驗只有單次執行，沒有消融，也沒有 CIFAR / ImageNet 結果。
+      因此本報告的「原始 VCNet」是依論文描述加上明確假設的重新實作（見 3.1）。</p>
+  </div>
+  <div class="sub">
+    <h3>2.3 研究問題</h3>
+    <ol>
+      <li>原始 VCNet 與 VCNet + 自適應步數，在相同計算量下的準確率差多少？在相同準確率下省多少計算與延遲？</li>
+      <li>VCNet 的哪個部分可以當作「可變的步數」？多跑幾步是否真的有用？</li>
+      <li>學習式停止策略能否勝過固定步數與信心門檻？</li>
+    </ol>
+  </div>
+</section>
+
+<!-- ================================================================ 3 -->
+<section id="method">
+  <h2><span class="no">3</span>方法</h2>
+
+  <div class="sub">
+    <h3>3.1 原始 VCNet 的實作</h3>
+    <figure>
+      <div class="fig diagram" id="arch"></div>
+      <figcaption>圖 1　一次由下而上的計算（一步）。灰色為同一步內的計算；虛線為 AIT 對 V1 的預測編碼回饋，作用在下一步。
+        V1 每張圖只算一次；MT、MST 內部各有一個迭代 3 次的遞迴區塊；V1、MT、V4 有 CBAM 與神經調制。</figcaption>
+    </figure>
+    <p>論文有寫的部分照做：V1 為三條平行的 depthwise-separable 卷積（3×3、5×5、7×7）後串接，接側向交互（卷積 + channel-wise self-attention + 殘差）、
+      CBAM、神經調制（逐通道可學習縮放）；MT、MST 的遞迴區塊為 z<sub>i+1</sub> = f(z<sub>i</sub>) + z<sub>0</sub>，迭代 3 次；
+      預測誤差 ε = ReLU(V1<sub>bottom-up</sub> − AIT<sub>top-down</sub>)。論文沒寫的部分以下表的假設補上。</p>
+    <div class="tbl"><table>
+      <tr><th>項目</th><th>本實作的選擇</th><th>理由</th></tr>
+      <tr><td>通道寬度</td><td>V1 48、V2 64 / 32（背側）、V4 80、PIT 80、CIT 128、AIT 160、MT 64、MST 80</td><td>參數量 1.02M（3.9 MB），接近論文的 3.52 MB</td></tr>
+      <tr><td>降採樣</td><td>V2、V4/MT、CIT/MST 各以 stride 2 降一半：32 → 16 → 8 → 4</td><td>論文未提</td></tr>
+      <tr><td>正規化、活化</td><td>GroupNorm（最多 8 組）+ ReLU</td><td>專案規定不得用每步統計的 BatchNorm</td></tr>
+      <tr><td>兩流互連</td><td>MT → V4（1×1 卷積相加）；CIT 與 MST 串接後進 AIT</td><td>論文只說「多層級互連」「匯聚進 AIT」</td></tr>
+      <tr><td>channel-wise self-attention</td><td>DANet 的 CAM，輸出係數 γ 初始為 0</td><td>論文只寫名稱</td></tr>
+      <tr><td>top-down 預測器</td><td>AIT 經 1×1 卷積，雙線性上採樣到 V1 大小</td><td>論文未寫</td></tr>
+      <tr><td>誤差 ε 的用法</td><td>修正下一步的輸入：z<sub>t</sub> = V1 + W·ε<sub>t</sub>，W 為 1×1 卷積、初始為 0</td><td>直接當輔助損失會退化（預測值一直加大，ReLU 誤差就變 0）</td></tr>
+      <tr><td>原始模型的回饋次數</td><td>1 次（共 2 步），只讀最後一步</td><td>論文說回饋用來「refine」表徵，至少修正一次</td></tr>
+      <tr><td>分類頭</td><td>AIT 全域平均池化 → LayerNorm → 加步數嵌入 → Linear</td><td>與 bViT 共用同一種讀出頭</td></tr>
+    </table></div>
+  </div>
+
+  <div class="sub">
+    <h3>3.2 把迴圈變成可變的步數</h3>
+    <p>論文唯一可以反覆執行的機制是 AIT → V1 的預測編碼回饋，所以<strong>一步 = 一次預測編碼迴圈</strong>：第 0 步只做由下而上的計算；
+      之後每一步，AIT 預測 V1、算出誤差 ε、修正 V1 的輸入，再跑一遍 V2…AIT。每一步之後都用共用讀出頭輸出一次機率 p<sub>t</sub>。
+      模型實作與 bViT 相同的介面（<code>embed</code> / <code>forward_step</code> / <code>readout</code>），所以訓練、評估、停止策略與延遲量測的程式都不用改。</p>
+    <div class="eq">z<sub>0</sub> = V1　　z<sub>t</sub> = V1 + W·ReLU(V1 − 上採樣(P(AIT<sub>t−1</sub>)))　　AIT<sub>t</sub> = Sweep(z<sub>t</sub>)　　p<sub>t</sub> = softmax(head(LN(pool(AIT<sub>t</sub>)) + e<sub>t</sub>) / T<sub>t</sub>)</div>
+  </div>
+
+  <div class="sub">
+    <h3>3.3 跨步狀態與由上而下連線（論文以外的延伸）</h3>
+    <p>第 1 輪發現迴圈修正一次就飽和。推測原因是每一步唯一的新資訊只有 V1 輸入的小修正，V2…AIT 每步從零重算、不記得上一步。
+      第 2 輪加入兩個仿皮層機制，兩者的新連線都初始為 0，所以新模型訓練剛開始時與原本的迴圈完全相同。</p>
+    <figure>
+      <div class="legend">
+        <span><i style="border-color:var(--fg2)"></i>同一步內由下而上</span>
+        <span><i class="dash" style="border-color:var(--fb)"></i>預測誤差回饋（每個變體都有）</span>
+        <span><i style="border-color:var(--state)"></i>每區帶著上一步的自己（lateral）</span>
+        <span><i style="border-color:var(--td)"></i>上一層在上一步的輸出（top-down）</span>
+      </div>
+      <div class="two">
+        <div class="fig diagram unroll" data-unroll="loop"></div>
+        <div class="fig diagram unroll" data-unroll="blt"></div>
+      </div>
+      <figcaption>圖 2　沿步數展開（每欄一步，每列一個腦區，只畫腹側流）。左：原本的迴圈（adapt），各區每步重算；
+        adapt_carry 只在 AIT 多一條橫向連線。右：blt，每區保留跨步狀態（藍），並接收上一層在上一步的輸出（紫）。lat 只有藍色連線。</figcaption>
+    </figure>
+    <div class="tbl"><table>
+      <tr><th>開關</th><th>做法</th><th>來源</th></tr>
+      <tr><td><code>--lateral</code></td><td>每區 A ∈ {V2, MT, V4, PIT, CIT, MST, AIT}：A<sub>t</sub> = F(這一步的輸入) + R<sub>A</sub>(A<sub>t−1</sub>)，R 為 1×1 卷積</td><td>CORnet-RT 的區內遞迴（Kubilius et al., 2019）</td></tr>
+      <tr><td><code>--topdown</code></td><td>A<sub>t</sub> += T<sub>A</sub>(上採樣(B<sub>t−1</sub>))，B 為同一流的上一層：V2←V4、V4←PIT、PIT←CIT、CIT←AIT、MT←MST、MST←AIT</td><td>BLT 網路（Spoerer et al., 2017、2020）</td></tr>
+      <tr><td><code>--ait-carry</code></td><td>只有 AIT：AIT<sub>t</sub> += g·AIT<sub>t−1</sub>，g 為逐通道係數</td><td>第 1 輪的簡化版</td></tr>
+    </table></div>
+    <p>七個腦區的狀態打包成一個張量，所以線上停止、batch compaction、CUDA graph 的程式不用改。</p>
+  </div>
+
+  <div class="sub">
+    <h3>3.4 變體一覽</h3>
+    <div class="tbl"><table>
+      <tr><th>變體</th><th>實驗名稱</th><th class="n">步數</th><th>讀出 / 損失</th><th class="n">參數</th><th class="n">每步 GFLOPs</th></tr>
+      <tr><td>原始，無回饋</td><td><code>c100_vcnet_orig_ff</code></td><td class="n">1</td><td>最後一步 / CE</td><td class="n">1.02M</td><td class="n">0.161（含 V1）</td></tr>
+      <tr class="ref"><td>原始 VCNet</td><td><code>c100_vcnet_orig</code></td><td class="n">2</td><td>最後一步 / CE</td><td class="n">1.02M</td><td class="n">0.113</td></tr>
+      <tr><td><span class="sw" style="background:var(--s1)"></span>adapt</td><td><code>c100_vcnet_adapt</code></td><td class="n">≤ 8</td><td>每一步 / Stage A</td><td class="n">1.02M</td><td class="n">0.113</td></tr>
+      <tr><td><span class="sw" style="background:var(--s2)"></span>adapt_carry</td><td><code>c100_vcnet_adapt_carry</code></td><td class="n">≤ 8</td><td>每一步 / Stage A</td><td class="n">1.02M</td><td class="n">0.113</td></tr>
+      <tr><td><span class="sw" style="background:var(--s3)"></span>adapt_lat</td><td><code>c100_vcnet_adapt_lat</code></td><td class="n">≤ 8</td><td>每一步 / Stage A</td><td class="n">1.09M</td><td class="n">0.119</td></tr>
+      <tr><td><span class="sw" style="background:var(--s4)"></span>adapt_blt</td><td><code>c100_vcnet_adapt_blt</code></td><td class="n">≤ 8</td><td>每一步 / Stage A</td><td class="n">1.15M</td><td class="n">0.122</td></tr>
+    </table></div>
+    <p class="note">第 0 步的成本都是 0.161 GFLOPs（V1 0.053 + 第一次由下而上 0.108）；表中「每步」是第 1 步起每多一步的成本。FLOPs 以 <code>torch.utils.flop_counter</code> 實測，只計卷積與矩陣乘法。</p>
+  </div>
+
+  <div class="sub">
+    <h3>3.5 訓練、校準與停止策略</h3>
+    <ul>
+      <li><strong>Stage A 損失</strong>（自適應變體）：L = Σ<sub>t</sub> w<sub>t</sub>[CE(p<sub>t</sub>, y) + β·Brier(p<sub>t</sub>, y)] + γ·L<sub>Gatekeeper</sub> + δ·Σ<sub>t&lt;T</sub> KL(sg(p<sub>T</sub>) ‖ p<sub>t</sub>)，
+        β = 1、γ = 0.5、δ = 0.5，w<sub>t</sub> ∝ (t+1)<sup>2</sup>。原始模型只用最後一步的 CE。</li>
+      <li><strong>每步溫度縮放</strong>：骨幹凍結，在 5,000 張 held-out 影像上對每一步擬合一個溫度 T<sub>t</sub>。</li>
+      <li><strong>停止策略</strong>：2 層 MLP（hidden 64），輸入為機率統計（top-5、熵、top-1/top-2 差、與上一步的變化、步數）與 log λ；
+        以 held-out 上快取的每步輸出離線訓練。主要使用的版本是 S0-reward_acc（獎勵 = 是否答對 − λ·步數/T<sub>max</sub>）。
+        推論時調 λ 即得到不同的速度–準確率取捨點。停止策略本身的成本小於一步的 0.01%。</li>
+      <li><strong>基準</strong>：固定步數、max-prob 門檻、熵門檻，以及 oracle（每張圖在最早答對的步停，作為上限）。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================================================================ 4 -->
+<section id="setup">
+  <h2><span class="no">4</span>實驗設定</h2>
+  <div class="tbl"><table>
+    <tr><th>項目</th><th>設定</th></tr>
+    <tr><td>資料</td><td>CIFAR-100（32×32）；從訓練集切出固定 5,000 張 held-out，用於溫度縮放與停止策略；測試集只用於報告</td></tr>
+    <tr><td>訓練</td><td>AdamW，lr 1e-3，weight decay 0.05，batch 256，200 epochs（warmup 10），RandAugment、mixup 0.8 / CutMix 1.0、random erasing 0.25；所有變體相同</td></tr>
+    <tr><td>硬體</td><td>單張 NVIDIA H100 NVL，bf16 自動混合精度，PyTorch 2.6.0（CUDA 12.4），CPU 上限 8 核</td></tr>
+    <tr><td>種子</td><td>每個變體 3 個種子（0、1、2）；表中為平均 ± 標準差</td></tr>
+    <tr><td>延遲量測</td><td>測試集預先放上 GPU；batch 256 吞吐量（含 compaction）與 batch 1 延遲（500 張）；batch 1 另有 CUDA graph 模式，去除 kernel 發送開銷</td></tr>
+    <tr><td>程式版本</td><td>第 1 輪 0.9.0，第 2 輪 0.10.0（<code>dev/vcnet</code>，已併入 <code>main</code>）</td></tr>
+  </table></div>
+</section>
+
+<!-- ================================================================ 5 -->
+<section id="results">
+  <h2><span class="no">5</span>結果</h2>
+
+  <div class="sub">
+    <h3>5.1 每一步的準確率</h3>
+    <figure>
+      <div class="legend" id="legA"></div>
+      <div class="fig chart" id="chartA"></div>
+      <figcaption>圖 3　固定步數下的測試準確率對累計 GFLOPs（每個點是一步，3 個種子平均）。
+        adapt 與 carry 在第 2 步後持平；lat 與 blt 繼續進步，blt 到第 4 步。黑色菱形為原始 VCNet，空心菱形為不含回饋的原始模型。滑鼠移到點上可看數值。</figcaption>
+    </figure>
+    <div class="tbl"><table id="tblSteps"></table></div>
+    <p class="note">原始 VCNet 只訓練最後一步的讀出，它的第 0 步（60.99%）是未訓練的讀出，圖中只畫第 2 步。</p>
+  </div>
+
+  <div class="sub">
+    <h3>5.2 原始 vs 自適應</h3>
+    <div class="tbl"><table>
+      <tr><th>模型</th><th class="n">平均步數</th><th class="n">GFLOPs</th><th class="n">相對原始</th><th class="n">準確率 %</th><th class="n">差</th></tr>
+      <tr><td>原始，無回饋（orig_ff）</td><td class="n">1</td><td class="n">0.161</td><td class="n">59%</td><td class="n">63.72±1.22</td><td class="n">−0.83</td></tr>
+      <tr class="ref"><td>原始 VCNet（orig）</td><td class="n">2</td><td class="n">0.275</td><td class="n">100%</td><td class="n">64.55±0.96</td><td class="n">—</td></tr>
+      <tr><td>adapt，固定 2 步</td><td class="n">2</td><td class="n">0.275</td><td class="n">100%</td><td class="n">64.91±0.94</td><td class="n">+0.36</td></tr>
+      <tr><td>adapt_carry，固定 2 步</td><td class="n">2</td><td class="n">0.275</td><td class="n">100%</td><td class="n">65.30±0.41</td><td class="n">+0.75</td></tr>
+      <tr><td>adapt_carry + 停止策略（λ=0.1）</td><td class="n">1.23</td><td class="n">0.187</td><td class="n">68%</td><td class="n">64.71±0.69</td><td class="n">+0.16</td></tr>
+      <tr><td>adapt_lat，固定 1 步</td><td class="n">1</td><td class="n">0.161</td><td class="n">59%</td><td class="n">64.75±0.49</td><td class="n">+0.20</td></tr>
+      <tr><td>adapt_lat，固定 2 步</td><td class="n">2</td><td class="n">0.281</td><td class="n">102%</td><td class="n">67.39±0.48</td><td class="n">+2.84</td></tr>
+      <tr><td>adapt_blt，固定 2 步</td><td class="n">2</td><td class="n">0.284</td><td class="n">103%</td><td class="n">67.27±0.57</td><td class="n">+2.72</td></tr>
+      <tr class="hl"><td>adapt_blt + 停止策略（λ=0.1）</td><td class="n">1.74</td><td class="n">0.252</td><td class="n">91%</td><td class="n">67.77±0.42</td><td class="n">+3.22</td></tr>
+      <tr class="hl"><td>adapt_blt + 停止策略（λ=0.01）</td><td class="n">2.41</td><td class="n">0.333</td><td class="n">121%</td><td class="n">68.34±0.55</td><td class="n">+3.79</td></tr>
+      <tr><td>adapt_blt，固定 4 步（最佳固定步數）</td><td class="n">4</td><td class="n">0.528</td><td class="n">192%</td><td class="n">68.68±0.58</td><td class="n">+4.13</td></tr>
+    </table></div>
+    <p class="note">停止策略的 GFLOPs = 0.161 + (平均步數 − 1) × 每步成本；準確率取自 benchmark 的 eager 模式（全測試集）。
+      第 1 輪的差距（+0.16 到 +0.75）小於種子間標準差，需逐種子比較才能確定；第 2 輪的 +2.7 以上遠大於標準差。</p>
+  </div>
+
+  <div class="sub">
+    <h3>5.3 停止策略 vs 固定步數</h3>
+    <figure>
+      <div class="legend" id="legB"></div>
+      <div class="fig chart" id="chartB"></div>
+      <figcaption>圖 4　同一個模型內，固定步數（實線、實心點）與學習式停止策略（虛線、空心點，λ 從 0.3 到 0.0001）的準確率–計算量曲線。
+        blt 的停止策略曲線位於固定步數曲線上方；carry 的停止策略到不了 2 步的準確率。</figcaption>
+    </figure>
+    <div class="tbl"><table>
+      <tr><th>模型</th><th>方法</th><th class="n">AUC</th><th class="n">2 步的計算量下</th><th class="n">3 步的計算量下</th></tr>
+      <tr><td rowspan="3">adapt</td><td>固定步數</td><td class="n">64.88</td><td class="n">64.91</td><td class="n">64.97</td></tr>
+      <tr><td>max-prob 門檻</td><td class="n">64.76</td><td class="n">64.47</td><td class="n">64.75</td></tr>
+      <tr><td>停止策略 S0-reward_acc</td><td class="n">64.47</td><td class="n">64.48</td><td class="n">64.49</td></tr>
+      <tr><td rowspan="3">adapt_carry</td><td>固定步數</td><td class="n">65.32</td><td class="n">65.30</td><td class="n">65.47</td></tr>
+      <tr><td>max-prob 門檻</td><td class="n">65.17</td><td class="n">64.66</td><td class="n">65.17</td></tr>
+      <tr><td>停止策略 S0-reward_acc</td><td class="n">65.13</td><td class="n">65.16</td><td class="n">65.16</td></tr>
+      <tr><td rowspan="3">adapt_lat</td><td>固定步數</td><td class="n">67.59</td><td class="n">67.39</td><td class="n">67.83</td></tr>
+      <tr><td>max-prob 門檻</td><td class="n">67.40</td><td class="n">66.49</td><td class="n">67.54</td></tr>
+      <tr><td>停止策略 S0-reward_acc</td><td class="n">67.73</td><td class="n">67.74</td><td class="n">67.84</td></tr>
+      <tr><td rowspan="3">adapt_blt</td><td>固定步數</td><td class="n">68.12</td><td class="n">67.27</td><td class="n">68.30</td></tr>
+      <tr><td>max-prob 門檻</td><td class="n">67.87</td><td class="n">66.40</td><td class="n">67.83</td></tr>
+      <tr class="hl"><td>停止策略 S0-reward_acc</td><td class="n">68.35</td><td class="n">68.18</td><td class="n">68.59</td></tr>
+    </table></div>
+    <p class="note">AUC 為 0.161 GFLOPs 到全長計算量之間的平均準確率（%）；「2 步 / 3 步的計算量下」是在該平均計算量能達到的最佳準確率。
+      max-prob 與熵門檻在所有變體都輸給固定步數。oracle（每張圖在最早答對的步停）的上限為 blt 71.83%、lat 70.72%、carry 68.33%，平均約 1.1 步。</p>
+  </div>
+
+  <div class="sub">
+    <h3>5.4 校準</h3>
+    <div class="tbl"><table>
+      <tr><th>模型（最後一步）</th><th class="n">溫度</th><th class="n">ECE 未校準 %</th><th class="n">ECE 溫度縮放 %</th><th class="n">NLL 溫度縮放</th></tr>
+      <tr><td>orig_ff</td><td class="n">0.755</td><td class="n">12.35</td><td class="n">1.89</td><td class="n">1.310</td></tr>
+      <tr class="ref"><td>orig</td><td class="n">0.758</td><td class="n">12.17</td><td class="n">1.79</td><td class="n">1.266</td></tr>
+      <tr><td>adapt</td><td class="n">0.745</td><td class="n">12.66</td><td class="n">2.55</td><td class="n">1.278</td></tr>
+      <tr><td>adapt_carry</td><td class="n">0.740</td><td class="n">12.99</td><td class="n">2.47</td><td class="n">1.264</td></tr>
+      <tr><td>adapt_lat</td><td class="n">0.754</td><td class="n">12.12</td><td class="n">2.40</td><td class="n">1.176</td></tr>
+      <tr><td>adapt_blt</td><td class="n">0.763</td><td class="n">11.58</td><td class="n">2.43</td><td class="n">1.144</td></tr>
+    </table></div>
+    <ul>
+      <li>所有模型未校準時信心都偏低（溫度 &lt; 1），來自 mixup / CutMix；lat、blt 的第 0 步更明顯（溫度約 0.69，ECE 約 17%）。</li>
+      <li>每步溫度縮放後 ECE 都在 1.8–2.6%。原始模型縮放後的 ECE 最低：Stage A 的 Brier 與 Gatekeeper 損失沒有改善縮放後的校準。</li>
+      <li>NLL 隨架構改善（blt 1.144 vs 原始 1.266），反映準確率的提升。</li>
+    </ul>
+  </div>
+
+  <div class="sub">
+    <h3>5.5 實際延遲與吞吐量</h3>
+    <div class="tbl"><table>
+      <tr><th>模型、設定</th><th class="n">平均步數</th><th class="n">準確率 %</th><th class="n">batch 1 + CUDA graph（ms）</th></tr>
+      <tr><td>adapt_carry 固定 1 步（第 1 輪）</td><td class="n">1</td><td class="n">63.69</td><td class="n">1.049</td></tr>
+      <tr><td>adapt_carry 固定 2 步（第 1 輪）</td><td class="n">2</td><td class="n">65.33</td><td class="n">1.818</td></tr>
+      <tr><td>adapt_carry + 停止策略 λ=0.1（第 1 輪）</td><td class="n">1.23</td><td class="n">64.71</td><td class="n">1.294</td></tr>
+      <tr><td>adapt_blt 固定 2 步（第 2 輪）</td><td class="n">2</td><td class="n">67.27</td><td class="n">2.098</td></tr>
+      <tr><td>adapt_blt 固定 3 步（第 2 輪）</td><td class="n">3</td><td class="n">68.29</td><td class="n">3.124</td></tr>
+      <tr><td>adapt_blt 固定 4 步（第 2 輪）</td><td class="n">4</td><td class="n">68.68</td><td class="n">4.167</td></tr>
+      <tr class="hl"><td>adapt_blt + 停止策略 λ=0.1（第 2 輪）</td><td class="n">1.74</td><td class="n">67.77</td><td class="n">1.841</td></tr>
+      <tr class="hl"><td>adapt_blt + 停止策略 λ=0.03（第 2 輪）</td><td class="n">2.09</td><td class="n">68.20</td><td class="n">2.217</td></tr>
+    </table></div>
+    <ul>
+      <li>batch 1 + CUDA graph：blt 的停止策略在 λ=0.03 以 2.22 ms 達到 68.20%，固定 3 步要 3.12 ms 才有 68.29%（約 1.4 倍快，準確率差 0.09 點）。</li>
+      <li>batch 256：自適應仍比固定步數慢（blt compiled 模式為固定步數的 0.34–0.44 倍）。逐步移除已停的影像要額外的索引與同步，這部分尚未優化。</li>
+      <li>第 2 輪量測時 GPU 上有其他程式，多列標準差達平均值的 30–100%（例如 carry 固定 2 步第 1 輪為 1.82 ms，第 2 輪為 3.07±1.12 ms），延遲數字僅供參考，第 3 輪重量。</li>
+    </ul>
+  </div>
+
+  <div class="sub">
+    <h3>5.6 訓練成本</h3>
+    <div class="tbl"><table>
+      <tr><th>模型</th><th class="n">每 epoch（秒）</th><th class="n">200 epochs（分鐘）</th></tr>
+      <tr><td>orig_ff（1 步）</td><td class="n">3.0</td><td class="n">約 10</td></tr>
+      <tr><td>orig（2 步）</td><td class="n">4.8</td><td class="n">約 16</td></tr>
+      <tr><td>adapt / adapt_carry（8 步）</td><td class="n">16.6 / 16.2</td><td class="n">56 / 55</td></tr>
+      <tr><td>adapt_lat（8 步）</td><td class="n">21.7±4.6</td><td class="n">73±15</td></tr>
+      <tr><td>adapt_blt（8 步）</td><td class="n">36.8±10.7</td><td class="n">124±36</td></tr>
+    </table></div>
+    <p>blt 的計算量只比 carry 多 8%，訓練卻慢 2.3 倍；一部分可能是同時段的 GPU 干擾，一部分是狀態打包與上採樣的額外開銷，可以再優化。</p>
+  </div>
+</section>
+
+<!-- ================================================================ 6 -->
+<section id="discussion">
+  <h2><span class="no">6</span>討論與限制</h2>
+  <div class="sub">
+    <h3>6.1 為什麼第 1 輪會飽和、第 2 輪不會</h3>
+    <p>原本的迴圈中，上一步留給下一步的只有 AIT 對 V1 的預測；中間各區每步從零重算。修正一次後，V1 的輸入幾乎不再改變，網路就停在同一個答案上。
+      讓每區保留自己的狀態後，每一步可以在上一步的中間結果上繼續加工；加上由上而下的連線（BLT），高層的資訊能逐層往下影響，後面的步數才有東西可以累積。
+      blt 進步到第 4 步、lat 在第 3 步左右飽和，與這個解釋一致，但尚未以消融直接驗證。</p>
+  </div>
+  <div class="sub">
+    <h3>6.2 架構與自適應的貢獻混在一起</h3>
+    <p>原始 VCNet 只在最後一步讀出、只用 CE；自適應變體同時改了架構（跨步狀態）、讀出方式（每步）、損失（Stage A）與推論（停止策略）。
+      從 5.3 看，停止策略本身在 blt 內約帶來 +0.3 到 +0.9 點（同計算量）；相對原始模型的 +2.7 以上大多來自架構。第 3 輪的對照組用來分開這兩者。</p>
+  </div>
+  <div class="sub">
+    <h3>6.3 限制</h3>
+    <ul>
+      <li>原始 VCNet 是依論文描述的重新實作，寬度、降採樣、回饋接法等都是我們的假設，結果不能直接當作論文模型的表現。</li>
+      <li>只在 CIFAR-100（32×32）上實驗；論文的資料集（Spots-10、光場）與 ImageNet 都還沒做。</li>
+      <li>3 個種子，表中為平均 ± 標準差，沒有逐種子的配對比較。</li>
+      <li>第 2 輪延遲受其他程式干擾；batch 256 時自適應不比固定步數快。</li>
+      <li>跨步狀態與 BLT 連線是論文以外的延伸，報告時須與原始 VCNet 區分。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================================================================ 7 -->
+<section id="next">
+  <h2><span class="no">7</span>下一步</h2>
+  <div class="tbl"><table>
+    <tr><th>實驗</th><th>內容</th><th>回答的問題</th></tr>
+    <tr><td><code>c100_vcnet_blt_orig2</code></td><td>blt 架構，固定 2 步，只在最後讀出，只用 CE</td><td>與 orig 比：跨步狀態本身的價值</td></tr>
+    <tr><td><code>c100_vcnet_blt_orig4</code></td><td>同上，固定 4 步</td><td>與 adapt_blt + 停止策略比：自適應本身的價值；每步讀出是否拖累最終準確率</td></tr>
+    <tr><td>benchmark 重量</td><td>在沒有其他程式的 GPU 上，同一個行程量 orig、blt_orig2、blt_orig4、adapt_blt</td><td>同準確率下的實際延遲</td></tr>
+  </table></div>
+  <pre>python scripts/run_experiment.py c100_vcnet_blt_orig2 c100_vcnet_blt_orig4 --seeds 0 1 2</pre>
+  <pre>python scripts/benchmark_adaptive.py c100_vcnet_orig c100_vcnet_blt_orig2 c100_vcnet_blt_orig4 c100_vcnet_adapt_blt --seeds 0 1 2 --lams 0.003 0.01 0.03 0.1 0.3</pre>
+  <p>之後可考慮：把 T<sub>max</sub> 降到 4–5（blt 在第 4 步後持平）、優化 batch 推論的 compaction、改善 blt 的訓練速度，以及在論文的資料集或更大的影像上驗證。</p>
+</section>
+
+<!-- ================================================================ A -->
+<section id="appendix">
+  <h2><span class="no">A</span>附錄</h2>
+  <div class="sub">
+    <h3>A.1 檔案</h3>
+    <ul>
+      <li>模型：<code>fsv/models/vcnet.py</code>；實驗登記：<code>fsv/experiments.py</code>；設計與假設：<code>docs/vcnet.md</code></li>
+      <li>結果原始輸出：<code>results/vcnet_round1_h100/</code>（adaptive.md、original.md）、<code>results/vcnet_round2_h100/summary.md</code></li>
+      <li>測試：<code>tests/test_vcnet.py</code>（介面一致性、論文結構、FLOPs、線上停止與 CUDA graph 邏輯）</li>
+      <li>程式庫：<a href="https://github.com/kthfan/fast-slow-vision">github.com/kthfan/fast-slow-vision</a>（PR #2 已併入 main）</li>
+    </ul>
+  </div>
+  <div class="sub">
+    <h3>A.2 重現指令</h3>
+    <pre>python scripts/run_experiment.py c100_vcnet_orig c100_vcnet_orig_ff --seeds 0 1 2</pre>
+    <pre>python scripts/run_experiment.py c100_vcnet_adapt c100_vcnet_adapt_carry c100_vcnet_adapt_lat c100_vcnet_adapt_blt --seeds 0 1 2 --halting</pre>
+    <pre>python scripts/summarize.py</pre>
+  </div>
+  <div class="sub">
+    <h3>A.3 參考文獻</h3>
+    <ul>
+      <li>Hill, Zhang &amp; Prasetio (2025). VCNet: Recreating High-Level Visual Cortex Principles for Robust Artificial Vision. <a href="https://arxiv.org/abs/2508.02995">arXiv 2508.02995</a>.</li>
+      <li>Kubilius et al. (2019). Brain-like object recognition with high-performing shallow recurrent ANNs (CORnet). NeurIPS.</li>
+      <li>Spoerer, McClure &amp; Kriegeskorte (2017). Recurrent convolutional neural networks: a better model of biological object recognition (BLT). Frontiers in Psychology.</li>
+      <li>Spoerer et al. (2020). Recurrent neural networks can explain flexible trading of speed and accuracy in biological vision. PLOS Computational Biology.</li>
+      <li>Woo et al. (2018). CBAM: Convolutional Block Attention Module. ECCV.</li>
+      <li>Fu et al. (2019). Dual Attention Network for Scene Segmentation (DANet). CVPR.</li>
+      <li>Rabanser et al. (2025). GATEKEEPER. <a href="https://arxiv.org/abs/2502.19335">arXiv 2502.19335</a>.</li>
+      <li>Guo et al. (2017). On Calibration of Modern Neural Networks. ICML.</li>
+    </ul>
+  </div>
+</section>
+
+</div>
+
+<script>
+(function () {
+  const NS = 'style="fill:var(--fg);font:500 12.5px var(--font-body)"';
+  const SUB = 'style="fill:var(--fg2);font:10.5px var(--font-mono)"';
+  function arrowDefs(uid, colors) {
+    let s = "<defs>";
+    for (const [id, c] of colors) {
+      s += `<marker id="${uid}-${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" style="fill:var(${c})"/></marker>`;
+    }
+    return s + "</defs>";
+  }
+
+  // ---------------------------------------------------------------- figure 1: one sweep
+  (function arch() {
+    const uid = "a";
+    let s = `<svg viewBox="0 0 820 300" role="img" aria-label="VCNet 一步的架構圖" xmlns="http://www.w3.org/2000/svg">`;
+    s += arrowDefs(uid, [["g", "--fg2"], ["f", "--fb"]]);
+    const W = 96, H = 40;
+    function box(x, y, name, sub, opt) {
+      const o = opt || {};
+      return `<rect x="${x}" y="${y}" width="${o.w || W}" height="${H}" rx="6" style="fill:${o.fill || "var(--surface)"};stroke:var(--line)"/>` +
+        `<text x="${x + (o.w || W) / 2}" y="${y + 17}" text-anchor="middle" ${NS}>${name}</text>` +
+        `<text x="${x + (o.w || W) / 2}" y="${y + 32}" text-anchor="middle" ${SUB}>${sub}</text>`;
+    }
+    function ar(x1, y1, x2, y2) {
+      return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" style="stroke:var(--fg2)" stroke-width="1.4" marker-end="url(#${uid}-g)"/>`;
+    }
+    s += `<text x="288" y="20" text-anchor="middle" ${SUB}>腹側流（what）</text>`;
+    s += `<text x="288" y="232" text-anchor="middle" ${SUB}>背側流（where / how）</text>`;
+    s += box(8, 100, "影像", "3×32×32", { w: 80, fill: "var(--bg)" });
+    s += box(112, 100, "V1", "3/5/7 DS · 32²");
+    s += box(240, 30, "V2", "inter+thin · 16²");
+    s += box(360, 30, "V4", "CBAM · 8²");
+    s += box(476, 30, "PIT", "殘差 · 8²");
+    s += box(592, 30, "CIT", "4²");
+    s += box(240, 170, "V2", "thick · 16²");
+    s += box(360, 170, "MT", "遞迴×3 · 8²");
+    s += box(592, 170, "MST", "遞迴×3 · 4²");
+    s += box(708, 100, "AIT", "匯聚 · 4²");
+    s += `<rect x="724" y="30" width="64" height="26" rx="13" style="fill:var(--bg);stroke:var(--line)"/><text x="756" y="47" text-anchor="middle" style="fill:var(--fg);font:12px var(--font-mono)">p_t</text>`;
+    s += ar(88, 120, 110, 120) + ar(208, 108, 238, 62) + ar(208, 132, 238, 178) + ar(336, 50, 358, 50) + ar(336, 190, 358, 190);
+    s += ar(408, 170, 408, 72) + ar(456, 50, 474, 50) + ar(572, 50, 590, 50) + ar(456, 190, 590, 190);
+    s += ar(688, 60, 722, 98) + ar(688, 180, 722, 142) + ar(756, 100, 756, 58);
+    s += `<text x="414" y="124" ${SUB}>MT→V4</text>`;
+    s += `<path d="M760 140 C 760 292, 160 292, 160 142" style="fill:none;stroke:var(--fb)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#${uid}-f)"/>`;
+    s += `<text x="460" y="294" text-anchor="middle" style="fill:var(--fb);font:500 11.5px var(--font-body)">下一步：AIT 預測 V1，誤差 ε = ReLU(V1 − 預測) 修正 V1 的輸出</text>`;
+    document.getElementById("arch").innerHTML = s + "</svg>";
+  })();
+
+  // ---------------------------------------------------------------- figure 2: unrolled steps
+  function unroll(mode, uid) {
+    const W = 84, H = 26, cols = [92, 232, 372], rows = [["AIT", 70], ["CIT", 116], ["PIT", 162], ["V4", 208], ["V2", 254]];
+    const zY = 300, v1Y = 336, sub = ["₀", "₁", "₂"];
+    let s = `<svg viewBox="0 0 440 370" role="img" aria-label="沿步數展開的示意圖：${mode}" xmlns="http://www.w3.org/2000/svg">`;
+    s += arrowDefs(uid, [["g", "--fg2"], ["f", "--fb"], ["s", "--state"], ["t", "--td"]]);
+    const ln = (x1, y1, x2, y2, c, m, w) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" style="stroke:var(${c})" stroke-width="${w || 1.3}" marker-end="url(#${uid}-${m})"/>`;
+    s += `<rect x="40" y="${v1Y}" width="384" height="24" rx="6" style="fill:var(--bg);stroke:var(--line)"/>`;
+    s += `<text x="232" y="${v1Y + 16}" text-anchor="middle" style="fill:var(--fg2);font:500 11.5px var(--font-body)">V1：每張圖只算一次</text>`;
+    s += `<text x="232" y="14" text-anchor="middle" style="fill:var(--fg);font:700 12.5px var(--font-body)">${mode === "loop" ? "原本的迴圈（adapt）" : "blt：跨步狀態 + 由上而下"}</text>`;
+    cols.forEach((cx, t) => {
+      s += `<text x="${cx}" y="34" text-anchor="middle" style="fill:var(--fg2);font:11.5px var(--font-body)">第 ${t} 步</text>`;
+      rows.forEach(([nm, y], i) => {
+        s += `<rect x="${cx - W / 2}" y="${y - H / 2}" width="${W}" height="${H}" rx="5" style="fill:var(--surface);stroke:${mode === "blt" && t > 0 ? "var(--state)" : "var(--line)"}"/>`;
+        s += `<text x="${cx}" y="${y + 4.5}" text-anchor="middle" style="fill:var(--fg);font:500 12px var(--font-body)">${nm}${sub[t]}</text>`;
+        const below = i + 1 < rows.length ? rows[i + 1][1] : zY;
+        s += ln(cx, below - H / 2, cx, y + H / 2 + 2, "--fg2", "g");
+      });
+      s += `<rect x="${cx - W / 2}" y="${zY - H / 2}" width="${W}" height="${H}" rx="5" style="fill:var(--surface);stroke:${t > 0 ? "var(--fb)" : "var(--line)"}"/>`;
+      s += `<text x="${cx}" y="${zY + 4.5}" text-anchor="middle" style="fill:var(--fg);font:11px var(--font-mono)">${t === 0 ? "z₀=V1" : "V1+Wε"}</text>`;
+      s += ln(cx, v1Y, cx, zY + H / 2 + 2, "--fg2", "g");
+    });
+    if (mode === "blt") {
+      for (let k = 0; k + 1 < cols.length; k++) {
+        rows.forEach(([, y], i) => {
+          s += ln(cols[k] + W / 2 + 1, y - 4, cols[k + 1] - W / 2 - 3, y - 4, "--state", "s", 2);
+          if (i > 0) s += ln(cols[k] + W / 2 + 1, rows[i - 1][1] + 6, cols[k + 1] - W / 2 - 3, y - 9, "--td", "t", 1.6);
+        });
+      }
+    }
+    for (let k = 0; k + 1 < cols.length; k++) {
+      const x1 = cols[k] + W / 2, y1 = rows[0][1] + 8, x2 = cols[k + 1] - W / 2 - 3, y2 = zY + 4;
+      s += `<path d="M${x1} ${y1} C ${x1 + 40} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}" style="fill:none;stroke:var(--fb)" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#${uid}-f)"/>`;
+    }
+    return s + "</svg>";
+  }
+  document.querySelectorAll("[data-unroll]").forEach((el, i) => { el.innerHTML = unroll(el.dataset.unroll, "u" + i); });
+
+  // ---------------------------------------------------------------- data
+  const GF = {
+    base: [0.161, 0.275, 0.388, 0.502, 0.615, 0.729, 0.842, 0.955],
+    lat: [0.161, 0.281, 0.400, 0.519, 0.638, 0.758, 0.877, 0.996],
+    blt: [0.161, 0.284, 0.406, 0.528, 0.650, 0.773, 0.895, 1.017]
+  };
+  const ACC = {
+    adapt: [63.75, 64.91, 64.85, 64.87, 64.93, 64.89, 64.93, 64.88],
+    carry: [63.69, 65.30, 65.44, 65.40, 65.43, 65.40, 65.42, 65.39],
+    lat: [64.75, 67.39, 67.83, 67.90, 67.79, 67.80, 67.83, 67.80],
+    blt: [63.72, 67.27, 68.30, 68.68, 68.65, 68.60, 68.56, 68.61]
+  };
+  const SD = {
+    adapt: [1.13, 0.94, 1.11, 0.95, 1.03, 1.06, 1.00, 1.03],
+    carry: [0.61, 0.41, 0.53, 0.53, 0.54, 0.53, 0.54, 0.51],
+    lat: [0.49, 0.48, 0.47, 0.48, 0.54, 0.54, 0.55, 0.52],
+    blt: [0.77, 0.57, 0.48, 0.58, 0.39, 0.29, 0.30, 0.30]
+  };
+  const SER = [
+    { key: "adapt", name: "adapt", color: "--s1", gf: GF.base },
+    { key: "carry", name: "adapt_carry", color: "--s2", gf: GF.base },
+    { key: "lat", name: "adapt_lat", color: "--s3", gf: GF.lat },
+    { key: "blt", name: "adapt_blt", color: "--s4", gf: GF.blt }
+  ];
+  // learned halting policy S0-reward_acc: [lambda, mean steps, accuracy]; GFLOPs = 0.161 + (steps - 1) * step cost
+  const POL = {
+    carry: { step: 0.1134, pts: [[0.3, 1.09, 64.22], [0.1, 1.23, 64.71], [0.03, 1.36, 64.84], [0.01, 1.45, 64.84], [0.001, 1.66, 64.89], [0.0001, 1.92, 64.91]] },
+    lat: { step: 0.1195, pts: [[0.3, 1.18, 66.27], [0.1, 1.40, 66.90], [0.03, 1.66, 67.25], [0.01, 1.90, 67.40], [0.003, 2.23, 67.50], [0.001, 2.53, 67.58], [0.0003, 2.94, 67.63], [0.0001, 3.66, 67.72]] },
+    blt: { step: 0.1223, pts: [[0.3, 1.40, 66.74], [0.1, 1.74, 67.77], [0.03, 2.09, 68.20], [0.01, 2.41, 68.34], [0.003, 2.89, 68.46], [0.001, 3.27, 68.49], [0.0003, 4.15, 68.43], [0.0001, 4.80, 68.52]] }
+  };
+  const ORIG = { gf: 0.275, acc: 64.55, sd: 0.96 }, ORIGFF = { gf: 0.161, acc: 63.72, sd: 1.22 };
+
+  // ---------------------------------------------------------------- step table
+  (function stepTable() {
+    let h = "<tr><th>模型</th>" + [...Array(8).keys()].map(t => `<th class="n">${t + 1} 步</th>`).join("") + "</tr>";
+    h += `<tr class="ref"><td>orig</td><td class="n">—</td><td class="n">64.55</td>` + "<td class='n'></td>".repeat(6) + "</tr>";
+    h += `<tr><td>orig_ff</td><td class="n">63.72</td>` + "<td class='n'></td>".repeat(7) + "</tr>";
+    for (const s of SER) {
+      const best = Math.max(...ACC[s.key]);
+      h += `<tr><td><span class="sw" style="background:var(${s.color})"></span>${s.name}</td>` +
+        ACC[s.key].map(a => `<td class="n"${a === best ? ' style="font-weight:700"' : ""}>${a.toFixed(2)}</td>`).join("") + "</tr>";
+    }
+    h += `<tr><td style="color:var(--fg2)">GFLOPs（blt）</td>` + GF.blt.map(g => `<td class="n" style="color:var(--fg2)">${g.toFixed(3)}</td>`).join("") + "</tr>";
+    document.getElementById("tblSteps").innerHTML = h;
+  })();
+
+  // ---------------------------------------------------------------- charts
+  function chart(el, cfg) {
+    const Wd = 720, Ht = 380, m = { l: 48, r: 96, t: 22, b: 46 };
+    const X = v => m.l + (v - cfg.x0) / (cfg.x1 - cfg.x0) * (Wd - m.l - m.r);
+    const Y = v => Ht - m.b - (v - cfg.y0) / (cfg.y1 - cfg.y0) * (Ht - m.t - m.b);
+    let s = `<svg viewBox="0 0 ${Wd} ${Ht}" role="img" aria-label="${cfg.label}" xmlns="http://www.w3.org/2000/svg">`;
+    for (const v of cfg.yt) {
+      s += `<line x1="${m.l}" x2="${Wd - m.r}" y1="${Y(v)}" y2="${Y(v)}" style="stroke:var(--grid)" stroke-width="1"/>`;
+      s += `<text x="${m.l - 8}" y="${Y(v) + 4}" text-anchor="end" style="fill:var(--fg2);font:11px var(--font-mono)">${v}</text>`;
+    }
+    for (const v of cfg.xt) {
+      s += `<line x1="${X(v)}" x2="${X(v)}" y1="${Ht - m.b}" y2="${Ht - m.b + 5}" style="stroke:var(--line)"/>`;
+      s += `<text x="${X(v)}" y="${Ht - m.b + 18}" text-anchor="middle" style="fill:var(--fg2);font:11px var(--font-mono)">${v.toFixed(1)}</text>`;
+    }
+    s += `<line x1="${m.l}" x2="${Wd - m.r}" y1="${Ht - m.b}" y2="${Ht - m.b}" style="stroke:var(--line)"/>`;
+    s += `<text x="${(m.l + Wd - m.r) / 2}" y="${Ht - 8}" text-anchor="middle" style="fill:var(--fg2);font:11.5px var(--font-body)">每張圖 GFLOPs</text>`;
+    s += `<text x="${m.l}" y="12" style="fill:var(--fg2);font:11.5px var(--font-body)">測試準確率 %</text>`;
+    const pts = [];
+    for (const ln of cfg.lines) {
+      const d = ln.pts.map((p, i) => `${i ? "L" : "M"}${X(p.x).toFixed(1)} ${Y(p.y).toFixed(1)}`).join(" ");
+      s += `<path d="${d}" style="fill:none;stroke:var(${ln.color})" stroke-width="2" stroke-linejoin="round"${ln.dash ? ' stroke-dasharray="6 4"' : ""}/>`;
+      for (const p of ln.pts) {
+        s += ln.hollow
+          ? `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="3.6" style="fill:var(--surface);stroke:var(${ln.color})" stroke-width="2"/>`
+          : `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="4" style="fill:var(${ln.color});stroke:var(--surface)" stroke-width="2"/>`;
+        pts.push({ x: X(p.x), y: Y(p.y), tip: p.tip });
+      }
+      if (ln.label) {
+        const last = ln.pts[ln.pts.length - 1];
+        s += `<text x="${X(last.x) + 9}" y="${Y(last.y) + 4 + (ln.labelDy || 0)}" style="fill:var(--fg);font:500 11.5px var(--font-body)">${ln.label}</text>`;
+      }
+    }
+    for (const r of cfg.refs) {
+      const x = X(r.x), y = Y(r.y), k = 6;
+      s += `<path d="M${x} ${y - k} L${x + k} ${y} L${x} ${y + k} L${x - k} ${y} Z" style="fill:${r.hollow ? "var(--surface)" : "var(--fg)"};stroke:var(--fg)" stroke-width="${r.hollow ? 2 : 1}"/>`;
+      s += `<text x="${x + (r.dx || 10)}" y="${y + (r.dy || 4)}" text-anchor="${r.anchor || "start"}" style="fill:var(--fg);font:500 11.5px var(--font-body)">${r.label}</text>`;
+      pts.push({ x, y, tip: r.tip });
+    }
+    el.innerHTML = s + "</svg>";
+    const svg = el.querySelector("svg"), tip = document.createElement("div");
+    tip.className = "tip"; tip.hidden = true; el.appendChild(tip);
+    svg.addEventListener("pointermove", ev => {
+      const r = svg.getBoundingClientRect(), sx = (ev.clientX - r.left) * Wd / r.width, sy = (ev.clientY - r.top) * Ht / r.height;
+      let best = null, bd = 18 * 18;
+      for (const p of pts) { const d = (p.x - sx) ** 2 + (p.y - sy) ** 2; if (d < bd) { bd = d; best = p; } }
+      if (!best) { tip.hidden = true; return; }
+      tip.innerHTML = best.tip; tip.hidden = false;
+      const er = el.getBoundingClientRect();
+      let left = best.x * r.width / Wd + (r.left - er.left) + el.scrollLeft + 12, top = best.y * r.height / Ht + (r.top - er.top) - 12;
+      if (left + tip.offsetWidth > el.scrollWidth - 4) left -= tip.offsetWidth + 24;
+      tip.style.left = left + "px"; tip.style.top = Math.max(4, top - tip.offsetHeight) + "px";
+    });
+    svg.addEventListener("pointerleave", () => { tip.hidden = true; });
+  }
+  const fixedPts = s => ACC[s.key].map((a, t) => ({ x: s.gf[t], y: a, tip: `${s.name} · 固定 ${t + 1} 步<br>${s.gf[t].toFixed(3)} GFLOPs · ${a.toFixed(2)}±${SD[s.key][t].toFixed(2)}%` }));
+  const polPts = (key, name) => POL[key].pts.map(([lam, st, a]) => {
+    const g = 0.161 + (st - 1) * POL[key].step;
+    return { x: g, y: a, tip: `${name} · 停止策略 λ=${lam}<br>平均 ${st.toFixed(2)} 步 · ${g.toFixed(3)} GFLOPs · ${a.toFixed(2)}%` };
+  });
+  const origRef = { x: ORIG.gf, y: ORIG.acc, label: "原始 VCNet", dx: 0, dy: 20, anchor: "middle", tip: `原始 VCNet · 2 步<br>0.275 GFLOPs · 64.55±0.96%` };
+  const ffRef = { x: ORIGFF.gf, y: ORIGFF.acc, hollow: true, label: "原始，無回饋", dx: 0, dy: 22, anchor: "start", tip: `原始，無回饋 · 1 步<br>0.161 GFLOPs · 63.72±1.22%` };
+
+  const legend = (id, items) => {
+    document.getElementById(id).innerHTML = items.map(([html, txt]) => `<span>${html}${txt}</span>`).join("");
+  };
+  legend("legA", [...SER.map(s => [`<i style="border-color:var(${s.color})"></i>`, s.name]),
+    [`<i class="dia"></i>`, "原始 VCNet"], [`<i class="dia hollow"></i>`, "原始，無回饋"]]);
+  chart(document.getElementById("chartA"), {
+    label: "各變體固定步數的準確率對 GFLOPs", x0: 0.1, x1: 1.05, y0: 63, y1: 69.5,
+    xt: [0.2, 0.4, 0.6, 0.8, 1.0], yt: [63, 64, 65, 66, 67, 68, 69],
+    lines: SER.map(s => ({ color: s.color, pts: fixedPts(s), label: s.name.replace("adapt_", ""), labelDy: s.key === "adapt" ? 4 : s.key === "carry" ? -2 : 0 })),
+    refs: [origRef, ffRef]
+  });
+
+  const SB = SER.slice(1);
+  legend("legB", [...SB.map(s => [`<i style="border-color:var(${s.color})"></i>`, s.name]),
+    [`<i style="border-color:var(--fg2)"></i>`, "固定步數"], [`<i class="dash" style="border-color:var(--fg2)"></i>`, "停止策略"],
+    [`<i class="dia"></i>`, "原始 VCNet"]]);
+  const lines = [];
+  for (const s of SB) {
+    lines.push({ color: s.color, pts: fixedPts(s).filter(p => p.x <= 0.66), label: s.name.replace("adapt_", "") });
+    lines.push({ color: s.color, pts: polPts(s.key, s.name), dash: true, hollow: true });
+  }
+  chart(document.getElementById("chartB"), {
+    label: "固定步數與停止策略的準確率對 GFLOPs", x0: 0.14, x1: 0.68, y0: 63.5, y1: 69,
+    xt: [0.2, 0.3, 0.4, 0.5, 0.6], yt: [64, 65, 66, 67, 68, 69],
+    lines, refs: [origRef]
+  });
+})();
+</script>
+</html>

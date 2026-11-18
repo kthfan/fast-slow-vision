@@ -387,7 +387,7 @@ benchmark 預設量測（`cudagraph-bs1`、`o3k*-cudagraph-bs1`；`--no-cudagrap
 ## VCNet：原始 vs 自適應步數（`dev/vcnet` 分支，0.9.0 起）
 
 使用者決定改用 VCNet，目標是比較**原始 VCNet**與 **VCNet + 自適應步數**。架構、論文沒寫而由我們補上的假設、
-實驗計畫見 [`docs/vcnet.md`](docs/vcnet.md)。取得程式時，把第 1 步指令裡的分支名稱 `claude/charming-ritchie-qycdtj` 換成 `dev/vcnet`。登記的實驗：`vcnet_smoke`、`c100_vcnet_orig`、`c100_vcnet_orig_ff`、
+實驗計畫見 [`docs/vcnet.md`](docs/vcnet.md)；技術說明與實驗報告見 [`docs/vcnet_report.html`](docs/vcnet_report.html)。取得程式時，把第 1 步指令裡的分支名稱 `claude/charming-ritchie-qycdtj` 換成 `dev/vcnet`。登記的實驗：`vcnet_smoke`、`c100_vcnet_orig`、`c100_vcnet_orig_ff`、
 `c100_vcnet_adapt`、`c100_vcnet_adapt_carry`。
 
 **第 1 輪（3 個種子，[`results/vcnet_round1_h100`](results/vcnet_round1_h100/)）：原始 vs 自適應**
