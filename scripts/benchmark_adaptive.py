@@ -45,7 +45,7 @@ from fsv.data import build_splits  # noqa: E402
 from fsv.engine import auto_amp  # noqa: E402
 from fsv.halting.online import AdaptiveRunner, CudaGraphBS1, O3Runner  # noqa: E402
 from fsv.halting.policy import HaltMLP, StepMLP  # noqa: E402
-from fsv.models import BViTConfig, RecurrentViT  # noqa: E402
+from fsv.models import load_checkpoint_model  # noqa: E402
 from fsv.version import code_info  # noqa: E402
 
 
@@ -144,18 +144,24 @@ def main(argv=None):
             run = name if seed == 0 else f"{name}_s{seed}"
             run_dir, rep = Path(args.out_root) / "runs" / run, Path(args.out_root) / "reports" / run
             pol_path = rep / "policies" / f"{args.policy}.pt"
-            if not (run_dir / "model.pt").exists() or not pol_path.exists():
-                print(f"[benchmark] {run}: missing model.pt or {pol_path.name}; skipped")
+            if not (run_dir / "model.pt").exists():
+                print(f"[benchmark] {run}: missing model.pt; skipped")
+                continue
+            if pol_path.exists():
+                pc = torch.load(pol_path, map_location="cpu", weights_only=False)
+                policy = HaltMLP(pc["in_dim"], use_lambda=pc["use_lambda"], lam_range=tuple(pc["lam_range"]))
+                policy.load_state_dict(pc["state_dict"])
+                policy.to(device)
+            elif (rep / "results.json").exists():  # no halting policy (e.g. the original VCNet): fixed depths only
+                print(f"[benchmark] {run}: no {pol_path.name}; timing fixed depths only")
+                pc = {"temperatures": torch.tensor(json.loads((rep / "results.json").read_text())["temperatures"])}
+                policy = None
+            else:
+                print(f"[benchmark] {run}: missing {pol_path.name} and results.json; skipped")
                 continue
             ck = torch.load(run_dir / "model.pt", map_location="cpu", weights_only=False)
-            model = RecurrentViT(BViTConfig(**ck["model_cfg"]))
-            model.load_state_dict(ck["model"])
-            model.to(device).eval()
+            model = load_checkpoint_model(ck).to(device).eval()
             amp = ck.get("amp") if device.type == "cuda" and ck.get("amp") else auto_amp(device)
-            pc = torch.load(pol_path, map_location="cpu", weights_only=False)
-            policy = HaltMLP(pc["in_dim"], use_lambda=pc["use_lambda"], lam_range=tuple(pc["lam_range"]))
-            policy.load_state_dict(pc["state_dict"])
-            policy.to(device)
             T = model.cfg.t_max
 
             def batched(fn):
@@ -164,7 +170,7 @@ def main(argv=None):
             def single(fn):
                 return lambda: [fn(X[i:i + 1]) for i in range(n1)]
 
-            lams = args.lams if policy.use_lambda else [None]
+            lams = [] if policy is None else args.lams if policy.use_lambda else [None]
 
             def measure(runner, method: str, fixed=None) -> dict:
                 adaptive = []
@@ -187,7 +193,7 @@ def main(argv=None):
                                      "steps_hist": torch.bincount(steps.long(), minlength=T).tolist()})
                 return {"fixed": fixed, "adaptive": adaptive}
 
-            res = {"run": run, "policy": args.policy, "amp": amp, "batch_size": bs, "bs1_images": n1,
+            res = {"run": run, "policy": args.policy if policy is not None else None, "amp": amp, "batch_size": bs, "bs1_images": n1,
                    "code_version": code_info()["code_version"],
                    "device": torch.cuda.get_device_name() if device.type == "cuda" else "cpu", "modes": {}}
             eager = AdaptiveRunner(model, policy, pc["temperatures"], device, amp)
@@ -204,7 +210,7 @@ def main(argv=None):
                     res["compile_error"] = repr(e)[:500]
                     print(f"[benchmark] torch.compile failed, skipped: {res['compile_error']}")
             o3_loaded = {}
-            for o3_name in args.o3_policies:  # decide the depth once: one sync per batch
+            for o3_name in (args.o3_policies if policy is not None else []):  # decide the depth once: one sync per batch
                 o3_path = rep / "policies" / f"{o3_name}.pt"
                 if not o3_path.exists():
                     continue

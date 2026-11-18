@@ -155,10 +155,11 @@ python scripts/summarize.py
 | 路徑 | 內容 |
 |---|---|
 | `fsv/models/bvit.py` | `RecurrentViT`：共用 Transformer 區塊遞迴 `t_max` 次；共用讀出頭 `head(LN(CLS_t) + step_emb(t))`；`n_blocks=t_max` 時為不共用權重的 ViT 對照組 |
+| `fsv/models/vcnet.py` | `VCNet`：仿視覺皮層 CNN（Hill et al., 2025），把 AIT→V1 預測編碼迴路展開成步數、每步讀出；設計與假設見 [`docs/vcnet.md`](docs/vcnet.md) |
 | `fsv/losses.py` | Stage A 損失：每步 CE + β·Brier + γ·Gatekeeper 信心損失 + δ·最後一步自我蒸餾 |
 | `fsv/calibration.py` | 每步溫度縮放（held-out 上以 LBFGS 擬合） |
 | `fsv/metrics.py` | acc、ECE、Brier、NLL、AURC |
-| `fsv/flops.py` | 解析式 FLOPs（含每步讀出頭） |
+| `fsv/flops.py` | FLOPs（含每步讀出頭）：ViT 用解析式，VCNet 用 `FlopCounterMode` 實測 |
 | `fsv/halting/thresholds.py` | max-prob / 熵門檻曲線、固定深度早退、oracle 停止步數 t*、曲線下面積 |
 | `fsv/engine.py` | 收集每步 logits / 特徵；逐步延遲量測；AMP 自動選擇（H100 用 bf16） |
 | `fsv/cpu.py` | CPU 核心數硬性上限 |
@@ -382,6 +383,56 @@ benchmark 預設量測（`cudagraph-bs1`、`o3k*-cudagraph-bs1`；`--no-cudagrap
 - 每步計算量越大，額外開銷的佔比越小：bViT-S → bViT-B 時 batch 256 的 O1 從 0.48× 升到 0.89×、O3 首次略超過 1×。
 - 結論：在 32×32 輸入、單步 < 1 GFLOPs 的設定下，H100 上無法把 FLOPs 節省轉成實際加速；
   實際延遲的主張需要每步計算量更大的設定（224×224 輸入、更寬的模型）或受計算量限制的硬體（CPU / 邊緣裝置）。
+
+## VCNet：原始 vs 自適應步數（`dev/vcnet` 分支，0.9.0 起）
+
+使用者決定改用 VCNet，目標是比較**原始 VCNet**與 **VCNet + 自適應步數**。架構、論文沒寫而由我們補上的假設、
+實驗計畫見 [`docs/vcnet.md`](docs/vcnet.md)。取得程式時，把第 1 步指令裡的分支名稱 `claude/charming-ritchie-qycdtj` 換成 `dev/vcnet`。登記的實驗：`vcnet_smoke`、`c100_vcnet_orig`、`c100_vcnet_orig_ff`、
+`c100_vcnet_adapt`、`c100_vcnet_adapt_carry`。
+
+**第 1 輪（3 個種子，[`results/vcnet_round1_h100`](results/vcnet_round1_h100/)）：原始 vs 自適應**
+
+| 模型 | 平均步數 | GFLOPs | test acc % | ECE TS % |
+|---|---|---|---|---|
+| `orig_ff`（原始，無回饋） | 1 | 0.161 | 63.72±1.22 | 1.89 |
+| **`orig`（原始 VCNet）** | 2 | 0.275 | **64.55±0.96** | 1.79 |
+| `adapt` 固定 2 步 | 2 | 0.275 | 64.91±0.94 | 2.50 |
+| `adapt_carry` 固定 2 步 | 2 | 0.275 | 65.30±0.41 | 2.41 |
+| `adapt_carry` 固定 3 步 | 3 | 0.388 | 65.44±0.53 | 2.41 |
+| `adapt_carry` + 停止策略，λ=0.1 | 1.23 | 0.187 | 64.71±0.69 | – |
+| `adapt_carry` + 停止策略，λ=0.03 | 1.36 | 0.202 | 64.84±0.85 | – |
+
+- **原始 vs 自適應**：`adapt_carry` 加停止策略，以原始模型 68% 的計算量（0.187 vs 0.275 GFLOPs）達到同等以上的準確率
+  （64.71 vs 64.55）；batch 1 + CUDA graph 延遲 1.29 ms，同架構固定 2 步為 1.82 ms。固定同樣 2 步時 carry 高 0.75 點。
+  差距都在種子標準差（約 0.5–1.0）以內，需要逐種子比較才能確定。
+- 回饋本身有用：原始 2 步比 1 步高 0.8 點；`adapt` 的第 0 步（63.75）與 `orig_ff`（63.72）相同，每步讀出不拖累第一步。
+- 預測編碼迴圈修正 1 次後就飽和：第 3–8 步沒有增益；`adapt` 的停止策略在 benchmark 的所有 λ 下都在第 0 步停；
+  batch 256 時自適應不比固定深度快。
+- 溫度縮放後原始模型的 ECE 較低（1.8% vs 2.4–2.5%）：Stage A 的 Brier + Gatekeeper 沒有改善縮放後的校準。
+
+**第 2 輪（0.10.0，3 個種子，[`results/vcnet_round2_h100`](results/vcnet_round2_h100/summary.md)）：跨步狀態**
+
+`--lateral`：每個腦區保留跨步狀態；`--topdown`：再加 BLT 式由上而下連線（[`docs/vcnet.md`](docs/vcnet.md)「跨步狀態」）。
+
+| 模型 | 平均步數 | GFLOPs | test acc % |
+|---|---|---|---|
+| **原始 VCNet（`orig`）** | 2 | 0.275 | **64.55±0.96** |
+| `adapt_lat` 固定 1 步 | 1 | 0.161 | 64.75±0.49 |
+| `adapt_lat` 固定 2 步 | 2 | 0.281 | 67.39±0.48 |
+| `adapt_blt` 固定 2 步 | 2 | 0.284 | 67.27±0.57 |
+| `adapt_blt` 固定 4 步（最佳固定深度） | 4 | 0.528 | 68.68±0.58 |
+| `adapt_blt` + 停止策略，λ=0.1 | 1.74 | 0.252 | 67.77±0.42 |
+| `adapt_blt` + 停止策略，λ=0.03 | 2.09 | 0.294 | 68.20±0.58 |
+| `adapt_blt` + 停止策略，λ=0.01 | 2.41 | 0.333 | 68.34±0.55 |
+
+- 跨步狀態解除了第 2 步飽和：`blt` 一路進步到第 4 步（63.7 → 67.3 → 68.3 → 68.7）。
+- 同樣約 0.28 GFLOPs，`lat` / `blt` 比原始 VCNet 高 2.7–2.8 點；`blt` + 停止策略以原始模型 91% 的計算量高 3.2 點。
+- 停止策略第一次在同一個模型內勝過固定深度：`blt` 在 2 步的計算量下 68.18 vs 67.27，3 步時 68.59 vs 68.30。
+- 但大部分增益來自架構，不是自適應；原始 VCNet 只有一個讀出、只用 CE。第 3 輪用同樣的 `blt` 架構、照原始方式訓練，把兩者分開。
+- 計時受其他程式干擾（多列標準差達平均值的 30–100%）；`blt` 的 batch 1 + CUDA graph 較一致：
+  λ=0.03 為 2.22 ms（68.20%），固定 3 步 3.12 ms（68.29%）。batch 256 時自適應仍比固定深度慢。
+
+**第 3 輪（0.10.1）**：`c100_vcnet_blt_orig2`、`c100_vcnet_blt_orig4`：`blt` 架構，固定 2 / 4 步、只在最後讀出、只用 CE。
 
 ## 下一階段方向（討論中）
 
