@@ -427,12 +427,11 @@ def trace_timeline(fn, sync, cuda, reps: int = 3):
 def setup(a, dev):
     if a.run:
         from fsv.data import build_splits
-        from fsv.models import BViTConfig, RecurrentViT
+        from fsv.models import load_checkpoint_model
 
         run_dir, rep = ROOT / "runs" / a.run, ROOT / "reports" / a.run
         ck = torch.load(run_dir / "model.pt", map_location="cpu", weights_only=False)
-        model = RecurrentViT(BViTConfig(**ck["model_cfg"]))
-        model.load_state_dict(ck["model"])
+        model = load_checkpoint_model(ck)  # bViT or VCNet
         amp = ck.get("amp") if dev.type == "cuda" and ck.get("amp") else auto_amp(dev)
         pc = torch.load(rep / "policies" / f"{a.policy}.pt", map_location="cpu", weights_only=False)
         policy = HaltMLP(pc["in_dim"], use_lambda=pc["use_lambda"], lam_range=tuple(pc["lam_range"]))

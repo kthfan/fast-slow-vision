@@ -58,11 +58,22 @@ def s0_rows(p, logp, prev_logp, prev_pred, run, t: torch.Tensor, T: int):
     return feats, pred, run
 
 
+def supports_slots(model) -> bool:
+    """The slot pool batches rows at different steps through ONE block: it needs the bViT-style
+    recurrent ViT with weights shared across steps (``n_blocks == 1``). VCNet and the
+    non-shared ViT baseline are not supported."""
+    from ..models.bvit import RecurrentViT
+
+    return isinstance(model, RecurrentViT) and len(model.blocks) == 1
+
+
 class SlotPoolRunner:
     def __init__(self, model, policy, temps: torch.Tensor, device, amp: str = "none", slots: int = 256,
                  refill: int | None = None, fused: bool = False, graph: bool | None = None):
-        if len(model.blocks) != 1:
-            raise NotImplementedError("the slot pool needs one block shared across steps (n_blocks == 1)")
+        if not supports_slots(model):
+            raise NotImplementedError("the slot pool needs the recurrent ViT with one shared block (n_blocks == 1)")
+        if policy is None:
+            raise ValueError("the slot pool needs a halting policy")
         self.model, self.policy = model.eval(), policy.eval()
         self.device, self.amp = device, amp
         self.T, self.S = model.cfg.t_max, slots

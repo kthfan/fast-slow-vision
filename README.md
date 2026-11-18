@@ -386,6 +386,8 @@ benchmark 預設量測（`cudagraph-bs1`、`o3k*-cudagraph-bs1`；`--no-cudagrap
 
 ### CPU 與 GPU 迴圈並行（0.9.0）
 
+> 版本說明：本節到「槽位池補位改進」的 0.9.0–0.13.1 是 `claude/admiring-franklin-6zlsn0` 分支上的編號，與 VCNet 的 0.9.0–0.10.1 平行發展；rebase 到 main 後合併為 0.14.0。
+
 > **0.12.0 起已移除這部分程式碼**（量測結果保留於此與 `results/`）：`run_pipelined`、benchmark 的 `*-pipelined` 模式與 `compile_decide`（`cudagraph-bs1-fused`）；後者已由 Triton 融合 kernel 取代。`bench_sync.py` 的不同步下限（`run_known_depth`）保留。
 
 

@@ -122,7 +122,7 @@ def measure_cudagraph(res, model, policy, pc, o3_loaded, device, amp, T, X, n1, 
         cg.run, res["modes"]["eager"]["adaptive"], eager, lams)}
     from fsv.halting.fused import triton_usable
 
-    if triton_usable(device):  # features + policy as ONE Triton kernel inside each step graph
+    if policy is not None and triton_usable(device):  # features + policy as ONE Triton kernel in each step graph
         try:
             cgt = CudaGraphBS1(model, pc["temperatures"], device, amp, policy=policy, fused=True)
             res["modes"]["cudagraph-bs1-triton"] = {"fixed": fixed, "adaptive": adaptive_rows(
@@ -217,16 +217,16 @@ def main(argv=None):
             res["modes"]["eager"] = measure(eager, "run")
             from fsv.halting.fused import triton_usable
 
-            if triton_usable(device):  # features + policy as ONE Triton kernel per step
+            if policy is not None and triton_usable(device):  # features + policy as ONE Triton kernel per step
                 try:
                     tri = AdaptiveRunner(model, policy, pc["temperatures"], device, amp, fused=True)
                     res["modes"]["eager-triton"] = measure(tri, "run", fixed=res["modes"]["eager"]["fixed"])
                 except Exception as e:
                     res["triton_error"] = repr(e)[:500]
                     print(f"[benchmark] eager-triton failed, skipped: {res['triton_error']}")
-            if args.slots and model.cfg.n_blocks == 1:  # slot pool: whole test set, one CUDA graph per tick
-                from fsv.halting.slots import SlotPoolRunner
+            from fsv.halting.slots import SlotPoolRunner, supports_slots
 
+            if args.slots and policy is not None and supports_slots(model):  # slot pool: one CUDA graph per tick
                 variants = [("slots", False)] + ([("slots-triton", True)] if triton_usable(device) else [])
                 for tag, fz in variants:
                     try:
