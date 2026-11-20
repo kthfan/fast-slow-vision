@@ -1,0 +1,469 @@
+[benchmark] device NVIDIA H100 NVL, 10000 test images, batch 256, batch-1 on 500 images, 5 repeats
+[benchmark] c100_vcnet_orig: no S0-reward_acc.pt; timing fixed depths only
+
+[benchmark] c100_vcnet_orig (AMP bf16, policy S0-reward_acc)
+  [eager] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       60.52    1.00           57442    4.109
+  fixed t=1       65.39    2.00           29404    6.614
+  [compiled] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       60.54    1.00           78065    3.553
+  fixed t=1       65.48    2.00           40489    5.496
+  [cudagraph-bs1] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       60.52    1.00             nan    1.058
+  fixed t=1       65.39    2.00             nan    1.930
+[benchmark] c100_vcnet_orig_s1: no S0-reward_acc.pt; timing fixed depths only
+
+[benchmark] c100_vcnet_orig_s1 (AMP bf16, policy S0-reward_acc)
+  [eager] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       60.40    1.00           56531    3.959
+  fixed t=1       63.55    2.00           29358    7.308
+  [compiled] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       60.41    1.00           76153    3.523
+  fixed t=1       63.56    2.00           39651    6.012
+  [cudagraph-bs1] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       60.40    1.00             nan    1.059
+  fixed t=1       63.55    2.00             nan    1.908
+[benchmark] c100_vcnet_orig_s2: no S0-reward_acc.pt; timing fixed depths only
+
+[benchmark] c100_vcnet_orig_s2 (AMP bf16, policy S0-reward_acc)
+  [eager] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       62.09    1.00           68063    3.751
+  fixed t=1       64.74    2.00           29369    6.632
+  [compiled] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       62.07    1.00           75826    3.311
+  fixed t=1       64.76    2.00           44358    5.388
+  [cudagraph-bs1] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       62.09    1.00             nan    1.059
+  fixed t=1       64.74    2.00             nan    1.766
+
+[benchmark] c100_vcnet_adapt_carry (AMP bf16, policy S0-reward_acc)
+  [eager] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       64.09    1.00           65630    3.972
+  fixed t=1       65.77    2.00           29241    6.761
+  fixed t=2       65.84    3.00           18032   10.074
+  fixed t=3       65.77    4.00           13223   13.087
+  fixed t=4       65.82    5.00           10218   15.624
+  fixed t=5       65.80    6.00            8436   19.301
+  fixed t=6       65.83    7.00            7216   23.008
+  fixed t=7       65.80    8.00            6228   28.183
+  lam=0.003        65.84    1.48           10920    6.920
+  lam=0.01         65.69    1.41           19750    6.861
+  lam=0.03         65.70    1.34           17725    6.247
+  lam=0.1          65.37    1.23           22457    5.367
+  lam=0.3          64.84    1.12           25523    5.361
+  [eager-triton] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       64.09    1.00           65630    3.972
+  fixed t=1       65.77    2.00           29241    6.761
+  fixed t=2       65.84    3.00           18032   10.074
+  fixed t=3       65.77    4.00           13223   13.087
+  fixed t=4       65.82    5.00           10218   15.624
+  fixed t=5       65.80    6.00            8436   19.301
+  fixed t=6       65.83    7.00            7216   23.008
+  fixed t=7       65.80    8.00            6228   28.183
+  lam=0.003        65.84    1.48           13224    6.513
+  lam=0.01         65.69    1.41           21474    5.627
+  lam=0.03         65.70    1.34           22270    5.855
+  lam=0.1          65.37    1.23           23204    5.357
+  lam=0.3          64.84    1.12           27831    4.772
+  [compiled] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       64.09    1.00           75089    3.401
+  fixed t=1       65.70    2.00           43340    5.575
+  fixed t=2       65.85    3.00           30290    7.303
+  fixed t=3       65.82    4.00           23503    9.640
+  fixed t=4       65.83    5.00           18685   13.092
+  fixed t=5       65.86    6.00           14124   14.441
+  fixed t=6       65.80    7.00           13102   18.080
+  fixed t=7       65.77    8.00           13257   19.856
+  lam=0.003        65.80    1.48           12345    5.492
+  lam=0.01         65.67    1.41           24597    5.165
+  lam=0.03         65.70    1.34           24526    5.460
+  lam=0.1          65.36    1.23           22376    4.894
+  lam=0.3          64.90    1.12           24916    4.737
+  [cudagraph-bs1] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       64.09    1.00             nan    1.060
+  fixed t=1       65.77    2.00             nan    1.809
+  fixed t=2       65.84    3.00             nan    2.563
+  fixed t=3       65.77    4.00             nan    3.350
+  fixed t=4       65.82    5.00             nan    4.138
+  fixed t=5       65.80    6.00             nan    4.928
+  fixed t=6       65.83    7.00             nan    5.722
+  fixed t=7       65.80    8.00             nan    6.509
+  lam=0.003        65.84    1.48             nan    1.527
+  lam=0.01         65.69    1.41             nan    1.447
+  lam=0.03         65.70    1.34             nan    1.397
+  lam=0.1          65.37    1.23             nan    1.312
+  lam=0.3          64.84    1.12             nan    1.201
+  [cudagraph-bs1-triton] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       64.09    1.00             nan    1.060
+  fixed t=1       65.77    2.00             nan    1.809
+  fixed t=2       65.84    3.00             nan    2.563
+  fixed t=3       65.77    4.00             nan    3.350
+  fixed t=4       65.82    5.00             nan    4.138
+  fixed t=5       65.80    6.00             nan    4.928
+  fixed t=6       65.83    7.00             nan    5.722
+  fixed t=7       65.80    8.00             nan    6.509
+  lam=0.003        65.84    1.48             nan    1.422
+  lam=0.01         65.69    1.41             nan    1.346
+  lam=0.03         65.70    1.34             nan    1.310
+  lam=0.1          65.37    1.23             nan    1.218
+  lam=0.3          64.84    1.12             nan    1.116
+
+[benchmark] c100_vcnet_adapt_carry_s1 (AMP bf16, policy S0-reward_acc)
+  [eager] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       62.99    1.00           55929    3.812
+  fixed t=1       64.96    2.00           29112    7.855
+  fixed t=2       64.85    3.00           17918   10.414
+  fixed t=3       64.75    4.00           12945   13.436
+  fixed t=4       64.78    5.00           10180   17.238
+  fixed t=5       64.76    6.00            8332   20.412
+  fixed t=6       64.87    7.00            7044   23.549
+  fixed t=7       64.80    8.00            6129   26.914
+  lam=0.003        64.83    2.16           19487    9.948
+  lam=0.01         64.84    1.95           17013    8.449
+  lam=0.03         64.82    1.74           17196    8.454
+  lam=0.1          64.77    1.45           17222    6.642
+  lam=0.3          63.81    1.15           17767    5.965
+  [eager-triton] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       62.99    1.00           55929    3.812
+  fixed t=1       64.96    2.00           29112    7.855
+  fixed t=2       64.85    3.00           17918   10.414
+  fixed t=3       64.75    4.00           12945   13.436
+  fixed t=4       64.78    5.00           10180   17.238
+  fixed t=5       64.76    6.00            8332   20.412
+  fixed t=6       64.87    7.00            7044   23.549
+  fixed t=7       64.80    8.00            6129   26.914
+  lam=0.003        64.83    2.16           18529    8.408
+  lam=0.01         64.84    1.95           21458    8.356
+  lam=0.03         64.82    1.74           18861    7.846
+  lam=0.1          64.77    1.45           18734    6.487
+  lam=0.3          63.81    1.15           23327    5.334
+  [compiled] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       63.04    1.00           63476    3.661
+  fixed t=1       64.87    2.00           37403    6.110
+  fixed t=2       64.86    3.00           26126    8.819
+  fixed t=3       64.81    4.00           20437    9.893
+  fixed t=4       64.79    5.00           19836   13.493
+  fixed t=5       64.82    6.00           13967   16.065
+  fixed t=6       64.82    7.00           13676   13.786
+  fixed t=7       64.82    8.00           15218   16.395
+  lam=0.003        64.83    2.17           25982    6.647
+  lam=0.01         64.85    1.95           25920    6.048
+  lam=0.03         64.81    1.74           26561    5.344
+  lam=0.1          64.74    1.45           27385    4.685
+  lam=0.3          63.85    1.15           28040    3.824
+  [cudagraph-bs1] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       62.99    1.00             nan    1.058
+  fixed t=1       64.96    2.00             nan    1.772
+  fixed t=2       64.85    3.00             nan    2.562
+  fixed t=3       64.75    4.00             nan    3.349
+  fixed t=4       64.78    5.00             nan    4.138
+  fixed t=5       64.76    6.00             nan    4.928
+  fixed t=6       64.87    7.00             nan    5.722
+  fixed t=7       64.80    8.00             nan    6.508
+  lam=0.003        64.83    2.16             nan    2.121
+  lam=0.01         64.84    1.95             nan    1.944
+  lam=0.03         64.82    1.74             nan    1.740
+  lam=0.1          64.77    1.45             nan    1.497
+  lam=0.3          63.81    1.15             nan    1.204
+  [cudagraph-bs1-triton] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       62.99    1.00             nan    1.058
+  fixed t=1       64.96    2.00             nan    1.772
+  fixed t=2       64.85    3.00             nan    2.562
+  fixed t=3       64.75    4.00             nan    3.349
+  fixed t=4       64.78    5.00             nan    4.138
+  fixed t=5       64.76    6.00             nan    4.928
+  fixed t=6       64.87    7.00             nan    5.722
+  fixed t=7       64.80    8.00             nan    6.508
+  lam=0.003        64.83    2.16             nan    2.124
+  lam=0.01         64.84    1.95             nan    1.808
+  lam=0.03         64.82    1.74             nan    1.620
+  lam=0.1          64.77    1.45             nan    1.400
+  lam=0.3          63.81    1.15             nan    1.126
+
+[benchmark] c100_vcnet_adapt_carry_s2 (AMP bf16, policy S0-reward_acc)
+  [eager] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       64.00    1.00           72543    3.356
+  fixed t=1       65.26    2.00           29283    6.135
+  fixed t=2       65.61    3.00           17962    8.770
+  fixed t=3       65.60    4.00           12987   12.054
+  fixed t=4       65.68    5.00           10152   14.121
+  fixed t=5       65.58    6.00            8335   16.996
+  fixed t=6       65.63    7.00            7069   19.884
+  fixed t=7       65.60    8.00            6134   23.079
+  lam=0.003        64.00    1.00           57153    4.324
+  lam=0.01         64.00    1.00           56528    4.199
+  lam=0.03         64.00    1.00           56407    4.284
+  lam=0.1          64.00    1.00           55167    4.230
+  lam=0.3          64.00    1.00           56457    4.430
+  [eager-triton] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       64.00    1.00           72543    3.356
+  fixed t=1       65.26    2.00           29283    6.135
+  fixed t=2       65.61    3.00           17962    8.770
+  fixed t=3       65.60    4.00           12987   12.054
+  fixed t=4       65.68    5.00           10152   14.121
+  fixed t=5       65.58    6.00            8335   16.996
+  fixed t=6       65.63    7.00            7069   19.884
+  fixed t=7       65.60    8.00            6134   23.079
+  lam=0.003        64.00    1.00           61274    4.052
+  lam=0.01         64.00    1.00           58588    3.975
+  lam=0.03         64.00    1.00           59552    4.046
+  lam=0.1          64.00    1.00           59751    4.077
+  lam=0.3          64.00    1.00           61344    4.007
+  [compiled] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       63.97    1.00           80101    3.023
+  fixed t=1       65.27    2.00           45802    5.148
+  fixed t=2       65.66    3.00           32849    7.166
+  fixed t=3       65.64    4.00           25442    9.144
+  fixed t=4       65.61    5.00           20430   10.975
+  fixed t=5       65.66    6.00           18477   12.697
+  fixed t=6       65.60    7.00           15799   14.548
+  fixed t=7       65.62    8.00           14103   16.401
+  lam=0.003        63.97    1.00           67332    3.417
+  lam=0.01         63.97    1.00           68404    3.434
+  lam=0.03         63.97    1.00           70839    3.440
+  lam=0.1          63.97    1.00           69009    3.540
+  lam=0.3          63.97    1.00           67467    3.485
+  [cudagraph-bs1] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       64.00    1.00             nan    1.058
+  fixed t=1       65.26    2.00             nan    1.913
+  fixed t=2       65.61    3.00             nan    2.562
+  fixed t=3       65.60    4.00             nan    3.381
+  fixed t=4       65.68    5.00             nan    4.137
+  fixed t=5       65.58    6.00             nan    4.927
+  fixed t=6       65.63    7.00             nan    5.722
+  fixed t=7       65.60    8.00             nan    6.508
+  lam=0.003        64.00    1.00             nan    1.089
+  lam=0.01         64.00    1.00             nan    1.089
+  lam=0.03         64.00    1.00             nan    1.088
+  lam=0.1          64.00    1.00             nan    1.090
+  lam=0.3          64.00    1.00             nan    1.089
+  [cudagraph-bs1-triton] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       64.00    1.00             nan    1.058
+  fixed t=1       65.26    2.00             nan    1.913
+  fixed t=2       65.61    3.00             nan    2.562
+  fixed t=3       65.60    4.00             nan    3.381
+  fixed t=4       65.68    5.00             nan    4.137
+  fixed t=5       65.58    6.00             nan    4.927
+  fixed t=6       65.63    7.00             nan    5.722
+  fixed t=7       65.60    8.00             nan    6.508
+  lam=0.003        64.00    1.00             nan    1.068
+  lam=0.01         64.00    1.00             nan    1.021
+  lam=0.03         64.00    1.00             nan    1.021
+  lam=0.1          64.00    1.00             nan    1.021
+  lam=0.3          64.00    1.00             nan    1.021
+
+[benchmark] c100_vcnet_adapt_blt (AMP bf16, policy S0-reward_acc)
+  [eager] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       63.87    1.00           67862    3.606
+  fixed t=1       67.84    2.00           12613    7.511
+  fixed t=2       68.81    3.00            6874   11.100
+  fixed t=3       69.29    4.00            4722   14.535
+  fixed t=4       69.10    5.00            3596   18.067
+  fixed t=5       69.01    6.00            2906   20.987
+  fixed t=6       68.89    7.00            2438   25.269
+  fixed t=7       68.90    8.00            2100   27.798
+  lam=0.003        69.19    3.10            4495   13.400
+  lam=0.01         68.89    2.42            5454   10.166
+  lam=0.03         68.72    2.04            6514    8.349
+  lam=0.1          68.19    1.72            9679    7.303
+  lam=0.3          67.24    1.40           12735    6.011
+  [eager-triton] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       63.87    1.00           67862    3.606
+  fixed t=1       67.84    2.00           12613    7.511
+  fixed t=2       68.81    3.00            6874   11.100
+  fixed t=3       69.29    4.00            4722   14.535
+  fixed t=4       69.10    5.00            3596   18.067
+  fixed t=5       69.01    6.00            2906   20.987
+  fixed t=6       68.89    7.00            2438   25.269
+  fixed t=7       68.90    8.00            2100   27.798
+  lam=0.003        69.19    3.10            4694   11.709
+  lam=0.01         68.89    2.42            5723    9.506
+  lam=0.03         68.72    2.04            6771    7.772
+  lam=0.1          68.19    1.72           10323    6.635
+  lam=0.3          67.24    1.40           13259    5.629
+  [compiled] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       63.85    1.00           73467    3.360
+  fixed t=1       67.86    2.00           38908    6.008
+  fixed t=2       68.82    3.00           26514    8.888
+  fixed t=3       69.31    4.00           21076   11.086
+  fixed t=4       69.11    5.00           16925   14.274
+  fixed t=5       68.91    6.00           13701   16.636
+  fixed t=6       68.88    7.00           12080   18.925
+  fixed t=7       68.88    8.00           10526   20.964
+  lam=0.003        69.16    3.10            9427   10.772
+  lam=0.01         68.95    2.42            8165    8.963
+  lam=0.03         68.76    2.04            8876    6.696
+  lam=0.1          68.20    1.73           14660    5.967
+  lam=0.3          67.28    1.40           17552    4.939
+  [cudagraph-bs1] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       63.87    1.00             nan    0.982
+  fixed t=1       67.84    2.00             nan    1.949
+  fixed t=2       68.81    3.00             nan    2.915
+  fixed t=3       69.29    4.00             nan    3.882
+  fixed t=4       69.10    5.00             nan    4.845
+  fixed t=5       69.01    6.00             nan    5.815
+  fixed t=6       68.89    7.00             nan    6.776
+  fixed t=7       68.90    8.00             nan    7.744
+  lam=0.003        69.19    3.10             nan    3.306
+  lam=0.01         68.89    2.42             nan    2.598
+  lam=0.03         68.72    2.04             nan    2.125
+  lam=0.1          68.19    1.72             nan    1.825
+  lam=0.3          67.24    1.40             nan    1.505
+  [cudagraph-bs1-triton] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       63.87    1.00             nan    0.982
+  fixed t=1       67.84    2.00             nan    1.949
+  fixed t=2       68.81    3.00             nan    2.915
+  fixed t=3       69.29    4.00             nan    3.882
+  fixed t=4       69.10    5.00             nan    4.845
+  fixed t=5       69.01    6.00             nan    5.815
+  fixed t=6       68.89    7.00             nan    6.776
+  fixed t=7       68.90    8.00             nan    7.744
+  lam=0.003        69.19    3.10             nan    3.136
+  lam=0.01         68.89    2.42             nan    2.432
+  lam=0.03         68.72    2.04             nan    1.989
+  lam=0.1          68.19    1.72             nan    2.315
+  lam=0.3          67.24    1.40             nan    1.908
+
+[benchmark] c100_vcnet_adapt_blt_s1 (AMP bf16, policy S0-reward_acc)
+  [eager] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       64.40    1.00           62729    3.665
+  fixed t=1       67.23    2.00            9600    7.332
+  fixed t=2       68.16    3.00            5361   10.309
+  fixed t=3       68.51    4.00            4714   13.909
+  fixed t=4       68.33    5.00            3595   16.959
+  fixed t=5       68.47    6.00            2910   20.716
+  fixed t=6       68.41    7.00            2437   24.847
+  fixed t=7       68.45    8.00            2097   29.031
+  lam=0.003        68.28    3.39            3709   16.879
+  lam=0.01         68.33    2.81            6376   12.341
+  lam=0.03         68.29    2.36            7734   10.194
+  lam=0.1          67.78    1.79            9731    7.385
+  lam=0.3          66.61    1.32           14099    5.421
+  [eager-triton] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       64.40    1.00           62729    3.665
+  fixed t=1       67.23    2.00            9600    7.332
+  fixed t=2       68.16    3.00            5361   10.309
+  fixed t=3       68.51    4.00            4714   13.909
+  fixed t=4       68.33    5.00            3595   16.959
+  fixed t=5       68.47    6.00            2910   20.716
+  fixed t=6       68.41    7.00            2437   24.847
+  fixed t=7       68.45    8.00            2097   29.031
+  lam=0.003        68.28    3.39            4603   14.829
+  lam=0.01         68.33    2.81            5285   13.365
+  lam=0.03         68.29    2.36            6591   13.023
+  lam=0.1          67.78    1.79            7568    9.891
+  lam=0.3          66.60    1.32           11568    6.175
+  [compiled] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       64.37    1.00           71646    3.491
+  fixed t=1       67.21    2.00           40282    5.942
+  fixed t=2       68.22    3.00           26966    8.537
+  fixed t=3       68.52    4.00           20896   11.291
+  fixed t=4       68.40    5.00           16889   14.259
+  fixed t=5       68.46    6.00           13991   16.780
+  fixed t=6       68.43    7.00           12232   18.146
+  fixed t=7       68.45    8.00           11006   22.079
+  lam=0.003        68.36    3.39            8745   12.916
+  lam=0.01         68.42    2.81           13609   10.010
+  lam=0.03         68.35    2.36           13790    7.950
+  lam=0.1          67.80    1.79           14327    6.089
+  lam=0.3          66.60    1.32           17507    4.512
+  [cudagraph-bs1] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       64.40    1.00             nan    1.060
+  fixed t=1       67.23    2.00             nan    2.014
+  fixed t=2       68.16    3.00             nan    2.914
+  fixed t=3       68.51    4.00             nan    3.881
+  fixed t=4       68.33    5.00             nan    4.843
+  fixed t=5       68.47    6.00             nan    5.813
+  fixed t=6       68.41    7.00             nan    6.774
+  fixed t=7       68.45    8.00             nan   10.007
+  lam=0.003        68.28    3.39             nan    6.139
+  lam=0.01         68.33    2.81             nan    5.078
+  lam=0.03         68.29    2.36             nan    4.131
+  lam=0.1          67.78    1.79             nan    3.095
+  lam=0.3          66.61    1.32             nan    2.229
+  [cudagraph-bs1-triton] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       64.40    1.00             nan    1.060
+  fixed t=1       67.23    2.00             nan    2.014
+  fixed t=2       68.16    3.00             nan    2.914
+  fixed t=3       68.51    4.00             nan    3.881
+  fixed t=4       68.33    5.00             nan    4.843
+  fixed t=5       68.47    6.00             nan    5.813
+  fixed t=6       68.41    7.00             nan    6.774
+  fixed t=7       68.45    8.00             nan   10.007
+  lam=0.003        68.28    3.39             nan    3.704
+  lam=0.01         68.33    2.81             nan    2.867
+  lam=0.03         68.29    2.36             nan    2.361
+  lam=0.1          67.78    1.79             nan    1.776
+  lam=0.3          66.61    1.32             nan    1.293
+
+[benchmark] c100_vcnet_adapt_blt_s2 (AMP bf16, policy S0-reward_acc)
+  [eager] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       62.87    1.00           67380    3.613
+  fixed t=1       66.73    2.00           12616    7.403
+  fixed t=2       67.90    3.00            5118   11.457
+  fixed t=3       68.24    4.00            3672   14.453
+  fixed t=4       68.49    5.00            2765   17.805
+  fixed t=5       68.47    6.00            2910   21.639
+  fixed t=6       68.39    7.00            1884   24.578
+  fixed t=7       68.38    8.00            2096   27.498
+  lam=0.003        67.92    2.19            5935    8.823
+  lam=0.01         67.79    2.01            6118    8.646
+  lam=0.03         67.58    1.86            6446    7.779
+  lam=0.1          67.35    1.69            8185    7.046
+  lam=0.3          66.38    1.48           11320    6.104
+  [eager-triton] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       62.87    1.00           67380    3.613
+  fixed t=1       66.73    2.00           12616    7.403
+  fixed t=2       67.90    3.00            5118   11.457
+  fixed t=3       68.24    4.00            3672   14.453
+  fixed t=4       68.49    5.00            2765   17.805
+  fixed t=5       68.47    6.00            2910   21.639
+  fixed t=6       68.39    7.00            1884   24.578
+  fixed t=7       68.38    8.00            2096   27.498
+  lam=0.003        67.93    2.19            5853    8.393
+  lam=0.01         67.79    2.01            6531    7.782
+  lam=0.03         67.58    1.86            7282    6.879
+  lam=0.1          67.35    1.69            8781    6.291
+  lam=0.3          66.38    1.48           11947    6.156
+  [compiled] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       62.90    1.00           76408    3.072
+  fixed t=1       66.76    2.00           40223    5.888
+  fixed t=2       67.97    3.00           27762    8.685
+  fixed t=3       68.26    4.00           20891   11.001
+  fixed t=4       68.52    5.00           17121   13.355
+  fixed t=5       68.48    6.00           14696   16.393
+  fixed t=6       68.36    7.00           11991   19.465
+  fixed t=7       68.39    8.00           10418   22.275
+  lam=0.003        67.95    2.20            8822    7.677
+  lam=0.01         67.82    2.01            8899    7.164
+  lam=0.03         67.56    1.86            9265    6.400
+  lam=0.1          67.34    1.70           11714    5.776
+  lam=0.3          66.35    1.49           15263    5.165
+  [cudagraph-bs1] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       62.87    1.00             nan    1.008
+  fixed t=1       66.73    2.00             nan    1.949
+  fixed t=2       67.90    3.00             nan    2.915
+  fixed t=3       68.24    4.00             nan    3.882
+  fixed t=4       68.49    5.00             nan    4.844
+  fixed t=5       68.47    6.00             nan    5.815
+  fixed t=6       68.39    7.00             nan    6.775
+  fixed t=7       68.38    8.00             nan    7.744
+  lam=0.003        67.92    2.19             nan    2.326
+  lam=0.01         67.79    2.01             nan    2.178
+  lam=0.03         67.58    1.86             nan    2.010
+  lam=0.1          67.35    1.69             nan    1.811
+  lam=0.3          66.38    1.48             nan    1.583
+  [cudagraph-bs1-triton] setting   acc %   steps   img/s (bs 256)   bs1 ms
+  fixed t=0       62.87    1.00             nan    1.008
+  fixed t=1       66.73    2.00             nan    1.949
+  fixed t=2       67.90    3.00             nan    2.915
+  fixed t=3       68.24    4.00             nan    3.882
+  fixed t=4       68.49    5.00             nan    4.844
+  fixed t=5       68.47    6.00             nan    5.815
+  fixed t=6       68.39    7.00             nan    6.775
+  fixed t=7       68.38    8.00             nan    7.744
+  lam=0.003        67.92    2.19             nan    2.351
+  lam=0.01         67.79    2.01             nan    2.044
+  lam=0.03         67.58    1.86             nan    1.886
+  lam=0.1          67.35    1.69             nan    1.698
+  lam=0.3          66.38    1.48             nan    1.486

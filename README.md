@@ -432,6 +432,20 @@ benchmark 預設量測（`cudagraph-bs1`、`o3k*-cudagraph-bs1`；`--no-cudagrap
 - 計時受其他程式干擾（多列標準差達平均值的 30–100%）；`blt` 的 batch 1 + CUDA graph 較一致：
   λ=0.03 為 2.22 ms（68.20%），固定 3 步 3.12 ms（68.29%）。batch 256 時自適應仍比固定深度慢。
 
+**延遲與吞吐量（閒置 GPU 重量，[`results/vcnet_bench_idle_h100`](results/vcnet_bench_idle_h100/summary.md)）**：
+
+| 模型、設定 | acc % | batch 256 compiled 張/秒 | batch 1 CUDA graph ms |
+|---|---|---|---|
+| 原始 VCNet（2 步） | 64.56 | 41,499 | 1.908 |
+| `adapt_blt` 固定 2 步 | 67.27 | 39,804 | 1.949 |
+| `adapt_blt` 固定 3 步 | 68.29 | 27,081 | 2.915 |
+| `adapt_blt` + 停止策略 λ=0.1 | 67.77 | 13,567 | 1.825 |
+| `adapt_blt` + 停止策略 λ=0.03 | 68.20 | 10,644 | 2.125 |
+
+- batch 1：自適應有效，`blt` + 停止策略比原始 VCNet 略快且高 3.2 點；比 `blt` 固定 3 步快約 1.4 倍。
+- batch 256：自適應無效，停止策略讓吞吐量降到固定步數的 27–42%；`blt` 固定 2 步的吞吐量約為原始的 96%、高 2.7 點。
+- `blt` 的 eager 實作每步很慢，部署需用 torch.compile。
+
 **第 3 輪（0.10.1）**：`c100_vcnet_blt_orig2`、`c100_vcnet_blt_orig4`：`blt` 架構，固定 2 / 4 步、只在最後讀出、只用 CE。
 
 ## 下一階段方向（討論中）
