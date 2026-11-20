@@ -1,6 +1,6 @@
 """Draw the CPU / GPU timelines and the per-part time breakdown written by profile_breakdown.py.
 
-    python scripts/plot_timeline.py results/t4_profile_breakdown/breakdown.json --out results/t4_profile_breakdown
+    python scripts/plot_timeline.py reports/breakdown.json --out reports/plots
 
 For every model in the JSON it writes
   * timeline_<model>_<panel>.png  one call (one image, or one batch of 256): for each method a

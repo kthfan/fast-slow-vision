@@ -386,6 +386,9 @@ benchmark 預設量測（`cudagraph-bs1`、`o3k*-cudagraph-bs1`；`--no-cudagrap
 
 ### CPU 與 GPU 迴圈並行（0.9.0）
 
+> T4 量測（`results/t4_*`）只保留圖；原始 JSON 與 log 已移除以縮小 repo，數字以本 README 的表格為準。H100 的原始輸出在 `results/round10_h100/`。
+
+
 > 版本說明：本節到「槽位池補位改進」的 0.9.0–0.13.1 是 `claude/admiring-franklin-6zlsn0` 分支上的編號，與 VCNet 的 0.9.0–0.10.1 平行發展；rebase 到 main 後合併為 0.14.0。
 
 > **0.12.0 起已移除這部分程式碼**（量測結果保留於此與 `results/`）：`run_pipelined`、benchmark 的 `*-pipelined` 模式與 `compile_decide`（`cudagraph-bs1-fused`）；後者已由 Triton 融合 kernel 取代。`bench_sync.py` 的不同步下限（`run_known_depth`）保留。
@@ -403,7 +406,7 @@ benchmark 預設量測（`cudagraph-bs1`、`o3k*-cudagraph-bs1`；`--no-cudagrap
   「**已知停止步、完全不讀回**」的下限：同步版減掉它，就是同步本身的成本；任何把策略留在 GPU 上的作法
   （pipelining、CUDA graph 條件節點的 GPU 端 while 迴圈）都不可能比這個下限更快。
 
-Kaggle T4、torch 2.6.0+cu124（`results/t4_bench_sync/`；batch 1 CUDA graphs，ms/張）：
+Kaggle T4、torch 2.6.0+cu124（batch 1 CUDA graphs，ms/張）：
 
 | 骨幹 | 固定 t=3（4 步） | O1 每步同步 | O1 pipelined L=1 | L=2 | 不同步下限 | 融合 + 同步 | 融合下限 |
 |---|---|---|---|---|---|---|---|
@@ -425,7 +428,7 @@ batch 256（eager）：bViT-S 11,989 → 10,439 img/s（L=1），bViT-B 3,720 �
 
 把兩種方法拆成相同的部分（embed、model_step、readout、features、policy、record、sync、compaction），
 每部分量 CPU 時間（不開 profiler）、GPU kernel 時間（torch.profiler）、kernel 數；CUDA graph 模式把每部分各錄成一張 graph，
-以 event 計時。Kaggle T4、torch 2.6.0+cu124、隨機權重（平均約 3.5 步），原始輸出在 `results/t4_profile_breakdown/`。
+以 event 計時。Kaggle T4、torch 2.6.0+cu124、隨機權重（平均約 3.5 步）。
 與「固定 4 步」比較，O1 多出的時間（µs/張；batch 256 為 µs/batch）：
 
 | 設定 | O1 牆鐘 | 固定 4 步 | 差 | 少算的遞迴步 | features + policy + record | 同步 / GPU 閒置 |
@@ -451,7 +454,7 @@ O1 每步的特徵與策略原本約 40 個小 kernel（softmax、log、top-5、
 benchmark 模式 `eager-triton`、`cudagraph-bs1-triton`。測試：在 Triton CPU 直譯器（`TRITON_INTERPRET=1`）上與 PyTorch 逐項相同；
 T4 上所有計時影像的決策 100% 一致。
 
-Kaggle T4、torch 2.6.0+cu124、隨機權重（`results/t4_fused/`，圖在 `results/t4_fused/plots/`）：
+Kaggle T4、torch 2.6.0+cu124、隨機權重（圖在 `results/t4_fused/plots/`）：
 
 | | 每步特徵 + 策略的 GPU 時間 | O1 每步 graph | bViT-S bs1 graph | bViT-B bs1 graph | bViT-S bs1 eager | bViT-B bs1 eager |
 |---|---|---|---|---|---|---|
@@ -476,7 +479,7 @@ k 個 batch 同時在途、輪流推進：CPU 等 A 的第 t 步結果時，GPU 
 停止數量改用非同步讀回（pinned 記憶體 + event），不用 `nonzero`（它會等佇列裡所有工作，包含另一個 batch 的）。
 沒有推測性的多算，結果與 `run` 逐位元相同（有測試）。benchmark 模式 `eager-interleaved2`、`triton-interleaved2`（`--inflight`）。
 
-Kaggle T4、batch 256、隨機權重（`results/t4_interleaved/`；每 batch，不開 profiler 的 CPU 時間）：
+Kaggle T4、batch 256、隨機權重（每 batch，不開 profiler 的 CPU 時間；圖在 `results/t4_interleaved/plots/`）：
 
 | 骨幹 / 方法 | 實際耗時 | CPU 發送 kernel | CPU 等同步 | GPU 閒置 | kernel 數 |
 |---|---|---|---|---|---|
@@ -503,7 +506,7 @@ CUDA graph；CPU 只重播 graph，並晚一個 tick 非同步讀「已完成張
 （只支援 `n_blocks == 1`，權重跨步共用）；融合 kernel 新增每列模式。測試：與 `AdaptiveRunner.run` 的預測與停止步數逐位元相同（CPU、
 Triton 直譯器），GPU 上 100% 一致。benchmark 模式 `slots`、`slots-triton`（`--slots`）。
 
-Kaggle T4、隨機權重、10,240 張圖（`results/t4_slots/`；吞吐量 img/s）：
+Kaggle T4、隨機權重、10,240 張圖（吞吐量 img/s）：
 
 | | bViT-S | bViT-B |
 |---|---|---|
@@ -517,7 +520,7 @@ Kaggle T4、隨機權重、10,240 張圖（`results/t4_slots/`；吞吐量 img/s
 - 但吞吐量比現在的 O1 低 20–28%：一個 tick（256 槽位走一步）在 bViT-S 要 8.4 ms，而 batch 256 的一個模型步約 5.3 ms，
   每個 tick 多約 3 ms 的 GPU 工作。R=128 少約 0.8 ms，表示補位（每 tick embed R 張圖、搬移 token 緩衝區）是主要來源之一；
   S=512 更慢（tick 時間超過線性成長）。
-- 逐 kernel 剖析（`results/t4_slots/tick_profile.txt`，bViT-S，S=256）：一個 tick 的 GPU 時間中，模型步本身約 4.3 ms，
+- 逐 kernel 剖析（bViT-S，S=256）：一個 tick 的 GPU 時間中，模型步本身約 4.3 ms，
   補位與記錄約 2.6 ms（R=256）/ 1.5 ms（R=128），其他約 0.3 ms。補位的成本來自：tok 與 x0 兩份 [256, 65, 384] fp32 緩衝區
   的 gather（indexSelect，0.53 ms）→ `where`（約 0.6 ms）→ scatter 回去（index_copy，0.46 ms）、每 tick 整份複製 tok（DtoD，0.23 ms）、
   以及對 R 張圖做 embed（約 0.7 ms，R=128 時減半）。停止決策與記錄本身很小。
@@ -531,7 +534,7 @@ Kaggle T4、隨機權重、10,240 張圖（`results/t4_slots/`；吞吐量 img/s
 `Block` / `forward_step` 新增 `out=`，模型步把結果原地寫回 token 緩衝區，省去每 tick 一次整份複製。補位上限預設改為 S/2。
 
 一個 tick 中模型步以外的 GPU 時間（bViT-S，S=256）：補位上限 256 時 2.89 → 1.53 ms，128 時 1.80 → 0.99 ms
-（`results/t4_slots/tick_profile_v0131.txt`）。吞吐量（img/s，10,240 張，`results/t4_slots/v0131/`；同一次執行內比較）：
+。吞吐量（img/s，10,240 張；同一次執行內比較）：
 
 | | bViT-S | bViT-B |
 |---|---|---|

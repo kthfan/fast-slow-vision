@@ -19,7 +19,7 @@ Costs: slots that are free (queue exhausted, at the very end) are still computed
 ``refill`` caps how many slots one tick can refill (embedding cost per tick; default S/2,
 about 1.5x the slots freed per tick at 3-4 steps per image).
 
-Per-tick traffic is kept small (profile in results/t4_slots/): refilled rows are written with
+Per-tick traffic is kept small (per-kernel profile in the README, slot-pool section): refilled rows are written with
 ONE scatter into the token buffer, whose extra last row is a sink for candidate slots that
 are not refilled (no gather + where + scatter of the whole candidate set); ``x0`` is only kept
 when the model uses input injection; the model step writes its result in place
