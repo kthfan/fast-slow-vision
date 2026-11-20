@@ -73,7 +73,7 @@ def test_run_experiment_writes_report(tmp_path):
                     "--lams", "0.01", "1.0", "--max-cpus", "2", "--no-compile", "--naive"], check=True, cwd=ROOT,
                    env={**os.environ, "CUDA_VISIBLE_DEVICES": ""})  # CPU: deterministic logic check
     bench = json.loads((rep / "benchmark.json").read_text())
-    assert set(bench["modes"]) == {"eager", "eager-naive", "o3k0-eager", "o3k1-eager", "cudagraph-bs1",
+    assert set(bench["modes"]) == {"eager", "eager-naive", "slots", "o3k0-eager", "o3k1-eager", "cudagraph-bs1",
                                    "o3k0-cudagraph-bs1", "o3k1-cudagraph-bs1"}
     assert bench["cudagraph_captured"] is False  # CPU: logic only (GPU capture: test_cudagraph_bs1_on_gpu)
     assert all(a["agree_with_eager"] == 1.0 for m in bench["modes"] if "cudagraph" in m
@@ -82,7 +82,8 @@ def test_run_experiment_writes_report(tmp_path):
     assert len(bench["modes"]["eager"]["fixed"]) == 3 and len(bench["modes"]["eager"]["adaptive"]) == 2
     # both runners make the same decisions
     assert [a["acc"] for a in bench["modes"]["eager"]["adaptive"]] == \
-        [a["acc"] for a in bench["modes"]["eager-naive"]["adaptive"]]
+        [a["acc"] for a in bench["modes"]["eager-naive"]["adaptive"]] == \
+        [a["acc"] for a in bench["modes"]["slots"]["adaptive"]]
     summary = subprocess.run([sys.executable, str(ROOT / "scripts/summarize.py"), "smoke",
                               "--reports", str(tmp_path / "reports")], check=True, capture_output=True,
                              text=True, cwd=ROOT).stdout
