@@ -49,6 +49,9 @@ def parse_args(argv=None):
     p.add_argument("--latency-batch", type=int, default=256)
     p.add_argument("--cache", action="store_true", help="save per-step logits and features")
     p.add_argument("--cache-train", type=int, default=10000, help="train images to cache (0 = none)")
+    p.add_argument("--steps", type=int, default=None,
+                   help="VCNet only: run the loop for this many steps, also past the trained length "
+                        "(results go to <ckpt dir>/steps<N> unless --out is given)")
     return p.parse_args(argv)
 
 
@@ -66,10 +69,16 @@ def main(argv=None):
     amp = args.amp if args.amp != "auto" else (ck.get("amp") if device.type == "cuda" and ck.get("amp")
                                                else auto_amp(device))
     model = load_checkpoint_model(ck).to(device).eval()
+    if args.steps is not None:
+        if not hasattr(model, "extend_steps"):
+            raise SystemExit("--steps is only supported for VCNet checkpoints")
+        model.extend_steps(args.steps)
+        print(f"[evaluate] running {args.steps} steps (trained with {model.trained_t_max}); "
+              f"steps >= {model.trained_t_max} reuse the last step embedding")
     train_args = ck.get("args", {})
     dataset = train_args.get("dataset", "cifar100")
     holdout = train_args.get("holdout", 5000)
-    out = Path(args.out or Path(args.ckpt).parent)
+    out = Path(args.out or (Path(args.ckpt).parent / f"steps{args.steps}" if args.steps else Path(args.ckpt).parent))
     out.mkdir(parents=True, exist_ok=True)
 
     splits = build_splits(dataset, args.data_dir, holdout, seed=0, download=True, fake=args.fake_data)
@@ -101,6 +110,7 @@ def main(argv=None):
         "ckpt": str(args.ckpt),
         "dataset": dataset,
         "model_cfg": ck["model_cfg"],
+        "steps_run": len(raw),
         "params": sum(p.numel() for p in model.parameters()),
         "temperatures": temps.tolist(),
         "test_raw": raw,

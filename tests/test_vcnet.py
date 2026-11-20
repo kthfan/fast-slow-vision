@@ -218,3 +218,24 @@ def test_benchmark_fixed_depth_only_without_policy(tmp_path):
     summary = subprocess.run([sys.executable, str(ROOT / "scripts/summarize.py"), "smoke", "--reports",
                               str(tmp_path / "reports")], check=True, capture_output=True, text=True, cwd=ROOT).stdout
     assert "[benchmark smoke]" in summary and "fixed t=1" in summary
+
+
+def test_extend_steps_past_trained_length(tmp_path):
+    m = _model(T=2)
+    x = torch.randn(3, 3, 32, 32)
+    with torch.no_grad():
+        base = m(x)
+        m.extend_steps(5)
+        ext = m(x)
+    assert ext.shape == (5, 3, 10) and m.trained_t_max == 2
+    torch.testing.assert_close(ext[:2], base)  # the trained steps are unchanged
+    # CLI: evaluate an original-style checkpoint (2 steps, last readout) for 4 steps
+    out = tmp_path / "run"
+    subprocess.run([sys.executable, str(ROOT / "scripts/train.py"), "--fake-data", "--model", "vcnet_mini",
+                    "--t-max", "2", "--loss-steps", "last", "--epochs", "1", "--max-steps", "2",
+                    "--batch-size", "16", "--workers", "0", "--holdout", "64", "--out", str(out)], check=True, cwd=ROOT)
+    subprocess.run([sys.executable, str(ROOT / "scripts/evaluate.py"), "--ckpt", str(out / "model.pt"),
+                    "--fake-data", "--workers", "0", "--steps", "4"], check=True, cwd=ROOT)
+    res = json.loads((out / "steps4" / "results.json").read_text())
+    assert res["steps_run"] == 4 and len(res["test_ts"]) == 4 and len(res["flops"]["cumulative"]) == 4
+    assert not (out / "results.json").exists()  # the normal evaluation output is not overwritten

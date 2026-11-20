@@ -358,7 +358,16 @@ class VCNet(nn.Module):
         return self.pack(areas) if self.packed else areas["ait"]
 
     def readout(self, state: torch.Tensor, t: int) -> torch.Tensor:
-        return self.head(self.head_norm(self.ait_of(state).mean((2, 3))) + self.step_out[t])
+        # steps past the trained length (evaluate.py --steps) reuse the last trained step embedding
+        e = self.step_out[min(t, self.step_out.shape[0] - 1)]
+        return self.head(self.head_norm(self.ait_of(state).mean((2, 3))) + e)
+
+    def extend_steps(self, t_max: int) -> None:
+        """Run the predictive-coding loop for ``t_max`` steps at inference, also past the length the
+        model was trained with (the weights are shared across steps; extra steps reuse the last step
+        embedding). Inference only: the stored config keeps the trained length in ``trained_t_max``."""
+        self.trained_t_max = self.step_out.shape[0]
+        self.cfg.t_max = t_max
 
     def features(self, state: torch.Tensor) -> dict[str, torch.Tensor]:
         """Per-step features for halting research: 'cls' = what the head reads (avg-pooled AIT),
