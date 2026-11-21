@@ -432,7 +432,10 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
     <div class="seg" role="group" aria-label="選擇模型" id="benchSel"></div>
     <div class="tbl"><table id="tblBench"></table></div>
     <p class="note">orig、adapt_carry、adapt_blt 為閒置 GPU 重量（3 個種子平均 ± 標準差；CUDA graph 為中位數）；adapt 為第 1 輪、adapt_lat 為第 2 輪（受干擾）。
-      標準差超過平均值 25%（或種子間差距超過中位數 25%）的格子以灰色虛線底線標出。</p>
+      標準差超過平均值 25%（或種子間差距超過中位數 25%）的格子以灰色虛線底線標出。
+      GFLOPs 為每張圖的計算量（含每步讀出）：固定 N 步為實測的累計值；停止策略列（標 ≈）是依平均步數估算：
+      0.161 + (平均步數 − 1) × 每步成本（adapt / carry / orig 0.113、lat 0.119、blt 0.122 GFLOPs），停止策略本身不到一步的 0.01%，忽略不計。
+      滑鼠移到估算值上可看式子與種子間的差異。</p>
   </div>
 
   <div class="sub">
@@ -699,18 +702,31 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
       c100_vcnet_adapt_carry: ["閒置 GPU", IDLE.c100_vcnet_adapt_carry], c100_vcnet_adapt_lat: ["第 2 輪，受干擾", LAT.bench.c100_vcnet_adapt_lat],
       c100_vcnet_adapt_blt: ["閒置 GPU", IDLE.c100_vcnet_adapt_blt]
     };
+    // GFLOPs per image: fixed N steps = cumulative FLOPs of the model (readout included);
+    // halting rows = interpolated at the mean step count: 0.161 + (mean steps - 1) x per-step cost
+    const gfArr = k => k === "c100_vcnet_adapt_lat" ? GF.lat : k === "c100_vcnet_adapt_blt" ? GF.blt : GF.base;
+    const gfAt = (arr, s) => {
+      const i = Math.min(Math.floor(s), arr.length) - 1, f = s - Math.floor(s);
+      return i >= arr.length - 1 ? arr[arr.length - 1] : arr[i] + (arr[i + 1] - arr[i]) * f;
+    };
+    const gfCell = (arr, r, kind) => {
+      const [s, sd] = r.steps, g = gfAt(arr, s);
+      if (kind === "fixed") return `<td class="n">${g.toFixed(3)}</td>`;
+      const step = arr[2] - arr[1], spread = sd * step;
+      return `<td class="n" title="估計：0.161 + (平均步數 − 1) × 每步 ${step.toFixed(3)} GFLOPs；種子間 ±${spread.toFixed(3)}">≈${g.toFixed(3)}</td>`;
+    };
     function render(k) {
       const [src, B] = SRCS[k], E = B.eager, C = B.compiled, G = B["cudagraph-bs1"], GT = B["cudagraph-bs1-triton"] || [];
       const byset = (rows, set) => rows.find(r => r.set === set);
-      let h = `<tr><th>設定（${src}）</th><th class="n">準確率 %</th><th class="n">平均步數</th><th class="n">batch 256 eager<br>張/秒</th><th class="n">batch 256 compiled<br>張/秒</th>` +
+      let h = `<tr><th>設定（${src}）</th><th class="n">準確率 %</th><th class="n">平均步數</th><th class="n">GFLOPs<br>每張圖</th><th class="n">batch 256 eager<br>張/秒</th><th class="n">batch 256 compiled<br>張/秒</th>` +
         `<th class="n">batch 1 eager<br>ms</th><th class="n">batch 1 compiled<br>ms</th><th class="n">batch 1 CUDA graph<br>ms</th><th class="n">CUDA graph<br>+Triton ms</th></tr>`;
       let lastKind = "";
       for (const r of E) {
         const kind = r.set.startsWith("t") ? "fixed" : "lam";
-        if (kind !== lastKind) { h += `<tr><td class="grp" colspan="9">${kind === "fixed" ? "固定步數" : "停止策略 S0-reward_acc（λ 越小，跑越多步）"}</td></tr>`; lastKind = kind; }
+        if (kind !== lastKind) { h += `<tr><td class="grp" colspan="10">${kind === "fixed" ? "固定步數" : "停止策略 S0-reward_acc（λ 越小，跑越多步）"}</td></tr>`; lastKind = kind; }
         const c = byset(C, r.set), g = byset(G, r.set), gt = byset(GT, r.set);
         const label = kind === "fixed" ? `固定 ${+r.set.slice(1) + 1} 步` : `λ = ${r.set.slice(3)}`;
-        h += `<tr><td>${label}</td>` + cell(r.acc, 2, "", true) + cell(r.steps, 2, "", true) + cell(r.img_s, 0) + cell(c && c.img_s, 0) +
+        h += `<tr><td>${label}</td>` + cell(r.acc, 2, "", true) + cell(r.steps, 2, "", true) + gfCell(gfArr(k), r, kind) + cell(r.img_s, 0) + cell(c && c.img_s, 0) +
           cell(r.bs1_ms, 3) + cell(c && c.bs1_ms, 3) + medCell(g) + medCell(kind === "lam" ? gt : null) + "</tr>";
       }
       tbl.innerHTML = h;
