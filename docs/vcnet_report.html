@@ -222,15 +222,21 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
       <div class="legend">
         <span><i style="border-color:var(--fg2)"></i>同一步內由下而上</span>
         <span><i class="dash" style="border-color:var(--fb)"></i>預測誤差回饋（每個變體都有）</span>
-        <span><i style="border-color:var(--state)"></i>每區帶著上一步的自己（lateral）</span>
+        <span><i style="border-color:var(--state)"></i>帶著上一步的自己（carry 只有 AIT；lat、blt 每一區）</span>
         <span><i style="border-color:var(--td)"></i>上一層在上一步的輸出（top-down）</span>
       </div>
       <div class="two">
         <div class="fig diagram unroll" data-unroll="loop"></div>
+        <div class="fig diagram unroll" data-unroll="carry"></div>
+      </div>
+      <div class="two">
+        <div class="fig diagram unroll" data-unroll="lat"></div>
         <div class="fig diagram unroll" data-unroll="blt"></div>
       </div>
-      <figcaption>圖 2　沿步數展開（每欄一步，每列一個腦區，只畫腹側流）。左：原本的迴圈（adapt），各區每步重算；
-        adapt_carry 只在 AIT 多一條橫向連線。右：blt，每區保留跨步狀態（藍），並接收上一層在上一步的輸出（紫）。lat 只有藍色連線。</figcaption>
+      <figcaption>圖 2　四個自適應變體沿步數展開（每欄一步，每列一個腦區，只畫腹側流；背側 MT、MST 做法相同）。
+        四者都有橘色的預測誤差回饋；差別只在步與步之間的連線。adapt：沒有其他連線，V2…AIT 每步重算。
+        adapt_carry：只有 AIT 帶著上一步的自己。adapt_lat：每一區都帶著上一步的自己。adapt_blt：再加上上一層在上一步的輸出（紫）。
+        有跨步連線的方框以藍色外框標出。</figcaption>
     </figure>
     <div class="tbl"><table>
       <tr><th>開關</th><th>做法</th><th>來源</th></tr>
@@ -252,6 +258,9 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
         <dt>adapt_lat</dt><dd>lat = lateral（側向 / 區內遞迴）。七個腦區都加上自己上一步的輸出，仿 CORnet-RT。</dd>
         <dt>adapt_blt</dt><dd>blt = Bottom-up、Lateral、Top-down。adapt_lat 再加上「上一層在上一步的輸出」往下傳，仿 BLT 網路。</dd>
       </dl>
+      <p><strong>「固定 N 步」</strong>：推論時不用停止策略，每張圖都跑 N 步（第 0 步到第 N−1 步），讀取第 N 步的答案。
+        自適應模型訓練時每一步都有讀出，所以可以在任何一步截斷；「固定 N 步」就是把它當成一般的 N 步模型用，作為停止策略的對照組。
+        與之相對，「停止策略」是每張圖各自決定跑幾步，表中列的是平均步數。</p>
     </div>
     <div class="tbl"><table>
       <tr><th>變體</th><th>實驗名稱</th><th class="n">步數</th><th>讀出 / 損失</th><th class="n">參數</th><th class="n">每步 GFLOPs</th></tr>
@@ -325,6 +334,9 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
       <tr class="hl"><td>adapt_blt + 停止策略（λ=0.01）</td><td class="n">2.41</td><td class="n">0.333</td><td class="n">121%</td><td class="n">68.34±0.55</td><td class="n">+3.79</td></tr>
       <tr><td>adapt_blt，固定 4 步（最佳固定步數）</td><td class="n">4</td><td class="n">0.528</td><td class="n">192%</td><td class="n">68.68±0.58</td><td class="n">+4.13</td></tr>
     </table></div>
+    <p class="note"><strong>原始 VCNet 與 adapt 固定 2 步</strong>：兩者架構、權重形狀與推論計算完全相同（由下而上一次 + 預測編碼修正一次，0.275 GFLOPs），差別只在訓練：
+      原始只訓練 2 步、只在最後一步讀出、只用 CE；adapt 訓練 8 步、每一步都讀出、用 Stage A 損失（CE + Brier + Gatekeeper + 自我蒸餾）。
+      「adapt 固定 2 步」是把訓練好的 adapt 在第 2 步截斷，用來在相同計算量下與原始模型比較：64.91% vs 64.55%，差距小於種子間標準差。</p>
     <p class="note">停止策略的 GFLOPs = 0.161 + (平均步數 − 1) × 每步成本；準確率取自 benchmark 的 eager 模式（全測試集）。
       第 1 輪的差距（+0.16 到 +0.75）小於種子間標準差，需逐種子比較才能確定；第 2 輪的 +2.7 以上遠大於標準差。</p>
   </div>
@@ -562,6 +574,10 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
   })();
 
   // ---------------------------------------------------------------- figure 2: unrolled steps
+  const TITLES = { loop: "adapt：只有預測誤差回饋", carry: "adapt_carry：AIT 帶著上一步", lat: "adapt_lat：每區帶著上一步",
+                  blt: "adapt_blt：每區帶著上一步 + 由上而下" };
+  // rows that carry their own previous state, and whether top-down connections exist
+  const hasState = (mode, nm) => mode === "lat" || mode === "blt" || (mode === "carry" && nm === "AIT");
   function unroll(mode, uid) {
     const W = 84, H = 26, cols = [92, 232, 372], rows = [["AIT", 70], ["CIT", 116], ["PIT", 162], ["V4", 208], ["V2", 254]];
     const zY = 300, v1Y = 336, sub = ["₀", "₁", "₂"];
@@ -570,11 +586,11 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
     const ln = (x1, y1, x2, y2, c, m, w) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" style="stroke:var(${c})" stroke-width="${w || 1.3}" marker-end="url(#${uid}-${m})"/>`;
     s += `<rect x="40" y="${v1Y}" width="384" height="24" rx="6" style="fill:var(--bg);stroke:var(--line)"/>`;
     s += `<text x="232" y="${v1Y + 16}" text-anchor="middle" style="fill:var(--fg2);font:500 11.5px var(--font-body)">V1：每張圖只算一次</text>`;
-    s += `<text x="232" y="14" text-anchor="middle" style="fill:var(--fg);font:700 12.5px var(--font-body)">${mode === "loop" ? "原本的迴圈（adapt）" : "blt：跨步狀態 + 由上而下"}</text>`;
+    s += `<text x="232" y="14" text-anchor="middle" style="fill:var(--fg);font:700 12.5px var(--font-body)">${TITLES[mode]}</text>`;
     cols.forEach((cx, t) => {
       s += `<text x="${cx}" y="34" text-anchor="middle" style="fill:var(--fg2);font:11.5px var(--font-body)">第 ${t} 步</text>`;
       rows.forEach(([nm, y], i) => {
-        s += `<rect x="${cx - W / 2}" y="${y - H / 2}" width="${W}" height="${H}" rx="5" style="fill:var(--surface);stroke:${mode === "blt" && t > 0 ? "var(--state)" : "var(--line)"}"/>`;
+        s += `<rect x="${cx - W / 2}" y="${y - H / 2}" width="${W}" height="${H}" rx="5" style="fill:var(--surface);stroke:${hasState(mode, nm) && t > 0 ? "var(--state)" : "var(--line)"}"/>`;
         s += `<text x="${cx}" y="${y + 4.5}" text-anchor="middle" style="fill:var(--fg);font:500 12px var(--font-body)">${nm}${sub[t]}</text>`;
         const below = i + 1 < rows.length ? rows[i + 1][1] : zY;
         s += ln(cx, below - H / 2, cx, y + H / 2 + 2, "--fg2", "g");
@@ -583,13 +599,11 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
       s += `<text x="${cx}" y="${zY + 4.5}" text-anchor="middle" style="fill:var(--fg);font:11px var(--font-mono)">${t === 0 ? "z₀=V1" : "V1+Wε"}</text>`;
       s += ln(cx, v1Y, cx, zY + H / 2 + 2, "--fg2", "g");
     });
-    if (mode === "blt") {
-      for (let k = 0; k + 1 < cols.length; k++) {
-        rows.forEach(([, y], i) => {
-          s += ln(cols[k] + W / 2 + 1, y - 4, cols[k + 1] - W / 2 - 3, y - 4, "--state", "s", 2);
-          if (i > 0) s += ln(cols[k] + W / 2 + 1, rows[i - 1][1] + 6, cols[k + 1] - W / 2 - 3, y - 9, "--td", "t", 1.6);
-        });
-      }
+    for (let k = 0; k + 1 < cols.length; k++) {
+      rows.forEach(([nm, y], i) => {
+        if (hasState(mode, nm)) s += ln(cols[k] + W / 2 + 1, y - 4, cols[k + 1] - W / 2 - 3, y - 4, "--state", "s", 2);
+        if (mode === "blt" && i > 0) s += ln(cols[k] + W / 2 + 1, rows[i - 1][1] + 6, cols[k + 1] - W / 2 - 3, y - 9, "--td", "t", 1.6);
+      });
     }
     for (let k = 0; k + 1 < cols.length; k++) {
       const x1 = cols[k] + W / 2, y1 = rows[0][1] + 8, x2 = cols[k + 1] - W / 2 - 3, y2 = zY + 4;
