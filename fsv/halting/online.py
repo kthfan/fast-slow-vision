@@ -12,7 +12,14 @@ how much that costs.
 With ``compile=True`` the per-step model call and the per-step
 feature + policy computation are wrapped in ``torch.compile`` (dynamic shapes),
 which fuses the many small kernels; the fixed-depth baseline uses the same
-compiled model step, so the comparison stays fair.
+compiled model step, so the comparison stays fair. With ``fused=True`` the
+features + policy of a step are ONE Triton kernel (``fused.py``).
+
+Tried and removed in 0.12.0 (measurements in README): a pipelined runner (CPU
+launches steps ahead and polls the results; slower, queued speculative steps
+cannot be cancelled), several batches in flight round robin (no gain: the
+batch-256 runner is bound by kernel launches), and torch.compile of the
+feature + policy step inside CUDA graphs (superseded by the Triton kernel).
 """
 
 from __future__ import annotations
@@ -51,7 +58,7 @@ def online_s0(p: torch.Tensor, logp: torch.Tensor, prev_logp, prev_pred, run, t:
 
 class AdaptiveRunner:
     def __init__(self, model, policy: HaltMLP, temps: torch.Tensor, device, amp: str = "none",
-                 compile: bool = False):
+                 compile: bool = False, fused: bool = False):
         # policy=None: only run_fixed is usable (fixed-depth timing of a model without a halting policy)
         self.model, self.policy = model.eval(), (policy.eval() if policy is not None else None)
         self.temps = temps.float().to(device)
@@ -71,6 +78,10 @@ class AdaptiveRunner:
             self._decide = torch.compile(self._decide_impl, dynamic=True)
         else:
             self._step, self._decide = self._step_impl, self._decide_impl
+        if fused and self.policy is not None:  # features + policy in ONE Triton kernel per step (fused.py)
+            from .fused import FusedDecide
+
+            self._decide = FusedDecide(self.policy, self.temps, self.T)
 
     # ------------------------------------------------------------------ pieces
     def _step_impl(self, tok, x0, t: int):
@@ -248,14 +259,22 @@ class CudaGraphBS1:
     * fixed depth t: the whole forward pass (embed + steps 0..t) is ONE graph;
     * O1 policy: one graph per step (model step + features + policy), then one host read of
       the stop flag per step;
+    * ``fused=True``: the features + policy of every O1 step are one Triton kernel;
     * O3 policy: one graph for steps 0..k and the depth decision, one host read of the
       chosen depth s, then one graph that runs steps k+1..s.
     All inputs and outputs live in static buffers. On a CPU device nothing is captured and
     the same functions are called directly, which is how the logic is tested.
     """
 
-    def __init__(self, model, temps: torch.Tensor, device, amp: str = "none", policy=None, o3_policy=None):
+    def __init__(self, model, temps: torch.Tensor, device, amp: str = "none", policy=None, o3_policy=None,
+                 fused: bool = False):
         cfg = model.cfg
+        # optional: features + policy (and the state update) as ONE Triton kernel per step
+        self.fd = None
+        if fused and policy is not None:
+            from .fused import FusedDecide
+
+            self.fd = FusedDecide(policy.eval(), temps, cfg.t_max)
         self.model, self.device, self.amp, self.T = model.eval(), device, amp, cfg.t_max
         self.temps = temps.float().to(device)
         self.policy = policy.eval() if policy is not None else None
@@ -311,16 +330,25 @@ class CudaGraphBS1:
         if self.tok.shape == x0.shape:  # ViT: step 0 reads the embedding from tok; VCNet reads x0
             self.tok.copy_(x0)
 
+    def _decide_core(self, z, prev_logp, prev_pred, run, lam, t: int):
+        p, logp = self._probs(z, t)
+        prev = (prev_logp, prev_pred, run) if t > 0 else (None, None, None)
+        feats, pred, run = online_s0(p, logp, *prev, t, self.T)
+        stop = self.policy(feats[None], lam if self.policy.use_lambda else None)[0] > 0
+        return stop, pred, logp, run
+
     def _step_fn(self, t: int):
         tok, z = self._model_step(self.tok, self.x0, t)
         self.tok.copy_(tok)
         if t == self.T - 1:
             self.pred.copy_(z.argmax(-1))
             return
-        p, logp = self._probs(z, t)
-        prev = (self.prev_logp, self.prev_pred, self.run_) if t > 0 else (None, None, None)
-        feats, pred, run = online_s0(p, logp, *prev, t, self.T)
-        stop = self.policy(feats[None], self.lam if self.policy.use_lambda else None)[0] > 0
+        if self.fd is not None:  # one kernel updates every state buffer in place
+            self.fd(z, self.prev_logp, self.prev_pred, self.run_, self.lam, t,
+                    out={"stop": self.stop, "pred": self.prev_pred, "pred2": self.pred, "logp": self.prev_logp,
+                         "run": self.run_})
+            return
+        stop, pred, logp, run = self._decide_core(z, self.prev_logp, self.prev_pred, self.run_, self.lam, t)
         self.prev_logp.copy_(logp)
         self.prev_pred.copy_(pred)
         self.run_.copy_(run)
@@ -370,6 +398,20 @@ class CudaGraphBS1:
             if t < self.T - 1 and bool(self.stop.item()):  # one host read per step
                 return self.pred.clone(), t
         return self.pred.clone(), self.T - 1
+
+    @torch.no_grad()
+    def run_known_depth(self, x: torch.Tensor, s: int, lam: float | None = None) -> torch.Tensor:
+        """Timing bound, not an inference method: replay the O1 step graphs (policy included) for
+        steps 0..s without reading anything back, as if the stop step s were known in advance.
+        The time of ``run`` minus this is what host synchronisation costs; no scheme that keeps
+        the policy on the GPU (pipelining, conditional graph nodes) can be faster than this."""
+        self.x.copy_(x)
+        if lam is not None:
+            self.lam.fill_(float(lam))
+        self.g_embed()
+        for t in range(s + 1):
+            self.g_step[t]()
+        return self.pred.clone()
 
     @torch.no_grad()
     def run_o3(self, x: torch.Tensor, lam: float) -> tuple[torch.Tensor, int]:

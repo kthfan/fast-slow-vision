@@ -16,6 +16,10 @@ CUDA-graph modes ("cudagraph-bs1", "o3k1-cudagraph-bs1"; skip with --no-cudagrap
 with every per-step computation captured as a graph: fixed depth = one graph for the whole
 forward pass, O1 = one graph per step + one host read of the stop flag, O3 = two graphs +
 one host read. They report latency only (accuracy is taken from the eager modes).
+"eager-triton" / "cudagraph-bs1-triton" compute each step's features + policy in ONE Triton kernel
+(fsv/halting/fused.py; GPU only).
+Slot-pool modes ("slots", "slots-triton"; --slots) keep --slots images in flight, each at its own step,
+and run one CUDA graph per tick over the whole test set (throughput only; fsv/halting/slots.py).
 O3 modes ("o3k0-eager", "o3k1-compiled", ...) time step predictors that decide every
 image's depth once after step k (one host sync per batch); they need the O3 policy
 files written by ``halting_study.py --o3-ks``.
@@ -62,6 +66,8 @@ def parse_args(argv=None):
     p.add_argument("--no-compile", dest="compile", action="store_false",
                    help="skip the torch.compile variant (measured by default; eager is always measured)")
     p.add_argument("--naive", action="store_true", help="also time the first runner (several syncs per step)")
+    p.add_argument("--slots", type=int, default=256,
+                   help="slot-pool modes (\"slots\", \"slots-triton\"): images in flight; 0 skips them")
     p.add_argument("--no-cudagraph", dest="cudagraph", action="store_false",
                    help="skip the batch-1 CUDA-graph modes (measured by default)")
     p.add_argument("--o3-policies", nargs="*", default=["S0-o3k0-reward_acc", "S0-o3k1-reward_acc"],
@@ -114,6 +120,16 @@ def measure_cudagraph(res, model, policy, pc, o3_loaded, device, amp, T, X, n1, 
 
     res["modes"]["cudagraph-bs1"] = {"fixed": fixed, "adaptive": adaptive_rows(
         cg.run, res["modes"]["eager"]["adaptive"], eager, lams)}
+    from fsv.halting.fused import triton_usable
+
+    if policy is not None and triton_usable(device):  # features + policy as ONE Triton kernel in each step graph
+        try:
+            cgt = CudaGraphBS1(model, pc["temperatures"], device, amp, policy=policy, fused=True)
+            res["modes"]["cudagraph-bs1-triton"] = {"fixed": fixed, "adaptive": adaptive_rows(
+                cgt.run, res["modes"]["eager"]["adaptive"], eager, lams)}
+        except Exception as e:
+            res["cudagraph_triton_error"] = repr(e)[:500]
+            print(f"[benchmark] cudagraph-bs1-triton failed, skipped: {res['cudagraph_triton_error']}")
     for tag, (sp, oc) in o3_loaded.items():
         cg3 = CudaGraphBS1(model, oc["temperatures"], device, amp, o3_policy=sp)
         cg3.g_fixed = cg.g_fixed  # same fixed-depth graphs
@@ -179,7 +195,7 @@ def main(argv=None):
                     acc = float((torch.cat(out) == Y).float().mean())
                     sec1, _ = timed(single(lambda xb, t=t: runner.run_fixed(xb, t)), max(1, args.repeats // 2), sync)
                     fixed = (fixed or []) + [{"step": t, "acc": acc, "img_per_s": N / sec, "bs1_ms": sec1 / n1 * 1e3}]
-                fn = runner.run if method == "o3" else getattr(runner, method)
+                fn = method if callable(method) else runner.run if method == "o3" else getattr(runner, method)
                 for lam in (lams if method != "o3" else args.lams):
                     sec, out = timed(batched(lambda xb: fn(xb, lam)), args.repeats, sync)
                     pred = torch.cat([o[0] for o in out])
@@ -193,11 +209,41 @@ def main(argv=None):
                                      "steps_hist": torch.bincount(steps.long(), minlength=T).tolist()})
                 return {"fixed": fixed, "adaptive": adaptive}
 
-            res = {"run": run, "policy": args.policy if policy is not None else None, "amp": amp, "batch_size": bs, "bs1_images": n1,
+            res = {"run": run, "policy": args.policy if policy is not None else None, "amp": amp, "batch_size": bs,
+                   "bs1_images": n1,
                    "code_version": code_info()["code_version"],
                    "device": torch.cuda.get_device_name() if device.type == "cuda" else "cpu", "modes": {}}
             eager = AdaptiveRunner(model, policy, pc["temperatures"], device, amp)
             res["modes"]["eager"] = measure(eager, "run")
+            from fsv.halting.fused import triton_usable
+
+            if policy is not None and triton_usable(device):  # features + policy as ONE Triton kernel per step
+                try:
+                    tri = AdaptiveRunner(model, policy, pc["temperatures"], device, amp, fused=True)
+                    res["modes"]["eager-triton"] = measure(tri, "run", fixed=res["modes"]["eager"]["fixed"])
+                except Exception as e:
+                    res["triton_error"] = repr(e)[:500]
+                    print(f"[benchmark] eager-triton failed, skipped: {res['triton_error']}")
+            from fsv.halting.slots import SlotPoolRunner, supports_slots
+
+            if args.slots and policy is not None and supports_slots(model):  # slot pool: one CUDA graph per tick
+                variants = [("slots", False)] + ([("slots-triton", True)] if triton_usable(device) else [])
+                for tag, fz in variants:
+                    try:
+                        sp = SlotPoolRunner(model, policy, pc["temperatures"], device, amp, slots=args.slots,
+                                            fused=fz)
+                        rows = []
+                        for lam in lams:
+                            sec, (pred, steps) = timed(lambda: sp.run(X, lam), args.repeats, sync)
+                            rows.append({"lam": lam, "acc": float((pred == Y).float().mean()),
+                                         "mean_steps": float(steps.float().mean()) + 1, "img_per_s": N / sec,
+                                         "bs1_ms": None, "ticks": sp.last_ticks, "occupancy": sp.occupancy(steps),
+                                         "steps_hist": torch.bincount(steps, minlength=T).tolist()})
+                        res["modes"][tag] = {"fixed": res["modes"]["eager"]["fixed"], "adaptive": rows,
+                                             "slots": args.slots}
+                    except Exception as e:
+                        res[f"{tag}_error"] = repr(e)[:500]
+                        print(f"[benchmark] {tag} failed, skipped: {res[f'{tag}_error']}")
             if args.naive:  # the first runner: boolean-mask indexing, several host syncs per step
                 res["modes"]["eager-naive"] = measure(eager, "run_naive")
             compiled = None
@@ -243,10 +289,10 @@ def main(argv=None):
                 print(f"  [{mode}] setting   acc %   steps   img/s (bs {bs})   bs1 ms")
                 for r in m["fixed"]:
                     print(f"  fixed t={r['step']}      {r['acc'] * 100:6.2f}  {r['step'] + 1:6.2f}  "
-                          f"{(r['img_per_s'] or float('nan')):14.0f}  {r['bs1_ms']:7.3f}")
+                          f"{(r['img_per_s'] or float('nan')):14.0f}  {(r['bs1_ms'] or float('nan')):7.3f}")
                 for r in m["adaptive"]:
                     print(f"  lam={r['lam']!s:<10}  {r['acc'] * 100:6.2f}  {r['mean_steps']:6.2f}  "
-                          f"{(r['img_per_s'] or float('nan')):14.0f}  {r['bs1_ms']:7.3f}")
+                          f"{(r['img_per_s'] or float('nan')):14.0f}  {(r['bs1_ms'] or float('nan')):7.3f}")
 
 
 if __name__ == "__main__":

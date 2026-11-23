@@ -384,6 +384,221 @@ benchmark 預設量測（`cudagraph-bs1`、`o3k*-cudagraph-bs1`；`--no-cudagrap
 - 結論：在 32×32 輸入、單步 < 1 GFLOPs 的設定下，H100 上無法把 FLOPs 節省轉成實際加速；
   實際延遲的主張需要每步計算量更大的設定（224×224 輸入、更寬的模型）或受計算量限制的硬體（CPU / 邊緣裝置）。
 
+### CPU 與 GPU 迴圈並行（0.9.0）
+
+> T4 量測（`results/t4_*`）只保留圖；原始 JSON 與 log 已移除以縮小 repo，數字以本 README 的表格為準。H100 的原始輸出在 `results/round10_h100/`。
+
+
+> 版本說明：本節到「槽位池補位改進」的 0.9.0–0.13.1 是 `claude/admiring-franklin-6zlsn0` 分支上的編號，與 VCNet 的 0.9.0–0.10.1 平行發展；rebase 到 main 後合併為 0.14.0。
+
+> **0.12.0 起已移除這部分程式碼**（量測結果保留於此與 `results/`）：`run_pipelined`、benchmark 的 `*-pipelined` 模式與 `compile_decide`（`cudagraph-bs1-fused`）；後者已由 Triton 融合 kernel 取代。`bench_sync.py` 的不同步下限（`run_known_depth`）保留。
+
+
+想法：GPU 一路往下跑、不等 CPU；CPU 只在旁邊輪詢結果，決定停止後才停掉 GPU 迴圈。實作：
+
+- `AdaptiveRunner.run_pipelined(x, lam, lookahead)`（batch）與 `CudaGraphBS1.run_pipelined`（batch 1，CUDA graphs）：
+  GPU 每步把「仍在跑的影像數 / 停止旗標」非同步複製到 pinned 記憶體並記錄 event；CPU 用不阻塞的 `event.query()` 讀已到達的結果，
+  只有在超前最後一個已知結果 `lookahead` 步時才等待。停止決策在 GPU 上鎖存（latch），所以多跑的步不會改變答案；
+  batch 版的壓縮（compaction）延後 `lookahead` 步。`lookahead=0` 等同原本每步同步一次。決策與同步版逐位元相同（有測試，含 GPU）。
+- benchmark 新模式：`eager-pipelined`、`compiled-pipelined`、`cudagraph-bs1-pipelined`（`--lookahead`，預設 1；`--no-pipelined` 關閉），
+  以及 `cudagraph-bs1-fused`（每步的特徵 + 策略 kernel 用 `torch.compile` 融合後錄進同一張 graph）。
+- `scripts/bench_sync.py`：不需 checkpoint 的合成測試（隨機權重、隨機策略，平均步數調到約 3.5），並量測
+  「**已知停止步、完全不讀回**」的下限：同步版減掉它，就是同步本身的成本；任何把策略留在 GPU 上的作法
+  （pipelining、CUDA graph 條件節點的 GPU 端 while 迴圈）都不可能比這個下限更快。
+
+Kaggle T4、torch 2.6.0+cu124（batch 1 CUDA graphs，ms/張）：
+
+| 骨幹 | 固定 t=3（4 步） | O1 每步同步 | O1 pipelined L=1 | L=2 | 不同步下限 | 融合 + 同步 | 融合下限 |
+|---|---|---|---|---|---|---|---|
+| bViT-S（平均 3.52 步） | 0.622 | 0.988 | 1.126 | 1.296 | 0.917 | **0.822** | 0.752 |
+| bViT-B（平均 3.34 步） | 1.522 | 1.720 | 2.122 | 2.572 | 1.616 | **1.545** | 1.457 |
+
+batch 256（eager）：bViT-S 11,989 → 10,439 img/s（L=1），bViT-B 3,720 → 3,120 img/s。
+
+- **同步本身只佔一小部分**：同步版比不同步下限只慢 0.07–0.10 ms（約 7%）。O1 比固定深度慢，主因是每步約 40 個小的特徵 + 策略 kernel
+  （batch 1 每步約 0.1 ms，與一個遞迴步同量級），不是 CPU–GPU 往返。
+- **pipelining 反而更慢**：CUDA stream 無法取消已排入的 kernel，CPU 看到「停」時，已超前排入的 `lookahead` 步仍會跑完，
+  而且排在下一張圖前面；多算一步（0.15–0.4 ms）遠大於省下的同步（每步約 0.02 ms）。batch 256 時壓縮延後也讓已停的影像多算。
+- 要真正「GPU 自己迴圈、停了就不再算」需要 CUDA graph 條件節點（while / if node）；torch 2.6 沒有這個 API，
+  而且它的極限就是上表的「不同步下限」，在 T4 上只比現在快約 7%。
+- **有效的方向是把策略變便宜**：`compile_decide=True` 融合特徵 + 策略後，bViT-S 0.988 → 0.822 ms、bViT-B 1.720 → 1.545 ms，
+  效果比去掉同步還大。H100 的單步更快、同步佔比可能較高，數字需在 H100 上用 `bench_sync.py` / benchmark 的新模式確認。
+
+### O1 與固定深度的逐部分耗時（0.9.0，`scripts/profile_breakdown.py`）
+
+把兩種方法拆成相同的部分（embed、model_step、readout、features、policy、record、sync、compaction），
+每部分量 CPU 時間（不開 profiler）、GPU kernel 時間（torch.profiler）、kernel 數；CUDA graph 模式把每部分各錄成一張 graph，
+以 event 計時。Kaggle T4、torch 2.6.0+cu124、隨機權重（平均約 3.5 步）。
+與「固定 4 步」比較，O1 多出的時間（µs/張；batch 256 為 µs/batch）：
+
+| 設定 | O1 牆鐘 | 固定 4 步 | 差 | 少算的遞迴步 | features + policy + record | 同步 / GPU 閒置 |
+|---|---|---|---|---|---|---|
+| bViT-S，batch 1，CUDA graph | 1,085 | 625 | +460 | −43（GPU） | **+296（GPU）** | +187 |
+| bViT-B，batch 1，CUDA graph | 1,759 | 1,527 | +232 | −244（GPU） | **+296（GPU）** | +200 |
+| bViT-S，batch 1，eager | 7,746 | 4,461 | +3,285 | −420（CPU） | **+3,259（CPU 發送）** | +326（sync） |
+| bViT-S，batch 256，eager | 20,654 | 22,279 | −1,625 | −7,560（GPU，壓縮） | +950（GPU） | **+3,900 GPU 閒置** |
+
+- **CUDA graph，batch 1**：每步 graph 245 µs = 模型步 152 + 特徵 63 + 策略 28；特徵 + 策略的 GPU 時間（約 90 µs/步）是最大的額外成本，
+  同步造成的 GPU 閒置約 50 µs/步（每張 190–200 µs）。
+- **eager，batch 1**：完全受 CPU 發送限制（GPU 閒置 70–78%）。O1 每張多發 ~125 個小 kernel（features 78、policy 23、record 24），
+  每個約 10–20 µs 的 CPU 時間；sync 本身只有 326 µs（4%）。
+- **eager，batch 256**：O1 靠壓縮少算 7.6 ms 的模型步，比固定 4 步快 7%；但比固定 3 步（16,801）慢 3.9 ms，差距幾乎全是 GPU 閒置：
+  每步同步後 GPU 要等 CPU 重新發送，而後段步驟只剩少數影像，GPU 工作量小於 CPU 發送時間。bViT-B 的閒置只佔 4%。
+  （bViT-B 固定深度的 profiler GPU 時間比牆鐘大 9–15%，是 T4 降頻造成的量測誤差。）
+
+### 特徵 + 策略融合成單一 kernel（0.10.0，`fsv/halting/fused.py`）
+
+O1 每步的特徵與策略原本約 40 個小 kernel（softmax、log、top-5、熵、KL、cat、正規化、兩層 Linear、GELU、比較、狀態複製）。
+`FusedDecide` 用一個 Triton kernel、每張影像一個 program 完成：校準機率 → S0 特徵 → 策略 MLP → 寫回 stop / pred / logp / run。
+輸出可以與輸入共用記憶體，所以 CUDA graph 的狀態緩衝區直接原地更新。用法：`AdaptiveRunner(..., fused=True)`、`CudaGraphBS1(..., fused=True)`；
+benchmark 模式 `eager-triton`、`cudagraph-bs1-triton`。測試：在 Triton CPU 直譯器（`TRITON_INTERPRET=1`）上與 PyTorch 逐項相同；
+T4 上所有計時影像的決策 100% 一致。
+
+Kaggle T4、torch 2.6.0+cu124、隨機權重（圖在 `results/t4_fused/plots/`）：
+
+| | 每步特徵 + 策略的 GPU 時間 | O1 每步 graph | bViT-S bs1 graph | bViT-B bs1 graph | bViT-S bs1 eager | bViT-B bs1 eager |
+|---|---|---|---|---|---|---|
+| 原本 | 63 + 28 = 91 µs（約 40 個 kernel） | 246 µs | 1,072 µs | 1,752 µs | 7,537 µs | 7,262 µs |
+| 融合 | **22 µs**（1 個 kernel） | **160 µs** | **784 µs** | **1,456 µs** | **5,478 µs** | **5,193 µs** |
+| 固定 4 步 | — | 155 µs（只有模型步） | 620 µs | 1,527 µs | 4,133 µs | 4,152 µs |
+
+（O1 平均 bViT-S 3.69 步、bViT-B 3.31 步；三次 T4 執行的數字相差 < 3%。）
+
+- 融合後每步 graph 只比純模型步多約 5 µs；batch 1 CUDA graph 下 O1 快 17–27%，bViT-B 已比固定 4 步快約 5%。
+- eager batch 1 快 27–28%：每張圖少發約 75 個 kernel。
+- batch 256 不變（±4%，在 T4 降頻的量測誤差內）：那裡的瓶頸是同步後的 GPU 閒置，不是這些 kernel。
+- 時間圖：`python scripts/profile_breakdown.py --out X.json` 後 `python scripts/plot_timeline.py X.json`，
+  畫出單次呼叫的 CPU / GPU 時間線（每個 kernel 依發出它的部分著色）與每部分耗時長條圖。
+
+### 兩個 batch 交錯執行（0.11.0，`AdaptiveRunner.run_interleaved`）
+
+> **0.12.0 起已移除這部分程式碼**（量測結果保留於此與 `results/`）：`run_interleaved`、`*-interleaved*` 模式與 `profile_breakdown.py` 的兩個 batch 時間線。下一步改為固定槽位池。
+
+
+k 個 batch 同時在途、輪流推進：CPU 等 A 的第 t 步結果時，GPU 執行已排入的 B 的 kernel；有 batch 完成就補下一個。
+停止數量改用非同步讀回（pinned 記憶體 + event），不用 `nonzero`（它會等佇列裡所有工作，包含另一個 batch 的）。
+沒有推測性的多算，結果與 `run` 逐位元相同（有測試）。benchmark 模式 `eager-interleaved2`、`triton-interleaved2`（`--inflight`）。
+
+Kaggle T4、batch 256、隨機權重（每 batch，不開 profiler 的 CPU 時間；圖在 `results/t4_interleaved/plots/`）：
+
+| 骨幹 / 方法 | 實際耗時 | CPU 發送 kernel | CPU 等同步 | GPU 閒置 | kernel 數 |
+|---|---|---|---|---|---|
+| bViT-S 固定 4 步 | 22.25 ms | 9.87 | 0 | 0% | 118 |
+| bViT-S O1 | 21.32 ms | 12.51 | 7.94 | 20% | 536 |
+| bViT-S O1，2 個在途 | 21.80 ms | **17.99** | **2.51** | 19% | 571 |
+| bViT-S O1 融合，2 個在途 | **20.77 ms** | 13.06 | 6.51 | 7% | 359 |
+| bViT-B O1 | 55.86 ms | 13.31 | 41.67 | 5% | 446 |
+| bViT-B O1，2 個在途 | 54.22 ms | 14.85 | 38.65 | 1% | 476 |
+| bViT-B O1 融合，2 個在途 | **53.70 ms** | 10.77 | 42.13 | 0% | 295 |
+
+- 交錯本身有效：bViT-S 的同步等待從 7.9 降到 2.5 ms，bViT-B 的 GPU 閒置從 5% 降到 1%；3 個在途與 2 個相同。
+- 但實際耗時幾乎不變（bViT-B −3%、bViT-S ±2%，都在 T4 約 ±5% 的量測誤差內）。
+- 原因（bViT-S）：瓶頸是 CPU 發送 kernel，不是同步。CPU 不再等待後，省下的時間全花在變慢的發送上
+  （GPU 忙碌時每次發送更慢：12.5 → 18.0 ms），CPU 總時間（發送 + 等待）兩種做法都約 20.5 ms，GPU 仍在等 CPU。
+  時間圖 `timeline_bvit_s_eager-bs256x2.png` 可見 CPU 線全程忙碌。兩個 batch 同步前進，後段步驟同時只剩少數影像，交錯無法用前段的大工作量填補。
+- 要再進一步，必須減少發送次數：融合 kernel（536 → 359 個）已把閒置降到 7%；下一步是 CUDA graph（依大小分級）或固定槽位池，讓每步只發送一次。
+
+### 固定大小的槽位池（0.13.0，`fsv/halting/slots.py`）
+
+`SlotPoolRunner`：S 個槽位同時在途，每個槽位各自在自己的步數；每個 tick 依序做補位（空槽位從 GPU 上的佇列取下一張圖，
+裝置端指標，不經 CPU）→ 所有槽位走一步 → 停止決策（第 T−1 步強制停止）→ 記錄已停止者並釋放槽位。形狀固定，整個 tick 是一張
+CUDA graph；CPU 只重播 graph，並晚一個 tick 非同步讀「已完成張數」。模型改動：`forward_step` / `readout` 接受每列的步數 tensor
+（只支援 `n_blocks == 1`，權重跨步共用）；融合 kernel 新增每列模式。測試：與 `AdaptiveRunner.run` 的預測與停止步數逐位元相同（CPU、
+Triton 直譯器），GPU 上 100% 一致。benchmark 模式 `slots`、`slots-triton`（`--slots`）。
+
+Kaggle T4、隨機權重、10,240 張圖（吞吐量 img/s）：
+
+| | bViT-S | bViT-B |
+|---|---|---|
+| 固定 4 步（batch 256） | 11,519 | 3,116 |
+| O1（壓縮，每步同步） | **11,715** | **3,778** |
+| 槽位池 S=256（補位上限 R=256） | 8,391 | 3,016 |
+| 槽位池 S=256，R=128 | 9,218 | 3,285 |
+| 槽位池 S=512，R=128，融合 | 7,711 | 2,934 |
+
+- 目標本身達成：GPU 閒置約 0%，槽位使用率 96%（剩下 4% 是佇列用完後的收尾），決策 100% 一致。
+- 但吞吐量比現在的 O1 低 20–28%：一個 tick（256 槽位走一步）在 bViT-S 要 8.4 ms，而 batch 256 的一個模型步約 5.3 ms，
+  每個 tick 多約 3 ms 的 GPU 工作。R=128 少約 0.8 ms，表示補位（每 tick embed R 張圖、搬移 token 緩衝區）是主要來源之一；
+  S=512 更慢（tick 時間超過線性成長）。
+- 逐 kernel 剖析（bViT-S，S=256）：一個 tick 的 GPU 時間中，模型步本身約 4.3 ms，
+  補位與記錄約 2.6 ms（R=256）/ 1.5 ms（R=128），其他約 0.3 ms。補位的成本來自：tok 與 x0 兩份 [256, 65, 384] fp32 緩衝區
+  的 gather（indexSelect，0.53 ms）→ `where`（約 0.6 ms）→ scatter 回去（index_copy，0.46 ms）、每 tick 整份複製 tok（DtoD，0.23 ms）、
+  以及對 R 張圖做 embed（約 0.7 ms，R=128 時減半）。停止決策與記錄本身很小。
+- 可行的改進：補位上限依平均停止率設定（約 1.5 × S / 平均步數）、不使用 input injection 時不保存 `x0`、
+  token 緩衝區雙緩衝以省去每 tick 的整份複製。
+
+#### 槽位池補位改進（0.13.1）
+
+依剖析結果做了三項改動（決策不變，CPU 上仍與 `AdaptiveRunner.run` 逐位元相同）：補位只對真正補位的列做一次 scatter
+（token 緩衝區多一列當作未補位候選的落點，取代 gather → where → scatter）；沒有 input injection 時不保存 `x0`；
+`Block` / `forward_step` 新增 `out=`，模型步把結果原地寫回 token 緩衝區，省去每 tick 一次整份複製。補位上限預設改為 S/2。
+
+一個 tick 中模型步以外的 GPU 時間（bViT-S，S=256）：補位上限 256 時 2.89 → 1.53 ms，128 時 1.80 → 0.99 ms
+。吞吐量（img/s，10,240 張；同一次執行內比較）：
+
+| | bViT-S | bViT-B |
+|---|---|---|
+| 固定 4 步 | 12,216 | 3,342 |
+| O1（壓縮，每步同步） | 12,181 | 3,930 |
+| 槽位池 S=256（0.13.0，R=128） | 9,218 | 3,285 |
+| **槽位池 S=256（0.13.1，預設 R=128）** | **11,717**（融合 11,787） | **3,664** |
+| 槽位池 S=512 | 10,442 | 3,533 |
+
+- 三項改進讓槽位池快了 27%（bViT-S）與 11%（bViT-B），GPU 閒置維持約 0%、使用率 95.5%，決策 100% 一致。
+- 但在 T4 上仍比壓縮式 O1 慢 3–7%：O1 的損失是 GPU 閒置（bViT-S 約 19%），槽位池的損失是每 tick 約 1 ms 的額外工作
+  （約 17%）加上收尾 4.5% 的空槽位，兩者幾乎抵銷。S=512 或補位上限太小（S=512、R=96，使用率 61%）都更差。
+- 剩下的 tick 額外成本：補位候選的 embed（R=128 時約 0.4 ms）與每 tick 把權重轉成 fp16（約 0.37 ms，因 graph 內
+  autocast 不能快取；壓縮式 runner 每步也付這筆）。
+- 結論：T4 上壓縮式 O1 維持預設；槽位池保留為選項。CPU 相對 GPU 越慢（如 H100），O1 的閒置比例越高，槽位池越可能勝出，需在 H100 上量測。
+
+#### H100 驗證（第 10 輪，0.14.0，[`results/round10_h100`](results/round10_h100/summary.md)）
+
+`c100_bvit_s_quadw_lr5e4`（種子 0），對同準確率中最便宜的固定深度的速度比：
+
+| λ | 準確率 | 平均步數 | batch 256：O1 | batch 256：槽位池 + 融合 | batch 1 graph：O1 | batch 1 graph：+ 融合 |
+|---|---|---|---|---|---|---|
+| 0.001 | 61.93 | 4.62 | 0.40× | 0.80× | 0.52× | 0.77× |
+| 0.01 | 62.04 | 4.11 | 0.54× | 1.06×（0.89×） | 0.65× | 1.01×（0.91×） |
+| 0.03 | 62.04 | 3.71 | 0.53× | 1.18×（0.99×） | 0.72× | 1.09×（0.98×） |
+| 0.1 | 61.53 | 3.26 | 0.44× | **1.12×** | 0.73× | **1.12×** |
+| 0.3 | 60.05 | 2.74 | 0.37× | **1.07×** | 0.71× | **1.07×** |
+
+括號：λ=0.01 / 0.03 的準確率只比固定 5 步高 4 張圖，所以配對到 6 步；括號內是對 5 步的比值。
+
+- **與 T4 相反，H100 上槽位池大勝壓縮式 O1**：batch 256 快 2.0–2.9 倍（44,147 → 98,454 img/s @ λ=0.03）。
+  H100 的 GPU 快、CPU 相對慢，壓縮式 O1 幾乎完全卡在 CPU 發送 kernel（合成測試：O1 35,190 vs 固定 4 步 121,824 img/s），
+  槽位池每 tick 只發送一次 graph，GPU 閒置約 1%。
+- **第一次在 batch 256 勝過同準確率的固定深度**：λ = 0.1 / 0.3 快 12% / 7%（配對明確）；λ = 0.01 / 0.03 對 6 步為 1.06× / 1.18×，
+  對準確率幾乎相同的 5 步為 0.89× / 0.99×。λ = 0.001 仍較慢（0.80×）。
+- **融合 kernel 在 H100 上是必要的**：槽位池 +17%（84,189 → 98,454），batch 1 graph 延遲 −34%（0.726 → 0.477 ms），
+  eager +43%。batch 1 graph + 融合在 λ = 0.1 / 0.3 也勝過固定深度（1.12× / 1.07×；第 9 輪同骨幹 O1 為 0.69×）。
+- O3 在 batch 256 吞吐量雖高（約 84,000 img/s），但準確率在同步數下較低，配對後不如槽位池。
+- 單一種子、單次執行；建議以 3 個種子確認後再寫入論文。
+- 決定：**保留槽位池**（達到 H100 上比 O1 快 5% 以上的保留門檻），GPU 上 batch 推論建議使用 `SlotPoolRunner(..., fused=True)`。
+- **注意**：上表的固定深度是 eager 執行；三個種子與 compiled 固定深度的比較見下一節，結論需修正。
+
+#### H100 三個種子（第 10 輪續，[`results/round10_h100/seeds3.md`](results/round10_h100/seeds3.md)）
+
+以三種子平均準確率配對（準確率不低於自適應的最便宜固定深度），槽位池 + 融合 kernel 的 batch 256 吞吐量：
+
+| λ | 準確率 | 步數 | 配對固定深度 | 槽位池 + 融合 img/s | 對 O1 | 對 eager 固定深度 | 對 compiled 固定深度 |
+|---|---|---|---|---|---|---|---|
+| 0.001 | 61.94 | 4.42 | 5 步 | 82,940 | 2.58× | 0.91× | 0.73× |
+| 0.01 | 61.98 | 4.04 | 6 步 | 90,375 | 2.07× | 1.18× | 0.93× |
+| 0.03 | 61.95 | 3.70 | 5 步 | 98,427 | 2.29× | 1.08× | 0.87× |
+| 0.1 | 61.48 | 3.24 | 5 步 | 111,647 | 2.60× | 1.22× | 0.98× |
+| 0.3 | 60.35 | 2.79 | 4 步 | 128,942 | 2.99× | 1.22× | 0.96× |
+
+- **確認**：槽位池 + 融合 kernel 比壓縮式 O1 快 2.1–3.0 倍，三個種子間吞吐量差異約 ±1.5%。
+- **更正第 10 輪單種子的結論**：「勝過固定深度」是拿 CUDA graph 的槽位池對 **eager** 固定深度比較。H100 上 eager 固定深度
+  本身也受 kernel 發送限制：torch.compile 讓固定深度在 4–6 步快 1.24–1.27 倍，三個種子的計時也穩定得多（±1–2%，eager 為 ±14%）。
+  對 compiled 固定深度，槽位池在 λ = 0.1 / 0.3 約打平（0.98× / 0.96×），λ = 0.01 / 0.03 為 0.93× / 0.87×。
+  最公平的對照（batch 256 的固定深度也錄成 CUDA graph）還沒量測。
+- batch 1 CUDA graph（兩者都錄成 graph，比較公平）+ 融合：λ = 0.001 / 0.01 / 0.03 為 0.81× / 0.94× / 1.03×；
+  λ = 0.1 / 0.3 有一個種子受干擾（0.581±0.296、0.502±0.238 ms），這兩格不能用。
+- O3 仍落後槽位池，也低於同準確率固定深度。
+- 第 10 輪單種子小節「第一次在 batch 256 勝過同準確率的固定深度」的說法以本節為準。
+
 ## VCNet：原始 vs 自適應步數（`dev/vcnet` 分支，0.9.0 起）
 
 使用者決定改用 VCNet，目標是比較**原始 VCNet**與 **VCNet + 自適應步數**。架構、論文沒寫而由我們補上的假設、

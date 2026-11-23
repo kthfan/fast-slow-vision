@@ -71,7 +71,8 @@ def benchmark_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
                        "speed-up vs fixed (bs256 / bs1); * = more accurate than every fixed depth, "
                        "compared with the most accurate one")
             T = len(ms_[0]["fixed"])
-            for t in range(T) if not mode.startswith("o3") else []:  # O3 modes reuse the eager/compiled fixed rows
+            # O3 and Triton modes reuse the eager/compiled/cudagraph fixed rows
+            for t in range(T) if not (mode.startswith("o3") or (mode.endswith("triton") or mode.startswith("slots"))) else []:
                 rows = [m["fixed"][t] for m in ms_]
                 out.append(f"  fixed t={t:<12}" + ms([r["acc"] for r in rows], 2, 100).rjust(13) + f"{t + 1:15.2f}"
                            + ms([r["img_per_s"] for r in rows], 0).rjust(16) + ms([r["bs1_ms"] for r in rows], 3).rjust(16))
@@ -85,7 +86,8 @@ def benchmark_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
                     above = above or not ok
                     if r.get("img_per_s") and f.get("img_per_s"):  # batch-1-only modes have no throughput
                         ratios_b.append(r["img_per_s"] / f["img_per_s"])
-                    ratios_1.append(f["bs1_ms"] / r["bs1_ms"])
+                    if r.get("bs1_ms") and f.get("bs1_ms"):  # throughput-only modes have no batch-1 latency
+                        ratios_1.append(f["bs1_ms"] / r["bs1_ms"])
                 out.append(f"  lam={str(a0['lam']):<16}" + ms([r["acc"] for r in rows], 2, 100).rjust(13)
                            + ms([r["mean_steps"] for r in rows], 2).rjust(15)
                            + ms([r["img_per_s"] for r in rows], 0).rjust(16)

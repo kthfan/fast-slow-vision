@@ -101,11 +101,14 @@ class Block(nn.Module):
         else:
             self.ls1 = self.ls2 = None
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, out: torch.Tensor | None = None) -> torch.Tensor:
+        """``out``: write the result there (may be the input tensor itself: the input is no longer
+        read when the last residual addition runs), saving a copy into a static buffer."""
         a = self.attn(self.norm1(x))
         x = x + (a * self.ls1 if self.ls1 is not None else a)
         m = self.mlp(self.norm2(x))
-        return x + (m * self.ls2 if self.ls2 is not None else m)
+        m = m * self.ls2 if self.ls2 is not None else m
+        return x + m if out is None else torch.add(x, m, out=out)
 
 
 class RecurrentViT(nn.Module):
@@ -158,17 +161,32 @@ class RecurrentViT(nn.Module):
         cls = self.cls_token.expand(x.shape[0], -1, -1)
         return torch.cat([cls, x], dim=1) + self.pos_embed
 
-    def forward_step(self, tokens: torch.Tensor, t: int, x0: torch.Tensor | None = None) -> torch.Tensor:
-        """One recurrent step. ``x0`` (the output of ``embed``) is required when input_inject is on."""
+    def forward_step(self, tokens: torch.Tensor, t: int | torch.Tensor, x0: torch.Tensor | None = None,
+                     out: torch.Tensor | None = None) -> torch.Tensor:
+        """One recurrent step. ``x0`` (the output of ``embed``) is required when input_inject is on.
+
+        ``t`` is the step of the whole batch (int) or of every row (long tensor [B]; used by the
+        slot-pool runner, where rows are at different steps). Per-row steps need weight sharing
+        across steps (``n_blocks == 1``): every row then goes through the same block.
+        ``out``: tensor to write the new tokens into (may be ``tokens`` itself)."""
+        if isinstance(t, torch.Tensor):
+            if len(self.blocks) != 1:
+                raise NotImplementedError("per-row steps need one shared block (n_blocks == 1)")
+            if self.inject_gate is not None:
+                assert x0 is not None, "input_inject needs x0 = model.embed(x)"
+                tokens = tokens + (t > 0).to(tokens.dtype)[:, None, None] * (self.inject_gate * x0)
+            if self.step_in is not None:
+                tokens = tokens + self.step_in[t][:, None, :]
+            return self.blocks[0](tokens, out=out)
         if self.inject_gate is not None and t > 0:
             assert x0 is not None, "input_inject needs x0 = model.embed(x)"
             tokens = tokens + self.inject_gate * x0
         if self.step_in is not None:
             tokens = tokens + self.step_in[t]
-        return self.blocks[t % len(self.blocks)](tokens)
+        return self.blocks[t % len(self.blocks)](tokens, out=out)
 
-    def readout(self, tokens: torch.Tensor, t: int) -> torch.Tensor:
-        """Logits at step t (before any temperature scaling)."""
+    def readout(self, tokens: torch.Tensor, t: int | torch.Tensor) -> torch.Tensor:
+        """Logits at step t (before any temperature scaling); ``t`` an int or a long tensor [B]."""
         return self.head(self.head_norm(tokens[:, 0]) + self.step_out[t])
 
     def features(self, tokens: torch.Tensor) -> dict[str, torch.Tensor]:
