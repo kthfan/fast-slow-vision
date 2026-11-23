@@ -22,6 +22,10 @@ _VC = [
 _VC_ORIG = _VC + ["--t-max", "2", "--loss-steps", "last", "--beta", "0", "--gamma", "0", "--delta", "0"]
 # adaptive VCNet: 8 predictive-coding steps, a readout after every step, Stage A loss
 _VC_ADAPT = _VC + ["--t-max", "8", "--step-weights", "quadratic"]
+# phase 0 (0.15.0) fast training pipeline: augmentation on the GPU (fsv/gpu_aug.py), forward + loss
+# compiled with CUDA graphs, fused AdamW. Same recipe otherwise; validated by the *_fast runs below
+# against rounds 1-2 before new experiments adopt it.
+_FAST = ["--gpu-aug", "--compile-mode", "reduce-overhead", "--opt-impl", "fused"]
 
 EXPERIMENTS: dict[str, dict] = {
     "smoke": {
@@ -146,5 +150,16 @@ EXPERIMENTS: dict[str, dict] = {
         "desc": "Same as c100_vcnet_blt_orig2 with 4 fixed steps (the best fixed depth of c100_vcnet_adapt_blt).",
         "train": [*_VC_ORIG[:_VC_ORIG.index("--t-max") + 1], "4", *_VC_ORIG[_VC_ORIG.index("--t-max") + 2:],
                   "--lateral", "--topdown"],
+    },
+    # ---- phase 0: the fast training pipeline must reproduce rounds 1-2 (run 3 seeds with --parallel 3)
+    "c100_vcnet_orig_fast": {
+        "desc": "c100_vcnet_orig with the fast pipeline (GPU augmentation + compiled step with CUDA graphs + "
+                "fused AdamW); must match 64.55% (round 1, 3 seeds).",
+        "train": _VC_ORIG + _FAST,
+    },
+    "c100_vcnet_adapt_blt_fast": {
+        "desc": "c100_vcnet_adapt_blt with the fast pipeline; must match round 2 (67.27% at 2 steps, "
+                "68.68% at 4 steps, 3 seeds).",
+        "train": _VC_ADAPT + ["--lateral", "--topdown"] + _FAST,
     },
 }

@@ -123,6 +123,8 @@ tail -f run_all.log
 
 - 中斷後重跑同一個指令，會從 `runs/<名稱>/last.pt` 接續訓練；要從頭來加 `--fresh`。
 - 指定 GPU：`--gpu 1`（預設 0）。
+- 同時跑多個（實驗、種子）：`--parallel 3`（0.15.0 起）。小模型只用到 GPU 的一小部分，3 個種子並行約等於跑 1 個的時間；
+  CPU 上限會切成互不重疊的幾組核心，輸出每行前面標上執行名稱。
 - `runs/` 存放 checkpoint（大檔）、`reports/` 存放每次執行的報告；兩者都只在本機，不在 repo 裡，更新程式不會覆蓋。
 
 ### 6. 回報結果
@@ -162,7 +164,9 @@ python scripts/summarize.py
 | `fsv/flops.py` | FLOPs（含每步讀出頭）：ViT 用解析式，VCNet 用 `FlopCounterMode` 實測 |
 | `fsv/halting/thresholds.py` | max-prob / 熵門檻曲線、固定深度早退、oracle 停止步數 t*、曲線下面積 |
 | `fsv/engine.py` | 收集每步 logits / 特徵；逐步延遲量測；AMP 自動選擇（H100 用 bf16） |
-| `fsv/cpu.py` | CPU 核心數硬性上限 |
+| `fsv/cpu.py` | CPU 核心數硬性上限；`FSV_CPU_SET` 指定核心（並行執行時各用各的） |
+| `fsv/gpu_aug.py` | 訓練資料放在 GPU 上、逐張在 GPU 上做同樣的增強（`--gpu-aug`） |
+| `fsv/train_step.py` | 一次訓練步（前向 + 損失可 `torch.compile` / CUDA graph，fused AdamW） |
 | `fsv/data.py` | CIFAR-10/100（Hugging Face parquet，快取為 npz）；從訓練集切出固定 5,000 張 held-out |
 | `fsv/experiments.py` | 實驗登記表（每個名稱對應固定的訓練設定） |
 | `fsv/report.py` | 產生 `report.md` |
@@ -171,6 +175,7 @@ python scripts/summarize.py
 | `scripts/summarize.py` | 輸出可貼到對話的精簡摘要（多種子取平均±標準差） |
 | `scripts/train.py`, `scripts/evaluate.py` | 底層訓練 / 評估程式（也可單獨使用，見 `--help`） |
 | `scripts/check_env.py` | 環境檢查 |
+| `scripts/bench_train.py` | 訓練速度量測（各種資料管線 / 編譯 / batch 組合，`--procs N` 並行） |
 | `scripts/halting_study.py` | TODO-1 停止策略研究（在快取上離線訓練與評估；`run_experiment.py --halting` 會自動呼叫） |
 | `fsv/halting/features.py`, `fsv/halting/policy.py` | 停止策略的輸入特徵（S0 / S2 / S3 / S5）、MLP、訓練目標、λ 掃描曲線 |
 | `fsv/halting/online.py`, `scripts/benchmark_adaptive.py` | 線上自適應推論（逐步停止 + batch compaction）與實際延遲 / 吞吐量量測（TODO-4） |
@@ -662,6 +667,10 @@ Kaggle T4、隨機權重、10,240 張圖（吞吐量 img/s）：
 - `blt` 的 eager 實作每步很慢，部署需用 torch.compile。
 
 **第 3 輪（0.10.1）**：`c100_vcnet_blt_orig2`、`c100_vcnet_blt_orig4`：`blt` 架構，固定 2 / 4 步、只在最後讀出、只用 CE。
+
+**訓練加速（階段 0，0.15.0）**：GPU 上的資料增強、編譯 + CUDA graph 的訓練步、fused AdamW、`--parallel` 並行種子。
+量測用 `scripts/bench_train.py`，驗證用 `c100_vcnet_adapt_blt_fast`、`c100_vcnet_orig_fast`；步驟見
+[`docs/vcnet.md`](docs/vcnet.md)「訓練加速」。
 
 ## 下一階段方向（討論中）
 

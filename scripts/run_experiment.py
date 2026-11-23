@@ -11,6 +11,10 @@ Each (experiment, seed) pair writes
     reports/<name>[_s<seed>]/   report.md, results.json, history.jsonl, config.json, env.json, logs
 Seed 0 uses the bare experiment name.
 
+Several runs side by side on the same GPU (VCNet uses < 1% of an H100, so three seeds in parallel
+take about as long as one); the CPU cap is split into disjoint core sets, one per run:
+    python scripts/run_experiment.py c100_vcnet_adapt_blt_fast --seeds 0 1 2 --parallel 3
+
 Afterwards print one compact, paste-friendly block for everything in reports/:
     python scripts/summarize.py
 
@@ -29,13 +33,15 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from fsv.cpu import available_cpus, limit_cpus, thread_env  # noqa: E402
+from fsv.cpu import available_cpus, limit_cpus, split_cpus, thread_env  # noqa: E402
 from fsv.experiments import EXPERIMENTS  # noqa: E402
 from fsv.report import write_report  # noqa: E402
 from fsv.version import code_info  # noqa: E402
@@ -48,6 +54,8 @@ def parse_args(argv=None):
     p.add_argument("--seeds", type=int, nargs="+", default=[0], help="training seeds (default: 0)")
     p.add_argument("--max-cpus", type=int, default=None, help="hard CPU-core cap (default: $FSV_MAX_CPUS or 8)")
     p.add_argument("--gpu", default="0", help="value for CUDA_VISIBLE_DEVICES (default 0)")
+    p.add_argument("--parallel", type=int, default=1,
+                   help="run this many (experiment, seed) runs at once on the GPU; each gets max-cpus/N cores")
     p.add_argument("--data-dir", default=str(ROOT / "data"))
     p.add_argument("--fresh", action="store_true", help="delete runs/<name> and reports/<name> first")
     p.add_argument("--cache", action="store_true", help="also save per-step logits/features (stays in runs/)")
@@ -81,20 +89,28 @@ def torch_info(gpu: str) -> dict:
         return {"torch": f"error: {e}"}
 
 
-def run_logged(cmd: list[str], log_path: Path, env: dict) -> int:
-    """Run cmd, streaming its output to the console and to log_path."""
-    print(f"\n$ {shlex.join(cmd)}\n", flush=True)
+_PRINT_LOCK = threading.Lock()
+
+
+def run_logged(cmd: list[str], log_path: Path, env: dict, prefix: str = "") -> int:
+    """Run cmd, streaming its output to the console (each line prefixed with ``prefix`` when runs
+    go side by side) and to log_path."""
+    with _PRINT_LOCK:
+        print(f"\n{prefix}$ {shlex.join(cmd)}\n", flush=True)
     with open(log_path, "a") as log:
         log.write(f"$ {shlex.join(cmd)}\n")
         proc = subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, bufsize=1)
         for line in proc.stdout:
-            sys.stdout.write(line)
+            with _PRINT_LOCK:
+                sys.stdout.write(prefix + line)
+                sys.stdout.flush()
             log.write(line)
         return proc.wait()
 
 
-def run_one(args, exp_name: str, seed: int, n_cpus: int, machine_cpus: int, tinfo: dict, cinfo: dict) -> bool:
+def run_one(args, exp_name: str, seed: int, n_cpus: int, machine_cpus: int, tinfo: dict, cinfo: dict,
+            cpu_set: list[int] | None = None) -> bool:
     exp = EXPERIMENTS[exp_name]
     name = run_name(exp_name, seed)
     out_root = Path(args.out_root)
@@ -105,6 +121,10 @@ def run_one(args, exp_name: str, seed: int, n_cpus: int, machine_cpus: int, tinf
     report_dir.mkdir(parents=True, exist_ok=True)
 
     env = {**os.environ, **thread_env(n_cpus), "CUDA_VISIBLE_DEVICES": args.gpu, "PYTHONUNBUFFERED": "1"}
+    prefix = ""
+    if cpu_set is not None:  # side by side with other runs: own cores, prefixed output
+        env["FSV_CPU_SET"] = ",".join(map(str, cpu_set))
+        prefix = f"[{name}] "
     py = sys.executable
     train_cmd = [py, "scripts/train.py", *exp["train"], *shlex.split(args.extra), "--seed", str(seed),
                  "--data-dir", args.data_dir, "--out", str(run_dir), "--max-cpus", str(n_cpus), "--resume"]
@@ -130,7 +150,7 @@ def run_one(args, exp_name: str, seed: int, n_cpus: int, machine_cpus: int, tinf
             return False
         info = json.loads(env_path.read_text()) if env_path.exists() else {"experiment": exp_name, "seed": seed}
         print(f"\n[run_experiment] ===== {name}: halting study only")
-        rc = run_logged(halt_cmd, report_dir / "halting.log", env)
+        rc = run_logged(halt_cmd, report_dir / "halting.log", env, prefix)
         info.setdefault("halting_runs", []).append({"code_version": cinfo["code_version"], "exit": rc,
                                                     "args": args.halting_args})
         env_path.write_text(json.dumps(info, indent=2))
@@ -143,6 +163,7 @@ def run_one(args, exp_name: str, seed: int, n_cpus: int, machine_cpus: int, tinf
     else:
         info = {"experiment": exp_name, "run": name, "seed": seed, "description": exp["desc"], **cinfo, **tinfo,
                 "python": platform.python_version(), "max_cpus": n_cpus, "machine_cpus": machine_cpus,
+                "parallel": args.parallel,
                 "started": dt.datetime.now().isoformat(timespec="seconds"), "extra": args.extra,
                 "train_cmd": shlex.join(train_cmd[1:]), "eval_cmd": shlex.join(eval_cmd[1:])}
     print(f"\n[run_experiment] ===== {name}: {exp['desc']}")
@@ -153,18 +174,18 @@ def run_one(args, exp_name: str, seed: int, n_cpus: int, machine_cpus: int, tinf
     save_env()
     if not args.skip_train:
         t0 = time.time()
-        info["train_exit"] = run_logged(train_cmd, report_dir / "train.log", env)
+        info["train_exit"] = run_logged(train_cmd, report_dir / "train.log", env, prefix)
         info["train_minutes"] = (time.time() - t0) / 60
         save_env()
         if info["train_exit"] != 0:
             print(f"[run_experiment] training failed (exit {info['train_exit']}); see {report_dir / 'train.log'}")
     if (run_dir / "model.pt").exists() and info.get("train_exit", 0) == 0:
         t0 = time.time()
-        info["eval_exit"] = run_logged(eval_cmd, report_dir / "eval.log", env)
+        info["eval_exit"] = run_logged(eval_cmd, report_dir / "eval.log", env, prefix)
         info["eval_minutes"] = (time.time() - t0) / 60
         if args.halting and info["eval_exit"] == 0:
             t0 = time.time()
-            info["halting_exit"] = run_logged(halt_cmd, report_dir / "halting.log", env)
+            info["halting_exit"] = run_logged(halt_cmd, report_dir / "halting.log", env, prefix)
             info["halting_minutes"] = (time.time() - t0) / 60
     info["finished"] = dt.datetime.now().isoformat(timespec="seconds")
     save_env()
@@ -194,8 +215,28 @@ def main(argv=None):
     print(f"[run_experiment] code {cinfo['code_version']}, CPU cap {n_cpus}/{machine_cpus} cores, "
           f"GPU {tinfo.get('gpu')}; runs: " + ", ".join(run_name(e, s) for e in args.names for s in args.seeds))
 
-    failed = [run_name(e, s) for e in args.names for s in args.seeds
-              if not run_one(args, e, s, n_cpus, machine_cpus, tinfo, cinfo)]
+    jobs = [(e, s) for e in args.names for s in args.seeds]
+    if args.parallel <= 1:
+        failed = [run_name(e, s) for e, s in jobs if not run_one(args, e, s, n_cpus, machine_cpus, tinfo, cinfo)]
+    else:
+        n_par = min(args.parallel, len(jobs))
+        slots = split_cpus(n_cpus, n_par)
+        print(f"[run_experiment] {n_par} runs at a time; cores per run: " + " | ".join(",".join(map(str, c)) for c in slots))
+        free = list(slots)
+        lock = threading.Lock()
+
+        def job(e, s):
+            with lock:
+                cores = free.pop()
+            try:
+                return run_one(args, e, s, len(cores), machine_cpus, tinfo, cinfo, cpu_set=cores)
+            finally:
+                with lock:
+                    free.append(cores)
+
+        with ThreadPoolExecutor(n_par) as pool:
+            results = list(pool.map(lambda js: job(*js), jobs))
+        failed = [run_name(e, s) for (e, s), ok in zip(jobs, results) if not ok]
     print("\n[run_experiment] all runs finished" + (f"; FAILED: {failed}" if failed else ""))
     print("[run_experiment] paste the output of:  python scripts/summarize.py")
     return 1 if failed else 0

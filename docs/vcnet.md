@@ -160,3 +160,61 @@ python scripts/benchmark_adaptive.py c100_vcnet_orig c100_vcnet_blt_orig2 c100_v
 | 每步讀出 + 停止策略本身的價值 | `adapt_blt` + 停止策略 vs `blt_orig2`（約 0.28 GFLOPs）、`blt_orig4`（約 0.53 GFLOPs） |
 | 跨步狀態本身的價值 | `blt_orig2` vs `orig`（都是固定 2 步、單一讀出） |
 | 每步讀出是否拖累最終準確率 | `adapt_blt` 固定 4 步 vs `blt_orig4` |
+
+## 訓練加速（階段 0，0.15.0）
+
+第 1–2 輪的訓練幾乎沒用到 H100 的算力：`adapt` 每個 epoch 16.6 秒（約每秒 2,700 張），換算約 8 TFLOPs，不到 bf16 峰值的 1%。
+模型太小，時間花在 CPU 發送數千個小 kernel，以及 CPU 上的資料增強。0.15.0 加入四項改動，都是**開關**，預設仍是原本的做法：
+
+| 開關 | 做法 | 程式 |
+|---|---|---|
+| `--gpu-aug` | 訓練集以 uint8 放在 GPU 上，每批在 GPU 上逐張做同樣的增強（RandomCrop + Flip + RandAugment(2, 9) + Normalize + RandomErasing） | `fsv/gpu_aug.py` |
+| `--compile-mode default` | `torch.compile` 整個「前向（所有步）+ Stage A 損失」，反向也一起編譯 | `fsv/train_step.py` |
+| `--compile-mode reduce-overhead` | 再把前向與反向錄成 CUDA graph：每步 CPU 只發送一個 graph | 同上 |
+| `--opt-impl fused` | AdamW 用單一 kernel 的 CUDA 實作 | 同上 |
+| `run_experiment.py --parallel N` | N 個（實驗、種子）同時跑在同一張 GPU 上，CPU 上限切成 N 組互不重疊的核心 | `scripts/run_experiment.py`、`fsv/cpu.py` |
+
+另外，VCNet 的 `forward`（訓練路徑）改成步與步之間直接傳各腦區的特徵圖，不再每步打包、拆包；與逐步介面的輸出完全相同（測試確認）。
+
+**GPU 增強的正確性**：14 種 RandAugment 操作逐一與 torchvision 的 uint8 實作比對（`tests/test_train_speed.py`），
+幾何操作、亮度、對比、色調分離、曝光、自動對比、直方圖等化完全相同，Color 與 Sharpness 因捨入最多差 1 個灰階；
+RandomErasing 的觸發比例與平均面積也與 torchvision 相符。但亂數序列不同，也不是逐位元相同，所以要先驗證準確率。
+
+**編譯的正確性**：同樣初始化、同樣資料，編譯後與 eager 的損失與梯度一致（CPU 上測試）。CUDA graph 只能在 GPU 上驗證。
+
+### 步驟 1：量訓練速度
+
+```bash
+python scripts/bench_train.py c100_vcnet_orig c100_vcnet_adapt_blt
+```
+
+```bash
+python scripts/bench_train.py c100_vcnet_adapt_blt --configs cpu-eager gpu-compile gpu-cg --procs 3
+```
+
+- 第一個指令：每個實驗量 8 種組合（CPU 增強 eager = 第 1–3 輪的做法、GPU 增強、fused AdamW、compile、CUDA graph、
+  CPU 增強 + CUDA graph、batch 512 / 1024），以及資料管線本身的上限。每種組合先跑 15 次暖機（含編譯），再量 3 × 50 次取中位數。
+- 第二個指令：每種組合同時跑 3 份（= 3 個種子並行），每秒張數是 3 份的總和。
+- 表中 `min/run` 是 200 個 epoch 的估計訓練時間（不含每 10 個 epoch 一次的 held-out 評估與最後的 evaluate.py），
+  `3 seeds min` 是跑完 3 個種子的牆鐘時間。
+- batch 512 / 1024 只量速度；真的要用，學習率要重新調，準確率要重新驗證。
+
+### 步驟 2：驗證快速管線不影響準確率
+
+```bash
+python scripts/run_experiment.py c100_vcnet_adapt_blt_fast c100_vcnet_orig_fast --seeds 0 1 2 --parallel 3
+```
+
+- `c100_vcnet_adapt_blt_fast` 對照第 2 輪 `c100_vcnet_adapt_blt`（固定 2 步 67.27±0.57%、4 步 68.68±0.58%），
+  `c100_vcnet_orig_fast` 對照第 1 輪 `c100_vcnet_orig`（64.55±0.96%）。
+- 差距在種子標準差以內，之後的新實驗就改用 `_FAST`（`fsv/experiments.py`）；舊實驗的名稱與設定不變，結果仍可重現。
+- 若 `reduce-overhead` 在 GPU 上出錯，改用 `--extra "--compile-mode default"` 或回報錯誤訊息。
+
+第 3 輪（`c100_vcnet_blt_orig2`、`c100_vcnet_blt_orig4`）仍用原本的管線，以便和 `orig`、`adapt_blt` 公平比較；
+但可以並行跑，只改變牆鐘時間：
+
+```bash
+python scripts/run_experiment.py c100_vcnet_blt_orig2 c100_vcnet_blt_orig4 --seeds 0 1 2 --parallel 3
+```
+
+並行時每個行程只分到 8 / 3 ≈ 2 個 CPU 核心，CPU 增強可能成為瓶頸；`bench_train.py --procs 3` 的 `cpu-eager` 列會顯示這一點。

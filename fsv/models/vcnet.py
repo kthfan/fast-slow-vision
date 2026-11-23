@@ -339,6 +339,17 @@ class VCNet(nn.Module):
         ait = self._recur("ait", self.ait(self.ait_in(torch.cat([cit, mst], 1))), prev)
         return {"v2": v2, "mt": mt, "v4": v4, "pit": pit, "cit": cit, "mst": mst, "ait": ait}
 
+    def _step_areas(self, prev: dict | None, t: int, x0: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Step t on unpacked area maps: ``prev`` = the previous step's areas (None at t = 0)."""
+        if t == 0:
+            return self.sweep(x0)
+        ait_prev = prev["ait"]
+        z = x0 + self.err_in(self.prediction_error(x0, ait_prev))
+        areas = self.sweep(z, prev if self.packed else None)
+        if self.carry_gate is not None:
+            areas["ait"] = areas["ait"] + self.carry_gate * ait_prev
+        return areas
+
     def forward_step(self, state: torch.Tensor, t: int, x0: torch.Tensor | None = None) -> torch.Tensor:
         """Step t. ``x0`` is the V1 activity from ``embed``; ``state`` is the previous step's state for
         t >= 1 (at t = 0 it is ignored, the runners pass the embedding there).
@@ -347,20 +358,19 @@ class VCNet(nn.Module):
         into [B, N] (see ``pack``)."""
         if t == 0:
             areas = self.sweep(x0 if x0 is not None else state)
-            return self.pack(areas) if self.packed else areas["ait"]
-        assert x0 is not None, "VCNet steps t >= 1 need x0 = model.embed(x)"
-        prev = self.unpack(state) if self.packed else None
-        ait_prev = prev["ait"] if prev is not None else state
-        z = x0 + self.err_in(self.prediction_error(x0, ait_prev))
-        areas = self.sweep(z, prev)
-        if self.carry_gate is not None:
-            areas["ait"] = areas["ait"] + self.carry_gate * ait_prev
+        else:
+            assert x0 is not None, "VCNet steps t >= 1 need x0 = model.embed(x)"
+            prev = self.unpack(state) if self.packed else {"ait": state}
+            areas = self._step_areas(prev, t, x0)
         return self.pack(areas) if self.packed else areas["ait"]
 
-    def readout(self, state: torch.Tensor, t: int) -> torch.Tensor:
+    def _readout_ait(self, ait: torch.Tensor, t: int) -> torch.Tensor:
         # steps past the trained length (evaluate.py --steps) reuse the last trained step embedding
         e = self.step_out[min(t, self.step_out.shape[0] - 1)]
-        return self.head(self.head_norm(self.ait_of(state).mean((2, 3))) + e)
+        return self.head(self.head_norm(ait.mean((2, 3))) + e)
+
+    def readout(self, state: torch.Tensor, t: int) -> torch.Tensor:
+        return self._readout_ait(self.ait_of(state), t)
 
     def extend_steps(self, t_max: int) -> None:
         """Run the predictive-coding loop for ``t_max`` steps at inference, also past the length the
@@ -369,24 +379,30 @@ class VCNet(nn.Module):
         self.trained_t_max = self.step_out.shape[0]
         self.cfg.t_max = t_max
 
+    def _features_ait(self, ait: torch.Tensor) -> dict[str, torch.Tensor]:
+        return {"cls": self.head_norm(ait.mean((2, 3))), "pool": self.head_norm(ait.amax((2, 3)))}
+
     def features(self, state: torch.Tensor) -> dict[str, torch.Tensor]:
         """Per-step features for halting research: 'cls' = what the head reads (avg-pooled AIT),
         'pool' = max-pooled AIT."""
-        ait = self.ait_of(state)
-        return {"cls": self.head_norm(ait.mean((2, 3))), "pool": self.head_norm(ait.amax((2, 3)))}
+        return self._features_ait(self.ait_of(state))
 
     # ----------------------------------------------------------- full pass
     def forward(self, x: torch.Tensor, t_max: int | None = None, return_feats: bool = False):
-        """Run all steps. Returns logits [T, B, C] (and per-step features if asked)."""
+        """Run all steps. Returns logits [T, B, C] (and per-step features if asked).
+
+        Same computation as embed + forward_step + readout, but the area maps stay unpacked
+        between steps (no pack / unpack per step; this is the training path)."""
         T = t_max or self.cfg.t_max
         assert T <= self.cfg.t_max
-        x0 = state = self.embed(x)
+        x0 = self.embed(x)
+        areas = None
         logits, feats = [], {"cls": [], "pool": []}
         for t in range(T):
-            state = self.forward_step(state, t, x0)
-            logits.append(self.readout(state, t))
+            areas = self._step_areas(areas, t, x0)
+            logits.append(self._readout_ait(areas["ait"], t))
             if return_feats:
-                for k, v in self.features(state).items():
+                for k, v in self._features_ait(areas["ait"]).items():
                     feats[k].append(v)
         out = torch.stack(logits)
         if return_feats:
