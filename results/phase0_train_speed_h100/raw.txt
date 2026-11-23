@@ -1,0 +1,96 @@
+# Pasted by the user. Code 0.15.0 (dev/vcnet), NVIDIA H100 NVL, torch 2.6.0+cu124, CPU cap 8 of 48 cores.
+
+## Step 1: python scripts/bench_train.py c100_vcnet_orig c100_vcnet_adapt_blt
+
+[bench_train] c100_vcnet_orig cpu-eager: 9,034 img/s, 28.34 ms/it, first iteration 1.9 s, loss 4.541
+[bench_train] c100_vcnet_orig gpu-eager: 8,129 img/s, 31.49 ms/it, first iteration 0.4 s, loss 4.388
+[bench_train] c100_vcnet_orig gpu-fused: 9,360 img/s, 27.35 ms/it, first iteration 0.0 s, loss 4.469
+[bench_train] c100_vcnet_orig gpu-compile: 8,305 img/s, 30.83 ms/it, first iteration 62.2 s, loss 4.498
+[bench_train] c100_vcnet_orig gpu-cg: 15,494 img/s, 16.52 ms/it, first iteration 29.4 s, loss 4.452
+[bench_train] c100_vcnet_orig cpu-cg: 11,895 img/s, 21.52 ms/it, first iteration 25.4 s, loss 4.517
+[bench_train] c100_vcnet_orig gpu-cg-bs512: 25,205 img/s, 20.31 ms/it, first iteration 55.2 s, loss 4.442
+[bench_train] c100_vcnet_orig gpu-cg-bs1024: 33,891 img/s, 30.21 ms/it, first iteration 58.5 s, loss 4.481
+
+[bench_train c100_vcnet_orig] NVIDIA H100 NVL | amp bf16 | 200 epochs | copies at once: 1 | speed-up vs cpu-eager
+  config              bs     img/s    ms/it      x  1st it s  peak GB  min/run   3 seeds min  spread
+  cpu-eager          256     9,034    28.34  1.00x       1.9     1.37     16.5          49.6    1.08
+  gpu-eager          256     8,129    31.49  0.90x       0.4     1.50     18.4          55.1    1.18
+  gpu-fused          256     9,360    27.35  1.04x       0.0     1.50     16.0          47.9    1.10
+  gpu-compile        256     8,305    30.83  0.92x      62.2     1.08     18.0          53.9    1.09
+  gpu-cg             256    15,494    16.52  1.72x      29.4     0.84      9.6          28.9    1.05
+  cpu-cg             256    11,895    21.52  1.32x      25.4     0.71     12.6          37.7    1.21
+  gpu-cg-bs512       512    25,205    20.31  2.79x      55.2     1.68      5.9          17.7    1.01
+  gpu-cg-bs1024     1024    33,891    30.21  3.75x      58.5     2.93      4.3          13.0    1.01
+  loader alone: cpu 11,465 img/s | gpu 64,903 img/s (CPU workers 7)
+  min/run = epochs x iters/epoch x ms/it (no evaluation); spread = slowest / fastest timed repeat
+[bench_train] c100_vcnet_adapt_blt cpu-eager: 1,483 img/s, 172.59 ms/it, first iteration 0.7 s, loss 5.436
+[bench_train] c100_vcnet_adapt_blt gpu-eager: 1,411 img/s, 181.49 ms/it, first iteration 0.2 s, loss 5.552
+[bench_train] c100_vcnet_adapt_blt gpu-fused: 1,384 img/s, 184.96 ms/it, first iteration 0.2 s, loss 5.229
+[bench_train] c100_vcnet_adapt_blt gpu-compile: 3,664 img/s, 69.86 ms/it, first iteration 143.9 s, loss 5.521
+[bench_train] c100_vcnet_adapt_blt gpu-cg: 6,105 img/s, 41.93 ms/it, first iteration 111.7 s, loss 5.386
+[bench_train] c100_vcnet_adapt_blt cpu-cg: 6,867 img/s, 37.28 ms/it, first iteration 92.6 s, loss 5.142
+[bench_train] c100_vcnet_adapt_blt gpu-cg-bs512: 8,011 img/s, 63.91 ms/it, first iteration 140.3 s, loss 5.136
+[bench_train] c100_vcnet_adapt_blt gpu-cg-bs1024: 9,919 img/s, 103.24 ms/it, first iteration 144.3 s, loss 5.111
+
+[bench_train c100_vcnet_adapt_blt] NVIDIA H100 NVL | amp bf16 | 200 epochs | copies at once: 1 | speed-up vs cpu-eager
+  config              bs     img/s    ms/it      x  1st it s  peak GB  min/run   3 seeds min  spread
+  cpu-eager          256     1,483   172.59  1.00x       0.7     3.94    100.7         302.0    1.00
+  gpu-eager          256     1,411   181.49  0.95x       0.2     4.07    105.9         317.6    1.05
+  gpu-fused          256     1,384   184.96  0.93x       0.2     4.07    107.9         323.7    1.03
+  gpu-compile        256     3,664    69.86  2.47x     143.9     2.42     40.8         122.3    1.03
+  gpu-cg             256     6,105    41.93  4.12x     111.7     2.12     24.5          73.4    1.00
+  cpu-cg             256     6,867    37.28  4.63x      92.6     2.00     21.7          65.2    1.00
+  gpu-cg-bs512       512     8,011    63.91  5.40x     140.3     4.34     18.5          55.6    1.01
+  gpu-cg-bs1024     1024     9,919   103.24  6.69x     144.3     8.23     14.8          44.4    1.01
+  loader alone: cpu 10,947 img/s | gpu 58,190 img/s (CPU workers 7)
+  min/run = epochs x iters/epoch x ms/it (no evaluation); spread = slowest / fastest timed repeat
+
+## Step 1: python scripts/bench_train.py c100_vcnet_adapt_blt --configs cpu-eager gpu-compile gpu-cg --procs 3
+
+[bench_train c100_vcnet_adapt_blt] NVIDIA H100 NVL | amp bf16 | 200 epochs | copies at once: 3 | speed-up vs cpu-eager
+  config              bs     img/s    ms/it      x  1st it s  peak GB  min/run   3 seeds min  spread
+  cpu-eager          256     1,050   731.55  1.00x       1.5    11.84    428.7         428.7    1.21
+  gpu-compile        256     5,095   150.73  4.85x      40.3     6.47     88.2          88.2    1.02
+  gpu-cg             256     5,776   132.97  5.50x      39.8     6.37     77.8          77.8    1.02
+  loader alone: cpu 15,148 img/s | gpu 69,539 img/s (CPU workers 7)
+  min/run = epochs x iters/epoch x ms/it (no evaluation); spread = slowest / fastest timed repeat
+
+## Step 2: python scripts/run_experiment.py c100_vcnet_adapt_blt_fast c100_vcnet_orig_fast --seeds 0 1 2 --parallel 3
+
+===== BEGIN FSV SUMMARY =====
+code 0.15.0+54fe1c87edd8 | NVIDIA H100 NVL | torch 2.6.0+cu124 | cpus 2/48
+
+[c100_vcnet_adapt_blt_fast] seeds 0,1,2 | params 1.15M | train 82.6±0.0 min | epoch 23.6±0.0s
+  test acc%  63.84±0.53 67.62±0.44 68.51±0.31 68.85±0.49 68.85±0.36 68.88±0.49 68.78±0.47 68.85±0.44
+  ECE raw%   17.58±0.13 12.29±0.45 11.61±0.55 11.60±0.65 11.51±0.62 11.54±0.48 11.44±0.47 11.52±0.53
+  ECE TS%    2.21±0.17 2.43±0.17 2.46±0.32 2.55±0.35 2.51±0.23 2.44±0.19 2.61±0.10 2.51±0.25
+  NLL TS     1.311±0.021 1.179±0.018 1.143±0.020 1.135±0.022 1.134±0.023 1.135±0.023 1.135±0.023 1.136±0.023
+  AURC TS%   13.52±0.38 11.06±0.34 10.49±0.31 10.35±0.35 10.34±0.35 10.33±0.37 10.37±0.37 10.36±0.36
+  temp       0.686±0.004 0.749±0.007 0.756±0.003 0.757±0.004 0.759±0.004 0.759±0.004 0.759±0.004 0.759±0.004
+  GFLOPs     0.161 0.284 0.406 0.528 0.650 0.773 0.895 1.017
+  lat bs1 ms 4.19±0.55 8.71±0.19 12.77±0.30 16.88±0.51 20.96±0.51 25.01±0.84 29.12±0.85 33.18±0.85
+  lat bs256 ms 10.93±0.20 87.50±0.48 164.17±0.23 240.80±0.81 316.23±1.54 459.62±21.86 669.18±2.99 748.38±34.52
+  holdout%   63.0±0.7 66.5±0.4 67.7±0.4 67.8±0.5 67.9±0.3 67.9±0.3 67.9±0.4 68.0±0.3
+  final train loss 3.244±0.009 | AMP bf16
+  best-step acc 68.98±0.47 | last-step acc 68.85±0.44
+  AUC maxprob 68.16±0.41 entropy 67.94±0.41 fixed_depth 68.32±0.41
+  oracle full 68.85±0.44% @ 0.453±0.003 GFLOPs | any 72.05±0.66% @ 0.186±0.001 GFLOPs
+
+[c100_vcnet_orig_fast] seeds 0,1,2 | params 1.02M | train 30.5±0.0 min | epoch 9.0±0.0s
+  test acc%  61.83±2.26 65.48±1.77
+  ECE raw%   11.57±1.04 12.41±0.65
+  ECE TS%    2.03±0.55 1.48±0.35
+  NLL TS     1.381±0.086 1.233±0.061
+  AURC TS%   15.31±1.66 12.60±1.11
+  temp       0.766±0.006 0.753±0.003
+  GFLOPs     0.161 0.275
+  lat bs1 ms 3.70±0.51 7.97±0.02
+  lat bs256 ms 10.75±0.04 31.41±0.33
+  holdout%   61.2±1.5 64.5±1.5
+  final train loss 2.599±0.017 | AMP bf16
+  best-step acc 65.48±1.77 | last-step acc 65.48±1.77
+  AUC maxprob 64.67±1.87 entropy 64.55±1.87 fixed_depth 63.65±1.99
+  oracle full 65.48±1.77% @ 0.209±0.002 GFLOPs | any 69.36±2.04% @ 0.170±0.001 GFLOPs
+===== END FSV SUMMARY =====
+
+Round 3 (c100_vcnet_blt_orig2, c100_vcnet_blt_orig4, --parallel 3) was running at the time.

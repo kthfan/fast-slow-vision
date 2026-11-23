@@ -671,6 +671,9 @@ Kaggle T4、隨機權重、10,240 張圖（吞吐量 img/s）：
 **訓練加速（階段 0，0.15.0）**：GPU 上的資料增強、編譯 + CUDA graph 的訓練步、fused AdamW、`--parallel` 並行種子。
 量測用 `scripts/bench_train.py`，驗證用 `c100_vcnet_adapt_blt_fast`、`c100_vcnet_orig_fast`；步驟見
 [`docs/vcnet.md`](docs/vcnet.md)「訓練加速」。
+H100 結果（[`results/phase0_train_speed_h100`](results/phase0_train_speed_h100/summary.md)）：CUDA graph 讓訓練快 1.7 倍（orig）
+到 4.6 倍（blt）；快速管線在 3 個種子上重現第 1–2 輪的準確率（blt 每步 +0.1–0.35 點，在種子差異內），3 個種子的 blt 從約 300 分鐘
+降到 83 分鐘。之後的新實驗改用快速管線。
 
 ## 下一階段方向（討論中）
 

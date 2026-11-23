@@ -218,3 +218,40 @@ python scripts/run_experiment.py c100_vcnet_blt_orig2 c100_vcnet_blt_orig4 --see
 ```
 
 並行時每個行程只分到 8 / 3 ≈ 2 個 CPU 核心，CPU 增強可能成為瓶頸；`bench_train.py --procs 3` 的 `cpu-eager` 列會顯示這一點。
+
+### 階段 0 結果（H100，[`results/phase0_train_speed_h100`](../results/phase0_train_speed_h100/summary.md)）
+
+**速度**（每秒張數，完整訓練步，batch 256）：
+
+| 設定 | orig | adapt_blt |
+|---|---|---|
+| 原本（CPU 增強、eager） | 9,034 | 1,483 |
+| GPU 增強 + 編譯 + CUDA graph | **15,494（1.7 倍）** | 6,105（4.1 倍） |
+| CPU 增強 + 編譯 + CUDA graph | 11,895（受限於 CPU 增強上限 11,465） | **6,867（4.6 倍）** |
+
+- CUDA graph 是主要的加速來源；只編譯不錄 graph 對 orig 沒有幫助。
+- blt 上 GPU 增強反而比 CPU 增強慢 4.65 ms/步：GPU 增強每批把幾個常數從 CPU 複製到 GPU，每次複製都讓 CPU 等 GPU
+  做完上一步，兩者無法重疊。0.15.1 已修正（常數留在 GPU 上；下一批在另一個 CUDA stream 上與訓練步同時增強）。
+- 3 份並行：一旦每份都用 CUDA graph，總吞吐量不增加（5,776 vs 單份 6,105），因為沒有 MPS 時 GPU 在行程之間分時切換。
+- batch 512 / 1024 的吞吐量仍明顯上升（blt 到 9,919，orig 到 33,891），但需要改學習率並重新驗證。
+
+**驗證**：快速管線（`_FAST`）重現第 1–2 輪。`adapt_blt_fast` 每一步比第 2 輪高 0.1–0.35 點（種子標準差 0.3–0.6），
+校準相同；`orig_fast` 高 0.9 點但種子差異較大（1.8），不顯著。3 個種子的牆鐘時間：blt 82.6 分鐘（原本約 300 分鐘），
+orig 30.5 分鐘（原本約 50 分鐘）。**之後的新實驗改用 `_FAST`**；第 1–3 輪的實驗名稱與設定不變。
+
+0.15.1 另外：`--parallel` 時不量 evaluate.py 的延遲（和其他執行共用 GPU，數字無效）；`--channels-last`；
+`bench_train.py --profile N` 列出最耗 GPU 時間的 kernel。
+
+### 階段 0 第 2 次量測（0.15.1）
+
+```bash
+python scripts/bench_train.py c100_vcnet_orig c100_vcnet_adapt_blt
+```
+
+```bash
+python scripts/bench_train.py c100_vcnet_adapt_blt --configs gpu-compile --profile 5 --iters 20 --repeats 1 --no-data-only
+```
+
+- 第一個指令的預設組合改為：`cpu-eager`、`cpu-cg`、`gpu-cg-noprefetch`（修正常數複製、但不用另一個 stream）、
+  `gpu-cg`（再加上另一個 stream）、`cpu-cg-cl` / `gpu-cg-cl`（channels_last）、batch 512 / 1024。
+- 第二個指令列出 blt 訓練步中最耗 GPU 時間的 kernel（CUDA graph 內看不到個別 kernel，所以用沒有 graph 的 `gpu-compile`）。

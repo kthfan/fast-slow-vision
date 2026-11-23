@@ -7,13 +7,18 @@ steps + Stage A loss + backward + clip + AdamW) under different pipelines, for n
 Configs (``--configs``; preset names, or key=value lists such as "data=gpu,compile=reduce-overhead,bs=512"):
     cpu-eager      CPU DataLoader (PIL + RandAugment), eager, foreach AdamW  = the recipe of rounds 1-3
     cpu-cg         CPU DataLoader + compiled step with CUDA graphs: is the CPU loader the ceiling?
+    cpu-cg-cl / gpu-cg-cl   + channels_last (NHWC) weights and activations
     gpu-eager      augmentation on the GPU (fsv/gpu_aug.py), eager
     gpu-fused      + fused AdamW
     gpu-compile    + torch.compile (Inductor)
-    gpu-cg         + CUDA graphs (compile mode reduce-overhead)
+    gpu-cg         + CUDA graphs (compile mode reduce-overhead); the next batch is augmented on a side
+                   stream while the step runs (0.15.1; gpu-cg-noprefetch = the same on one stream)
     gpu-cg-bs512 / gpu-cg-bs1024   bigger batches (the lr would need re-tuning; speed only)
 Keys: data=cpu|gpu, compile=none|default|reduce-overhead|max-autotune-no-cudagraphs,
-      opt=foreach|fused, bs=<global batch>.
+      opt=foreach|fused, bs=<global batch>, cl=0|1 (channels_last), prefetch=0|1 (GPU data only).
+
+``--profile N`` adds a torch.profiler table of the top GPU kernels over N iterations of every config
+(use it with configs without CUDA graphs, e.g. gpu-compile: inside a graph the kernels are not listed).
 
 ``--procs N`` runs N copies of every config at once on the same GPU (disjoint CPU cores, measured
 over the same window), i.e. N seeds in parallel; the img/s column is then the sum over copies.
@@ -56,10 +61,13 @@ PRESETS = {
     "gpu-fused": {"data": "gpu", "compile": "none", "opt": "fused"},
     "gpu-compile": {"data": "gpu", "compile": "default", "opt": "fused"},
     "gpu-cg": {"data": "gpu", "compile": "reduce-overhead", "opt": "fused"},
+    "gpu-cg-noprefetch": {"data": "gpu", "compile": "reduce-overhead", "opt": "fused", "prefetch": 0},
+    "gpu-cg-cl": {"data": "gpu", "compile": "reduce-overhead", "opt": "fused", "cl": 1},
+    "cpu-cg-cl": {"data": "cpu", "compile": "reduce-overhead", "opt": "fused", "cl": 1},
     "gpu-cg-bs512": {"data": "gpu", "compile": "reduce-overhead", "opt": "fused", "bs": 512},
     "gpu-cg-bs1024": {"data": "gpu", "compile": "reduce-overhead", "opt": "fused", "bs": 1024},
 }
-DEFAULT_CONFIGS = ["cpu-eager", "gpu-eager", "gpu-fused", "gpu-compile", "gpu-cg", "cpu-cg", "gpu-cg-bs512",
+DEFAULT_CONFIGS = ["cpu-eager", "cpu-cg", "gpu-cg-noprefetch", "gpu-cg", "cpu-cg-cl", "gpu-cg-cl", "gpu-cg-bs512",
                    "gpu-cg-bs1024"]
 
 
@@ -69,7 +77,7 @@ def parse_config(spec: str) -> dict:
     cfg = {"name": spec, "data": "gpu", "compile": "none", "opt": "foreach"}
     for kv in spec.split(","):
         k, v = kv.split("=")
-        cfg[k.strip()] = int(v) if k.strip() == "bs" else v.strip()
+        cfg[k.strip()] = int(v) if k.strip() in ("bs", "cl", "prefetch") else v.strip()
     return cfg
 
 
@@ -87,6 +95,7 @@ def parse_args(argv=None):
     p.add_argument("--fake-data", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--json", default=None, help="also write all results to this JSON file")
     p.add_argument("--no-data-only", action="store_true", help="skip the loader-only measurements")
+    p.add_argument("--profile", type=int, default=0, help="profile N extra iterations per config (top GPU kernels)")
     # internal: one copy of a --procs run
     p.add_argument("--child", default=None, help=argparse.SUPPRESS)  # "<barrier dir>:<id>:<n>"
     return p.parse_args(argv)
@@ -112,7 +121,7 @@ def infinite(loader):
 def make_loader(targs, cfg, device, workers):
     ds = splits_for(targs)["train"]
     if cfg["data"] == "gpu":
-        return T.gpu_loader(targs, ds, targs.batch_size, device)
+        return T.gpu_loader(targs, ds, targs.batch_size, device, prefetch=bool(cfg.get("prefetch", 1)))
     return DataLoader(ds, batch_size=targs.batch_size, shuffle=True, num_workers=workers,
                       pin_memory=device.type == "cuda", drop_last=True, persistent_workers=workers > 0)
 
@@ -145,11 +154,14 @@ def measure(exp: str, cfg: dict, args, device, workers) -> dict:
     amp = targs.amp if targs.amp != "auto" else auto_amp(device)
     torch.manual_seed(0)
     model = T.model_from_args(targs, NUM_CLASSES[targs.dataset]).to(device)
+    cl = bool(cfg.get("cl", 0))
+    if cl:
+        model = model.to(memory_format=torch.channels_last)
     opt = make_optimizer(T.param_groups(model, targs.wd), targs.lr, device, cfg["opt"])
     scaler = torch.amp.GradScaler("cuda", enabled=amp == "fp16")
     mixup = Mixup(NUM_CLASSES[targs.dataset], targs.mixup, targs.cutmix, targs.mix_prob, groups=targs.mix_groups)
     step = TrainStep(model, model.parameters(), opt, scaler, T.loss_config(targs), device, amp, targs.clip,
-                     targs.loss_steps, None if cfg["compile"] == "none" else cfg["compile"])
+                     targs.loss_steps, None if cfg["compile"] == "none" else cfg["compile"], cl)
     model.train()
     data = infinite(make_loader(targs, cfg, device, workers))
 
@@ -190,11 +202,30 @@ def measure(exp: str, cfg: dict, args, device, workers) -> dict:
            "iters_per_epoch": n_train // targs.batch_size, "epochs": targs.epochs, "amp": amp,
            "peak_mem_gb": torch.cuda.max_memory_allocated(device) / 2**30 if device.type == "cuda" else 0.0}
     res["minutes_per_run"] = res["epochs"] * res["iters_per_epoch"] * ms / 1e3 / 60
+    res["channels_last"] = cl
+    if args.profile > 0:
+        res["profile"] = profile_table(one, args.profile, device)
     del step, opt, model, data
     torch._dynamo.reset()
     if device.type == "cuda":
         torch.cuda.empty_cache()
     return res
+
+
+def profile_table(one, n: int, device, rows: int = 25) -> str:
+    from torch.autograd.profiler_util import FunctionEventAvg
+    from torch.profiler import ProfilerActivity, profile
+
+    acts = [ProfilerActivity.CPU] + ([ProfilerActivity.CUDA] if device.type == "cuda" else [])
+    with profile(activities=acts) as prof:
+        for _ in range(n):
+            one()
+        sync(device)
+    if device.type != "cuda":
+        key = "self_cpu_time_total"
+    else:
+        key = "self_device_time_total" if hasattr(FunctionEventAvg, "self_device_time_total") else "self_cuda_time_total"
+    return prof.key_averages().table(sort_by=key, row_limit=rows, max_name_column_width=70)
 
 
 def data_only(exp: str, args, device, workers, n_batches: int = 60) -> list[dict]:
@@ -292,6 +323,8 @@ def main(argv=None):
             if not args.child:
                 print(f"[bench_train] {exp} {spec}: {r['img_per_s']:,.0f} img/s, {r['ms_per_iter']:.2f} ms/it, "
                       f"first iteration {r['first_iter_s']:.1f} s, loss {r['loss']:.3f}", flush=True)
+                if r.get("profile"):
+                    print(f"[profile {exp} {spec}] {args.profile} iterations\n{r['profile']}", flush=True)
         loaders = [] if (args.no_data_only or args.child) else data_only(exp, args, device, workers)
         out["loaders"][exp] = loaders
         if not args.child:

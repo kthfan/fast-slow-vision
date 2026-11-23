@@ -129,7 +129,9 @@ def run_one(args, exp_name: str, seed: int, n_cpus: int, machine_cpus: int, tinf
     train_cmd = [py, "scripts/train.py", *exp["train"], *shlex.split(args.extra), "--seed", str(seed),
                  "--data-dir", args.data_dir, "--out", str(run_dir), "--max-cpus", str(n_cpus), "--resume"]
     eval_cmd = [py, "scripts/evaluate.py", "--ckpt", str(run_dir / "model.pt"), "--data-dir", args.data_dir,
-                "--max-cpus", str(n_cpus), "--latency"]
+                "--max-cpus", str(n_cpus)]
+    if args.parallel <= 1:  # with other runs on the GPU the timings would be meaningless
+        eval_cmd.append("--latency")
     if args.cache or args.cache_train is not None:
         eval_cmd.append("--cache")
         if args.cache_train is not None:

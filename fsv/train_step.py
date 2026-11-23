@@ -25,13 +25,15 @@ COMPILE_MODES = ("none", "default", "reduce-overhead", "max-autotune-no-cudagrap
 
 class TrainStep:
     def __init__(self, net, params, opt, scaler, loss_cfg: StageALossConfig, device, amp: str, clip: float,
-                 loss_steps: str = "all", compile_mode: str | None = None):
+                 loss_steps: str = "all", compile_mode: str | None = None, channels_last: bool = False):
         device = torch.device(device)
         self.params = [p for p in params if p.requires_grad]
         self.opt, self.scaler, self.clip = opt, scaler, clip
         self.cudagraphs = compile_mode == "reduce-overhead" and device.type == "cuda"
 
         def fwd_loss(x, target):
+            if channels_last:  # NHWC activations: cuDNN's preferred layout for bf16 convolutions
+                x = x.contiguous(memory_format=torch.channels_last)
             with autocast_ctx(device, amp):
                 logits = net(x)
             if loss_steps == "last":

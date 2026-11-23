@@ -17,8 +17,12 @@ Faithfulness to torchvision (``RandAugment`` on PIL images, 31 magnitude bins):
   so posterize / solarize / equalize see the same kind of values;
 * shear is about the top-left pixel (torchvision passes center=[0, 0]), rotation about the centre.
 It is a re-implementation, not bit-identical: the random streams differ, and PIL's exact rounding
-and pixel-centre conventions are not reproduced. Validate accuracy once before relying on it
-(experiment ``c100_vcnet_adapt_blt_fast``).
+and pixel-centre conventions are not reproduced. Validated on the H100 (0.15.0): c100_vcnet_adapt_blt_fast
+and c100_vcnet_orig_fast match rounds 1-2 within the seed spread.
+
+No host synchronisation (0.15.1): every constant lives on the device (``_consts``), so the CPU can
+queue the next batch while the GPU still runs the previous training step; ``GPULoader`` also
+augments the next batch on a side CUDA stream, concurrently with the training step.
 """
 
 from __future__ import annotations
@@ -51,10 +55,8 @@ def _gray(x: torch.Tensor) -> torch.Tensor:
     return (0.2989 * r + 0.587 * g + 0.114 * b).floor().unsqueeze(1)  # [B, 1, H, W]
 
 
-def _sharpness_degenerate(x: torch.Tensor) -> torch.Tensor:
-    k = torch.ones(3, 3, device=x.device, dtype=x.dtype)
-    k[1, 1] = 5.0
-    k = (k / k.sum()).expand(x.shape[1], 1, 3, 3)
+def _sharpness_degenerate(x: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
+    """k: the [C, 1, 3, 3] smoothing kernel [[1, 1, 1], [1, 5, 1], [1, 1, 1]] / 13."""
     d = F.conv2d(x, k, groups=x.shape[1]).round()  # interior only
     out = x.clone()
     out[..., 1:-1, 1:-1] = d
@@ -94,6 +96,7 @@ class GPUAugment:
         self.std = torch.tensor(std).view(1, 3, 1, 1)
         self.randaug, self.num_ops, self.erase, self.pad, self.flip = randaug, num_ops, erase, pad, flip
         self.g = generator
+        self._cache = {}
         frac = magnitude / (N_BINS - 1)
         self.shear = 0.3 * frac
         self.translate_frac = 150.0 / 331.0 * frac  # times the image size, truncated to int pixels
@@ -101,6 +104,24 @@ class GPUAugment:
         self.enhance = 0.9 * frac
         self.posterize_bits = int(8 - round(magnitude / ((N_BINS - 1) / 4)))
         self.solarize = 255.0 * (1 - frac)
+
+    def _consts(self, x: torch.Tensor) -> dict:
+        """Device-resident constants, built once per (device, size): creating them per batch from
+        Python values would copy host -> device and stall the CPU until the GPU is idle."""
+        B, C, H, W = x.shape
+        key = (x.device, C, H, W)
+        if key not in self._cache:
+            k = torch.ones(3, 3)
+            k[1, 1] = 5.0
+            self._cache[key] = {
+                "mean": self.mean.to(x.device), "std": self.std.to(x.device),
+                "ctr": torch.tensor([(W - 1) / 2, (H - 1) / 2], device=x.device),
+                "D": torch.tensor([W / 2, H / 2], device=x.device),
+                "sharp": (k / k.sum()).expand(C, 1, 3, 3).contiguous().to(x.device),
+                "rows": torch.arange(H, device=x.device), "cols": torch.arange(W, device=x.device),
+                "chans": torch.arange(C, device=x.device),
+            }
+        return self._cache[key]
 
     # ------------------------------------------------------------------ random helpers
     def _rand(self, *shape, device):
@@ -114,13 +135,13 @@ class GPUAugment:
         B, C, H, W = x.shape
         dev = x.device
         if self.pad > 0:
+            c = self._consts(x)
             xp = F.pad(x, (self.pad,) * 4)
             oy = self._randint(2 * self.pad + 1, (B,), dev)
             ox = self._randint(2 * self.pad + 1, (B,), dev)
-            rows = (oy[:, None] + torch.arange(H, device=dev))[:, None, :, None]
-            cols = (ox[:, None] + torch.arange(W, device=dev))[:, None, None, :]
-            x = xp[torch.arange(B, device=dev)[:, None, None, None], torch.arange(C, device=dev)[None, :, None, None],
-                   rows, cols]
+            rows = (oy[:, None] + c["rows"])[:, None, :, None]
+            cols = (ox[:, None] + c["cols"])[:, None, None, :]
+            x = xp[torch.arange(B, device=dev)[:, None, None, None], c["chans"][None, :, None, None], rows, cols]
         if self.flip:
             m = self._rand(B, device=dev) < 0.5
             x = torch.where(m[:, None, None, None], x.flip(-1), x)
@@ -143,11 +164,12 @@ class GPUAugment:
         th = s * math.radians(self.rotate)
         c, si = torch.cos(th), torch.sin(th)
         R = torch.stack([torch.stack([c, -si], -1), torch.stack([si, c], -1)], -2)  # [B, 2, 2]
-        ctr = torch.tensor([(W - 1) / 2, (H - 1) / 2], device=dev)
+        consts = self._consts(x)
+        ctr = consts["ctr"]
         A = torch.where(rot[:, None, None], R, A)
         b = torch.where(rot[:, None], ctr - (R @ ctr), b)
         # normalised: u = D^-1 (p - c), D = diag(W/2, H/2)
-        D = torch.tensor([W / 2, H / 2], device=dev)
+        D = consts["D"]
         tA = A * D[None, None, :] / D[None, :, None]
         tb = ((A @ ctr) + b - ctr) / D
         theta = torch.cat([tA, tb[:, :, None]], 2)
@@ -169,7 +191,7 @@ class GPUAugment:
             BRIGHTNESS: lambda: _blend(x, torch.zeros_like(x), f),
             COLOR: lambda: _blend(x, gray, f),
             CONTRAST: lambda: _blend(x, gray.mean((1, 2, 3), keepdim=True), f),
-            SHARPNESS: lambda: _blend(x, _sharpness_degenerate(x), f),
+            SHARPNESS: lambda: _blend(x, _sharpness_degenerate(x, self._consts(x)["sharp"]), f),
             POSTERIZE: lambda: (x.long() & mask).float(),
             SOLARIZE: lambda: torch.where(x >= self.solarize, 255 - x, x),
             AUTOCONTRAST: lambda: _autocontrast(x),
@@ -199,8 +221,9 @@ class GPUAugment:
         w = w.gather(1, first[:, None])[:, 0]
         i = torch.floor(self._rand(B, device=dev) * (H - h + 1))
         j = torch.floor(self._rand(B, device=dev) * (W - w + 1))
-        yy = torch.arange(H, device=dev)[None, :, None]
-        xx = torch.arange(W, device=dev)[None, None, :]
+        c = self._consts(x)
+        yy = c["rows"][None, :, None]
+        xx = c["cols"][None, None, :]
         box = ((yy >= i[:, None, None]) & (yy < (i + h)[:, None, None]) &
                (xx >= j[:, None, None]) & (xx < (j + w)[:, None, None]) & any_ok[:, None, None])
         return x.masked_fill(box[:, None], 0.0)
@@ -213,7 +236,8 @@ class GPUAugment:
         if self.randaug:
             for _ in range(self.num_ops):
                 x = self.randaug_round(x)
-        x = (x / 255.0 - self.mean.to(x.device)) / self.std.to(x.device)
+        c = self._consts(x)
+        x = (x / 255.0 - c["mean"]) / c["std"]
         if self.erase > 0:
             x = self.random_erase(x)
         return x
@@ -239,7 +263,7 @@ class GPULoader:
     the augmentation stream is seeded per rank."""
 
     def __init__(self, ds, batch_size: int, device, mean, std, seed: int = 0, rank: int = 0, world: int = 1,
-                 **aug_kw):
+                 prefetch: bool = True, **aug_kw):
         images, labels = subset_arrays(ds)
         self.x = torch.from_numpy(images).to(device).permute(0, 3, 1, 2).contiguous()  # uint8 on the device
         self.y = torch.from_numpy(labels).to(device)
@@ -249,6 +273,8 @@ class GPULoader:
         self.g_perm = torch.Generator(device=dev).manual_seed(seed)
         self.aug = GPUAugment(mean, std, generator=torch.Generator(device=dev).manual_seed(10_007 * seed + rank + 1),
                               **aug_kw)
+        # augment batch k+1 on a side stream while the training step k runs on the main stream
+        self.side = torch.cuda.Stream(dev) if prefetch and dev.type == "cuda" else None
 
     def __len__(self) -> int:
         return self.n // self.bs
@@ -256,9 +282,29 @@ class GPULoader:
     def set_epoch(self, epoch: int) -> None:  # parity with DistributedSampler; the stream is already per epoch
         pass
 
+    def _batch(self, perm: torch.Tensor, k: int):
+        idx = perm[k * self.bs:(k + 1) * self.bs]
+        return self.aug(self.x[idx]), self.y[idx]
+
     def __iter__(self):
         perm = torch.randperm(len(self.y), device=self.x.device, generator=self.g_perm)
         perm = perm[self.rank::self.world][: self.n]
-        for k in range(len(self)):
-            idx = perm[k * self.bs:(k + 1) * self.bs]
-            yield self.aug(self.x[idx]), self.y[idx]
+        n = len(self)
+        if self.side is None:
+            for k in range(n):
+                yield self._batch(perm, k)
+            return
+        main = torch.cuda.current_stream(self.x.device)
+        self.side.wait_stream(main)  # perm is ready
+        perm.record_stream(self.side)
+        with torch.cuda.stream(self.side):
+            nxt = self._batch(perm, 0)
+        for k in range(n):
+            main.wait_stream(self.side)  # batch k is ready
+            x, y = nxt
+            x.record_stream(main)
+            y.record_stream(main)
+            if k + 1 < n:
+                with torch.cuda.stream(self.side):
+                    nxt = self._batch(perm, k + 1)
+            yield x, y

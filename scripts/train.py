@@ -80,6 +80,7 @@ def parse_args(argv=None):
     p.add_argument("--compile-mode", default="none", choices=COMPILE_MODES,
                    help="torch.compile the forward + loss; reduce-overhead also captures CUDA graphs")
     p.add_argument("--opt-impl", default="foreach", choices=["foreach", "fused"], help="AdamW implementation")
+    p.add_argument("--channels-last", action="store_true", help="NHWC memory format for weights and activations")
     # augmentation
     p.add_argument("--mixup", type=float, default=0.8)
     p.add_argument("--cutmix", type=float, default=1.0)
@@ -185,10 +186,11 @@ def compile_mode(args) -> str | None:
     return None if mode == "none" else mode
 
 
-def gpu_loader(args, train_ds, per_gpu_bs: int, device, rank: int = 0, world: int = 1) -> GPULoader:
+def gpu_loader(args, train_ds, per_gpu_bs: int, device, rank: int = 0, world: int = 1,
+               prefetch: bool = True) -> GPULoader:
     mean, std = STATS[args.dataset]
     return GPULoader(train_ds, per_gpu_bs, device, mean, std, seed=args.seed, rank=rank, world=world,
-                     randaug=not args.no_randaug, erase=args.erase)
+                     prefetch=prefetch, randaug=not args.no_randaug, erase=args.erase)
 
 
 # --------------------------------------------------------------------------- main
@@ -232,6 +234,8 @@ def main(argv=None):
 
     num_classes = NUM_CLASSES[args.dataset]
     model = model_from_args(args, num_classes).to(device)
+    if args.channels_last:
+        model = model.to(memory_format=torch.channels_last)
     n_params = sum(p.numel() for p in model.parameters())
     opt = make_optimizer(param_groups(model, args.wd), args.lr, device, args.opt_impl)
     scaler = torch.amp.GradScaler("cuda", enabled=amp == "fp16")
@@ -253,7 +257,7 @@ def main(argv=None):
     if world > 1:
         train_model = DDP(model, device_ids=[local] if device.type == "cuda" else None)
     step = TrainStep(train_model, model.parameters(), opt, scaler, loss_cfg, device, amp, args.clip,
-                     args.loss_steps, compile_mode(args))
+                     args.loss_steps, compile_mode(args), args.channels_last)
 
     iters_per_epoch = len(train_loader)
     total_iters = args.epochs * iters_per_epoch
@@ -265,7 +269,7 @@ def main(argv=None):
         (out / "config.json").write_text(json.dumps(meta, indent=2))
         print(f"[train] params={n_params / 1e6:.2f}M world={world} amp={amp} iters/epoch={iters_per_epoch} "
               f"cpus/rank={n_cpus} workers/rank={args.workers} data={'gpu' if args.gpu_aug else 'cpu'} "
-              f"compile={compile_mode(args)} opt={args.opt_impl}",
+              f"compile={compile_mode(args)} opt={args.opt_impl} channels_last={args.channels_last}",
               flush=True)
 
     t_start = time.time()
