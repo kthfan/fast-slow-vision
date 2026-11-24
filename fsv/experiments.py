@@ -164,6 +164,7 @@ EXPERIMENTS: dict[str, dict] = {
     },
     # ---- phase 0, step 2: bigger batches (bench_train: blt 6.6k -> 8.3k / 10.2k img/s at 512 / 1024).
     # AdamW learning rate scaled with sqrt(batch / 256); same epochs and warmup epochs (fewer updates).
+    # Result (results/phase0_train_speed_h100): -1.0 (512) and -3.4 (1024) points; batch 256 stays the recipe.
     "c100_vcnet_adapt_blt_fast_bs512": {
         "desc": "c100_vcnet_adapt_blt_fast with batch 512, lr 1.4e-3 (sqrt scaling); must match the batch-256 run.",
         "train": _VC_ADAPT + ["--lateral", "--topdown"] + _FAST + ["--batch-size", "512", "--lr", "1.4e-3"],

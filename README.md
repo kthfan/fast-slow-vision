@@ -680,6 +680,7 @@ Kaggle T4、隨機權重、10,240 張圖（吞吐量 img/s）：
 
 - 增益幾乎全部來自架構（同計算量 +3.1 點）；每步讀出不拖累最終準確率；自適應的價值是「一個模型適用所有計算預算」，
   加上停止策略在 batch 1 小幅省計算（λ=0.1 以 88% 計算量追平 `blt_orig2`），但追不上 4 步的模型。
+- 報告（[`docs/vcnet_report.html`](docs/vcnet_report.html)）已加入第 3 輪（5.4 節）。
 
 **訓練加速（階段 0，0.15.0）**：GPU 上的資料增強、編譯 + CUDA graph 的訓練步、fused AdamW、`--parallel` 並行種子。
 量測用 `scripts/bench_train.py`，驗證用 `c100_vcnet_adapt_blt_fast`、`c100_vcnet_orig_fast`；步驟見
@@ -689,6 +690,7 @@ H100 結果（[`results/phase0_train_speed_h100`](results/phase0_train_speed_h10
 降到 83 分鐘。之後的新實驗改用快速管線。
 0.15.1 修正 GPU 增強中的同步後，orig 快 2.9 倍；0.15.2 把訓練時的雙線性上採樣改成矩陣乘法（其反向原本佔 blt 訓練步約 9%）。
 快速管線的實驗請依序跑（開了 CUDA graph 後並行多份不會更快）。
+batch 512 / 1024（學習率按 √ 放大）各低 1.0 / 3.4 點，不採用；新實驗預設為快速管線 + batch 256（blt 3 個種子約 65 分鐘，原本約 300 分鐘）。
 
 ## 下一階段方向（討論中）
 

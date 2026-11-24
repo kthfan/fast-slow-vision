@@ -133,3 +133,50 @@ gpu-compile 4,521 img/s, 56.62 ms/it. Top GPU time over 5 iterations (Self CUDA 
   triton group_norm backward                      3.3 + 2.1 ms
   conv_depthwise2d_grad_weight                    2.3 ms   (15 calls, 156 us each)
 (kernel rows are also counted inside the aten rows above them)
+
+## Third measurement (code 0.15.2: training upsampling as matmuls)
+## python scripts/bench_train.py c100_vcnet_adapt_blt --configs cpu-cg gpu-cg gpu-cg-bs1024 --no-data-only
+
+[bench_train c100_vcnet_adapt_blt] NVIDIA H100 NVL | amp bf16 | 200 epochs | copies at once: 1 | speed-up vs cpu-cg
+  config              bs     img/s    ms/it      x  1st it s  peak GB  min/run   3 seeds min  spread
+  cpu-cg             256     6,986    36.64  1.00x      36.0     1.90     21.4          64.1    1.05
+  gpu-cg             256     6,858    37.33  0.98x      34.5     2.04     21.8          65.3    1.00
+  gpu-cg-bs1024     1024    11,102    92.24  1.59x      34.8     7.59     13.2          39.7    1.00
+
+## Batch-size validation: python scripts/run_experiment.py c100_vcnet_adapt_blt_fast_bs1024 c100_vcnet_adapt_blt_fast_bs512 --seeds 0 1 2
+
+===== BEGIN FSV SUMMARY =====
+code 0.15.2+4d35f43fa6f7 | NVIDIA H100 NVL | torch 2.6.0+cu124 | cpus 8/48
+
+[c100_vcnet_adapt_blt_fast_bs1024] seeds 0,1,2 | params 1.15M | train 15.5±0.7 min | epoch 4.3±0.2s
+  test acc%  60.24±0.32 63.96±0.44 65.11±0.47 65.42±0.40 65.43±0.37 65.44±0.37 65.41±0.36 65.35±0.26
+  ECE raw%   17.40±0.29 12.52±0.29 12.18±0.64 12.07±0.63 11.99±0.63 11.97±0.64 11.93±0.51 11.87±0.59
+  ECE TS%    2.13±0.24 2.69±0.53 2.73±0.73 2.57±0.63 2.64±0.64 2.73±0.72 2.64±0.56 2.73±0.61
+  NLL TS     1.457±0.007 1.308±0.016 1.265±0.017 1.255±0.017 1.255±0.016 1.254±0.016 1.254±0.016 1.255±0.016
+  AURC TS%   16.23±0.10 13.30±0.32 12.56±0.35 12.34±0.30 12.34±0.30 12.33±0.30 12.34±0.29 12.36±0.29
+  temp       0.689±0.001 0.743±0.002 0.746±0.002 0.750±0.002 0.750±0.002 0.750±0.002 0.751±0.002 0.751±0.002
+  GFLOPs     0.161 0.284 0.406 0.528 0.650 0.773 0.895 1.017
+  lat bs1 ms 3.25±0.07 6.46±0.36 9.66±0.27 12.50±0.50 15.10±0.88 18.36±1.01 20.99±1.12 24.07±0.94
+  lat bs256 ms 3.45±0.11 20.11±0.00 36.99±0.02 53.73±0.04 70.59±0.04 87.32±0.07 104.13±0.08 120.87±0.10
+  holdout%   59.7±0.2 63.5±0.8 64.5±0.5 64.8±0.4 64.9±0.5 64.8±0.5 64.9±0.6 64.8±0.5
+  final train loss 3.340±0.175 | AMP bf16
+  best-step acc 65.48±0.38 | last-step acc 65.35±0.26
+  AUC maxprob 64.52±0.23 entropy 64.26±0.22 fixed_depth 64.82±0.38
+  oracle full 65.35±0.26% @ 0.484±0.003 GFLOPs | any 68.72±0.41% @ 0.187±0.001 GFLOPs
+
+[c100_vcnet_adapt_blt_fast_bs512] seeds 0,1,2 | params 1.15M | train 20.8±0.5 min | epoch 5.9±0.2s
+  test acc%  62.36±0.30 66.67±0.39 67.58±0.53 67.83±0.37 67.80±0.47 67.86±0.52 67.86±0.45 67.87±0.43
+  ECE raw%   17.33±0.10 12.90±0.19 12.34±0.14 12.27±0.02 12.17±0.11 12.20±0.17 12.18±0.11 12.19±0.10
+  ECE TS%    2.44±0.17 2.44±0.07 2.49±0.06 2.39±0.04 2.36±0.03 2.39±0.13 2.34±0.06 2.38±0.15
+  NLL TS     1.365±0.016 1.219±0.023 1.183±0.021 1.173±0.022 1.171±0.024 1.171±0.024 1.170±0.024 1.171±0.023
+  AURC TS%   14.59±0.19 11.75±0.27 11.15±0.26 10.99±0.24 10.95±0.28 10.95±0.30 10.94±0.29 10.95±0.28
+  temp       0.685±0.007 0.742±0.005 0.749±0.004 0.751±0.003 0.752±0.003 0.752±0.003 0.753±0.003 0.753±0.003
+  GFLOPs     0.161 0.284 0.406 0.528 0.650 0.773 0.895 1.017
+  lat bs1 ms 3.27±0.14 6.41±0.25 9.25±0.25 12.22±0.46 15.10±0.38 18.28±0.44 21.29±0.47 23.75±0.97
+  lat bs256 ms 3.36±0.04 22.90±4.82 42.07±8.80 60.72±12.03 79.88±15.98 160.09±125.90 191.32±150.90 259.73±134.83
+  holdout%   62.1±0.7 65.6±0.4 66.6±0.3 66.9±0.2 67.0±0.2 67.0±0.1 67.0±0.1 67.0±0.1
+  final train loss 3.294±0.098 | AMP bf16
+  best-step acc 67.91±0.46 | last-step acc 67.87±0.43
+  AUC maxprob 67.06±0.41 entropy 66.78±0.40 fixed_depth 67.27±0.43
+  oracle full 67.87±0.43% @ 0.462±0.003 GFLOPs | any 71.03±0.70% @ 0.187±0.001 GFLOPs
+===== END FSV SUMMARY =====

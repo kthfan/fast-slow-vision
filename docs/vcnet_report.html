@@ -86,6 +86,7 @@ figcaption { font-size: 0.86rem; color: var(--fg2); max-width: 72ch; }
 .legend i.dot { width: 9px; height: 9px; border: 2px solid; border-radius: 50%; }
 .legend i.dia { width: 9px; height: 9px; border: 0; background: var(--fg); transform: rotate(45deg); }
 .legend i.dia.hollow { background: transparent; border: 2px solid var(--fg); }
+.legend i.sq { width: 9px; height: 9px; border: 2px solid; border-radius: 1px; }
 .tip { position: absolute; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 0.78rem; line-height: 1.45; padding: 6px 9px; border-radius: 6px; white-space: nowrap; font-family: var(--font-mono); }
 .names { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 14px 16px; display: grid; gap: 10px; }
 .names dl { margin: 0; display: grid; grid-template-columns: 8.5em 1fr; gap: 6px 14px; }
@@ -117,7 +118,7 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
 <header>
   <div class="meta">fast-slow-vision · VCNet 分支（dev/vcnet → main） · CIFAR-100 · H100 · 2026 年 11 月</div>
   <h1>VCNet 自適應步數報告</h1>
-  <p class="lead">本報告說明 VCNet（仿視覺皮層 CNN）的實作、我們把它改成「步數可變」模型的方式，以及到第 2 輪為止的實驗結果。
+  <p class="lead">本報告說明 VCNet（仿視覺皮層 CNN）的實作、我們把它改成「步數可變」模型的方式，以及到第 3 輪為止的實驗結果。
     研究問題是：<strong>原始 VCNet</strong> 與 <strong>VCNet + 自適應步數</strong> 在準確率、計算量、延遲、校準度上差多少。</p>
   <nav class="toc" aria-label="目錄">
     <a href="#summary"><span>1</span>摘要</a>
@@ -146,8 +147,12 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
     <li><div><b>1.78 ms</b><small>batch 1 延遲<br>blt + 停止策略</small></div>
       <p>閒置 GPU 重量：batch 1（CUDA graph）下，blt + 停止策略比原始 VCNet 跑 2 步（1.91 ms）略快，準確率高 3.2 點。
         batch 256 則相反：停止策略讓吞吐量降到固定步數的 27–42%，原始 VCNet 與 blt 固定 2 步的吞吐量相近（41,499 vs 39,804 張/秒）。</p></li>
-    <li><div><b>待第 3 輪</b><small>架構 vs 自適應</small></div>
-      <p>相對原始模型的增益大部分來自架構（跨步狀態），不是自適應。第 3 輪用同樣架構、照原始方式訓練，把兩者分開。</p></li>
+    <li><div><b>67.61%</b><small>blt_orig2<br>0.284 GFLOPs</small></div>
+      <p>第 3 輪：同樣的 blt 架構照原始方式訓練（固定 2 步、只在最後讀出、只用 CE），比原始 VCNet 高 3.1 點。
+        <strong>增益幾乎全部來自架構</strong>。每步讀出不拖累最終準確率（固定 4 步 68.68% vs blt_orig4 68.90%，差距在種子標準差內）。</p></li>
+    <li><div><b>1 個模型</b><small>涵蓋所有計算預算</small></div>
+      <p>自適應在 CIFAR 上的價值是：一個 adapt_blt 在每個步數都達到「只為該步數訓練的模型」的準確率，原始方式的中間讀出則不能用（blt_orig4 第 1–3 步只有 19–49%）。
+        停止策略以 blt_orig2 88% 的計算量追平它，但沒有任何 λ 追上 blt_orig4。</p></li>
   </ul>
 </section>
 
@@ -257,6 +262,7 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
         <dt>adapt_carry</dt><dd>carry = 帶著。在 adapt 之外，最高層 AIT 加上自己上一步的輸出：AIT<sub>t</sub> += g·AIT<sub>t−1</sub>。</dd>
         <dt>adapt_lat</dt><dd>lat = lateral（側向 / 區內遞迴）。七個腦區都加上自己上一步的輸出，仿 CORnet-RT。</dd>
         <dt>adapt_blt</dt><dd>blt = Bottom-up、Lateral、Top-down。adapt_lat 再加上「上一層在上一步的輸出」往下傳，仿 BLT 網路。</dd>
+        <dt>blt_orig2 / 4</dt><dd>第 3 輪的對照組：與 adapt_blt 架構相同，但照原始 VCNet 的方式訓練：固定 2 或 4 步、只在最後一步讀出、只用 CE。</dd>
       </dl>
       <p><strong>「固定 N 步」</strong>：推論時不用停止策略，每張圖都跑 N 步（第 0 步到第 N−1 步），讀取第 N 步的答案。
         自適應模型訓練時每一步都有讀出，所以可以在任何一步截斷；「固定 N 步」就是把它當成一般的 N 步模型用，作為停止策略的對照組。
@@ -270,6 +276,8 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
       <tr><td><span class="sw" style="background:var(--s2)"></span>adapt_carry</td><td><code>c100_vcnet_adapt_carry</code></td><td class="n">≤ 8</td><td>每一步 / Stage A</td><td class="n">1.02M</td><td class="n">0.113</td></tr>
       <tr><td><span class="sw" style="background:var(--s3)"></span>adapt_lat</td><td><code>c100_vcnet_adapt_lat</code></td><td class="n">≤ 8</td><td>每一步 / Stage A</td><td class="n">1.09M</td><td class="n">0.119</td></tr>
       <tr><td><span class="sw" style="background:var(--s4)"></span>adapt_blt</td><td><code>c100_vcnet_adapt_blt</code></td><td class="n">≤ 8</td><td>每一步 / Stage A</td><td class="n">1.15M</td><td class="n">0.122</td></tr>
+      <tr><td>blt，原始方式訓練</td><td><code>c100_vcnet_blt_orig2</code></td><td class="n">2</td><td>最後一步 / CE</td><td class="n">1.15M</td><td class="n">0.122</td></tr>
+      <tr><td>blt，原始方式訓練</td><td><code>c100_vcnet_blt_orig4</code></td><td class="n">4</td><td>最後一步 / CE</td><td class="n">1.15M</td><td class="n">0.122</td></tr>
     </table></div>
     <p class="note">第 0 步的成本都是 0.161 GFLOPs（V1 0.053 + 第一次由下而上 0.108）；表中「每步」是第 1 步起每多一步的成本。FLOPs 以 <code>torch.utils.flop_counter</code> 實測，只計卷積與矩陣乘法。</p>
   </div>
@@ -298,7 +306,7 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
     <tr><td>硬體</td><td>單張 NVIDIA H100 NVL，bf16 自動混合精度，PyTorch 2.6.0（CUDA 12.4），CPU 上限 8 核</td></tr>
     <tr><td>種子</td><td>每個變體 3 個種子（0、1、2）；表中為平均 ± 標準差</td></tr>
     <tr><td>延遲量測</td><td>測試集預先放上 GPU；batch 256 吞吐量（含 compaction）與 batch 1 延遲（500 張）；batch 1 另有 CUDA graph 模式，去除 kernel 發送開銷</td></tr>
-    <tr><td>程式版本</td><td>第 1 輪 0.9.0，第 2 輪 0.10.0（<code>dev/vcnet</code>，已併入 <code>main</code>）</td></tr>
+    <tr><td>程式版本</td><td>第 1 輪 0.9.0，第 2 輪 0.10.0，第 3 輪 0.15.1（<code>dev/vcnet</code>）。第 3 輪的訓練設定與第 1–2 輪相同（CPU 上的資料增強、eager），3 個執行同時跑在同一張 GPU 上</td></tr>
   </table></div>
 </section>
 
@@ -312,10 +320,11 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
       <div class="legend" id="legA"></div>
       <div class="fig chart" id="chartA"></div>
       <figcaption>圖 3　固定步數下的測試準確率對累計 GFLOPs（每個點是一步，3 個種子平均）。
-        adapt 與 carry 在第 2 步後持平；lat 與 blt 繼續進步，blt 到第 4 步。黑色菱形為原始 VCNet，空心菱形為不含回饋的原始模型。滑鼠移到點上可看數值。</figcaption>
+        adapt 與 carry 在第 2 步後持平；lat 與 blt 繼續進步，blt 到第 4 步。黑色菱形為原始 VCNet，空心菱形為不含回饋的原始模型；
+        方塊為第 3 輪照原始方式訓練的 blt（2 步、4 步）。滑鼠移到點上可看數值。</figcaption>
     </figure>
     <div class="tbl"><table id="tblSteps"></table></div>
-    <p class="note">原始 VCNet 只訓練最後一步的讀出，它的第 0 步（60.99%）是未訓練的讀出，圖中只畫第 2 步。</p>
+    <p class="note">原始方式訓練的模型只訓練最後一步的讀出，前面各步是未訓練的讀出（原始 VCNet 第 1 步 60.99%；blt_orig2 第 1 步 41.06%；blt_orig4 第 1–3 步 19.01 / 44.57 / 48.57%），圖與表中只列最後一步。</p>
   </div>
 
   <div class="sub">
@@ -333,6 +342,8 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
       <tr class="hl"><td>adapt_blt + 停止策略（λ=0.1）</td><td class="n">1.74</td><td class="n">0.252</td><td class="n">91%</td><td class="n">67.77±0.42</td><td class="n">+3.22</td></tr>
       <tr class="hl"><td>adapt_blt + 停止策略（λ=0.01）</td><td class="n">2.41</td><td class="n">0.333</td><td class="n">121%</td><td class="n">68.34±0.55</td><td class="n">+3.79</td></tr>
       <tr><td>adapt_blt，固定 4 步（最佳固定步數）</td><td class="n">4</td><td class="n">0.528</td><td class="n">192%</td><td class="n">68.68±0.58</td><td class="n">+4.13</td></tr>
+      <tr><td>blt_orig2（第 3 輪，原始方式訓練）</td><td class="n">2</td><td class="n">0.284</td><td class="n">103%</td><td class="n">67.61±0.74</td><td class="n">+3.06</td></tr>
+      <tr><td>blt_orig4（第 3 輪，原始方式訓練）</td><td class="n">4</td><td class="n">0.528</td><td class="n">192%</td><td class="n">68.90±0.62</td><td class="n">+4.35</td></tr>
     </table></div>
     <p class="note"><strong>原始 VCNet 與 adapt 固定 2 步</strong>：兩者架構、權重形狀與推論計算完全相同（由下而上一次 + 預測編碼修正一次，0.275 GFLOPs），差別只在訓練：
       原始只訓練 2 步、只在最後一步讀出、只用 CE；adapt 訓練 8 步、每一步都讀出、用 Stage A 損失（CE + Brier + Gatekeeper + 自我蒸餾）。
@@ -369,7 +380,43 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
   </div>
 
   <div class="sub">
-    <h3>5.4 校準</h3>
+    <h3>5.4 第 3 輪：架構 vs 自適應</h3>
+    <p>自適應變體同時改了架構（跨步狀態、由上而下連線）、讀出方式（每步）、損失（Stage A）與推論（停止策略）。
+      第 3 輪把架構固定為 blt，照原始 VCNet 的方式訓練（固定 2 或 4 步、只在最後一步讀出、只用 CE），把兩者分開。</p>
+    <figure>
+      <div class="legend" id="legC"></div>
+      <div class="fig chart" id="chartC"></div>
+      <figcaption>圖 5　blt 架構的三種用法：adapt_blt 固定步數（實線）、adapt_blt + 停止策略（虛線）、照原始方式訓練的 blt_orig2 / blt_orig4（方塊），
+        以及原始 VCNet（菱形）。方塊落在 adapt_blt 固定步數的曲線上：同架構、同步數時，兩種訓練方式的準確率相同。</figcaption>
+    </figure>
+    <div class="tbl"><table>
+      <tr><th>比較</th><th>模型</th><th class="n">GFLOPs</th><th class="n">準確率 %</th><th>結論</th></tr>
+      <tr><td rowspan="2">架構的價值</td><td>原始 VCNet（orig）</td><td class="n">0.275</td><td class="n">64.55±0.96</td><td rowspan="2">同計算量 <strong>+3.06</strong>：增益來自跨步狀態與由上而下連線</td></tr>
+      <tr><td>blt_orig2</td><td class="n">0.284</td><td class="n">67.61±0.74</td></tr>
+      <tr><td rowspan="4">每步讀出是否拖累最終準確率</td><td>blt_orig2</td><td class="n">0.284</td><td class="n">67.61±0.74</td><td rowspan="4">不會：差距 −0.34 與 −0.22，都在種子標準差內</td></tr>
+      <tr><td>adapt_blt，固定 2 步</td><td class="n">0.284</td><td class="n">67.27±0.57</td></tr>
+      <tr><td>blt_orig4</td><td class="n">0.528</td><td class="n">68.90±0.62</td></tr>
+      <tr><td>adapt_blt，固定 4 步</td><td class="n">0.528</td><td class="n">68.68±0.58</td></tr>
+      <tr><td rowspan="4">停止策略的價值</td><td>blt_orig2</td><td class="n">0.284</td><td class="n">67.61±0.74</td><td rowspan="4">λ=0.1 以 88% 計算量追平 blt_orig2；λ=0.03 多 4% 計算量、高 0.6 點；沒有任何 λ 追上 blt_orig4（最佳 68.34%，−0.56 點）</td></tr>
+      <tr class="hl"><td>adapt_blt + 停止策略 λ=0.1</td><td class="n">≈0.251</td><td class="n">67.77±0.42</td></tr>
+      <tr><td>adapt_blt + 停止策略 λ=0.03</td><td class="n">≈0.295</td><td class="n">68.20±0.58</td></tr>
+      <tr><td>adapt_blt + 停止策略 λ=0.01</td><td class="n">≈0.334</td><td class="n">68.34±0.55</td></tr>
+    </table></div>
+    <div class="tbl"><table>
+      <tr><th>每一步的讀出</th><th class="n">1 步</th><th class="n">2 步</th><th class="n">3 步</th><th class="n">4 步</th></tr>
+      <tr><td>blt_orig4（只訓練第 4 步的讀出）</td><td class="n">19.01</td><td class="n">44.57</td><td class="n">48.57</td><td class="n" style="font-weight:700">68.90</td></tr>
+      <tr><td>adapt_blt（每一步都訓練讀出）</td><td class="n">63.72</td><td class="n">67.27</td><td class="n">68.30</td><td class="n" style="font-weight:700">68.68</td></tr>
+    </table></div>
+    <ul>
+      <li><strong>增益來自架構。</strong>相對原始 VCNet 的 +3 點以上，幾乎全部由跨步狀態與由上而下連線帶來；每步讀出與 Stage A 損失沒有提高最終步數的準確率。</li>
+      <li><strong>自適應的價值是「一個模型適用所有計算預算」。</strong>adapt_blt 在每個步數都達到只為該步數訓練的模型的準確率；原始方式訓練的模型中間讀出不能用，換一個計算預算就要重新訓練一個模型。</li>
+      <li><strong>停止策略在 CIFAR 上只小幅省計算。</strong>在 blt_orig2 的準確率下省 12% 計算；batch 1 延遲（CUDA graph）λ=0.1 為 1.78–1.83 ms，比 blt_orig2（計算與 adapt_blt 固定 2 步相同，1.949 ms）快 6–9%。batch 256 仍是固定步數較快。</li>
+      <li><strong>延遲不必重量：</strong>blt_orig2 / blt_orig4 的推論計算與 adapt_blt 固定 2 / 4 步完全相同，直接沿用 5.6 的閒置 GPU 數據（batch 1 CUDA graph 1.949 / 3.882 ms，batch 256 compiled 39,804 / 20,954 張/秒）。</li>
+    </ul>
+  </div>
+
+  <div class="sub">
+    <h3>5.5 校準</h3>
     <div class="tbl"><table>
       <tr><th>模型（最後一步）</th><th class="n">溫度</th><th class="n">ECE 未校準 %</th><th class="n">ECE 溫度縮放 %</th><th class="n">NLL 溫度縮放</th></tr>
       <tr><td>orig_ff</td><td class="n">0.755</td><td class="n">12.35</td><td class="n">1.89</td><td class="n">1.310</td></tr>
@@ -378,16 +425,19 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
       <tr><td>adapt_carry</td><td class="n">0.740</td><td class="n">12.99</td><td class="n">2.47</td><td class="n">1.264</td></tr>
       <tr><td>adapt_lat</td><td class="n">0.754</td><td class="n">12.12</td><td class="n">2.40</td><td class="n">1.176</td></tr>
       <tr><td>adapt_blt</td><td class="n">0.763</td><td class="n">11.58</td><td class="n">2.43</td><td class="n">1.144</td></tr>
+      <tr><td>blt_orig2</td><td class="n">0.757</td><td class="n">12.17</td><td class="n">1.60</td><td class="n">1.170</td></tr>
+      <tr><td>blt_orig4</td><td class="n">0.756</td><td class="n">12.12</td><td class="n">1.46</td><td class="n">1.121</td></tr>
     </table></div>
     <ul>
       <li>所有模型未校準時信心都偏低（溫度 &lt; 1），來自 mixup / CutMix；lat、blt 的第 0 步更明顯（溫度約 0.69，ECE 約 17%）。</li>
-      <li>每步溫度縮放後 ECE 都在 1.8–2.6%。原始模型縮放後的 ECE 最低：Stage A 的 Brier 與 Gatekeeper 損失沒有改善縮放後的校準。</li>
+      <li>每步溫度縮放後 ECE 都在 1.5–2.6%。原始方式訓練的模型縮放後 ECE 最低（orig 1.79%、blt_orig2 1.60%、blt_orig4 1.46%）：Stage A 的 Brier 與 Gatekeeper 損失沒有改善縮放後的校準。
+        同為 4 步時，blt_orig4 的 NLL 也略低於 adapt_blt（1.121 vs 1.144）。</li>
       <li>NLL 隨架構改善（blt 1.144 vs 原始 1.266），反映準確率的提升。</li>
     </ul>
   </div>
 
   <div class="sub">
-    <h3>5.5 延遲與吞吐量</h3>
+    <h3>5.6 延遲與吞吐量</h3>
     <p><strong>batch 1</strong> 是一次處理一張圖，看延遲（毫秒）；<strong>batch 256</strong> 是一次送 256 張，看吞吐量（張/秒）。執行模式有三種：
       eager（一般 PyTorch）、compiled（torch.compile）、CUDA graph（只用於 batch 1，去除 kernel 發送開銷，最接近計算量本身）。</p>
     <ul>
@@ -402,9 +452,9 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
     <div class="legend" id="legLat"></div>
     <div style="display:grid;gap:20px">
       <figure><div class="fig chart" id="chartBs1"></div>
-        <figcaption>圖 5　batch 1（CUDA graph）：準確率對延遲，越往左上越好。停止策略的點為 3 個種子的中位數延遲。</figcaption></figure>
+        <figcaption>圖 6　batch 1（CUDA graph）：準確率對延遲，越往左上越好。停止策略的點為 3 個種子的中位數延遲。</figcaption></figure>
       <figure><div class="fig chart" id="chartBs256"></div>
-        <figcaption>圖 6　batch 256（torch.compile）：準確率對吞吐量，越往右上越好。</figcaption></figure>
+        <figcaption>圖 7　batch 256（torch.compile）：準確率對吞吐量，越往右上越好。</figcaption></figure>
     </div>
     <div class="tbl"><table id="tblIdle"></table></div>
     <p class="note">準確率、平均步數與吞吐量為 3 個種子的平均；batch 1 CUDA graph 為 3 個種子的中位數（滑鼠移到格子上可看各種子）。
@@ -439,7 +489,7 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
   </div>
 
   <div class="sub">
-    <h3>5.6 訓練成本</h3>
+    <h3>5.7 訓練成本</h3>
     <div class="tbl"><table>
       <tr><th>模型</th><th class="n">每 epoch（秒）</th><th class="n">200 epochs（分鐘）</th></tr>
       <tr><td>orig_ff（1 步）</td><td class="n">3.0</td><td class="n">約 10</td></tr>
@@ -447,8 +497,10 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
       <tr><td>adapt / adapt_carry（8 步）</td><td class="n">16.6 / 16.2</td><td class="n">56 / 55</td></tr>
       <tr><td>adapt_lat（8 步）</td><td class="n">21.7±4.6</td><td class="n">73±15</td></tr>
       <tr><td>adapt_blt（8 步）</td><td class="n">36.8±10.7</td><td class="n">124±36</td></tr>
+      <tr><td>blt_orig2 / blt_orig4（2 / 4 步）</td><td class="n">24.2 / 59.0</td><td class="n">68 / 199</td></tr>
     </table></div>
-    <p>blt 的計算量只比 carry 多 8%，訓練卻慢 2.3 倍；一部分可能是同時段的 GPU 干擾，一部分是狀態打包與上採樣的額外開銷，可以再優化。</p>
+    <p>blt 的計算量只比 carry 多 8%，訓練卻慢 2.3 倍；一部分可能是同時段的 GPU 干擾，一部分是狀態打包與上採樣的額外開銷，可以再優化。
+      第 3 輪的 3 個執行同時跑、共用 8 個 CPU 核心（每個約 2 核），資料增強跟不上，訓練時間不能與前兩輪比較。</p>
   </div>
 </section>
 
@@ -462,16 +514,19 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
       blt 進步到第 4 步、lat 在第 3 步左右飽和，與這個解釋一致，但尚未以消融直接驗證。</p>
   </div>
   <div class="sub">
-    <h3>6.2 架構與自適應的貢獻混在一起</h3>
-    <p>原始 VCNet 只在最後一步讀出、只用 CE；自適應變體同時改了架構（跨步狀態）、讀出方式（每步）、損失（Stage A）與推論（停止策略）。
-      從 5.3 看，停止策略本身在 blt 內約帶來 +0.3 到 +0.9 點（同計算量）；相對原始模型的 +2.7 以上大多來自架構。第 3 輪的對照組用來分開這兩者。</p>
+    <h3>6.2 架構與自適應各自的貢獻</h3>
+    <p>第 3 輪（5.4）把兩者分開：相對原始 VCNet 的 +3 點以上幾乎全部來自架構；每步讀出不影響最終步數的準確率；
+      停止策略在 blt 內約帶來 +0.3 到 +0.9 點（同計算量，5.3），對照只為固定步數訓練的模型則是在 2 步處省 12% 計算、在 4 步處追不上。
+      因此在 CIFAR 上，研究主張應放在<strong>架構（跨步狀態 + 由上而下）</strong>，自適應步數的主張是「一個模型適用所有計算預算」與 batch 1 的小幅節省。
+      要證明自適應步數本身重要，需要難度差異更大、需要逐步推理的任務。</p>
   </div>
   <div class="sub">
     <h3>6.3 限制</h3>
     <ul>
       <li>原始 VCNet 是依論文描述的重新實作，寬度、降採樣、回饋接法等都是我們的假設，結果不能直接當作論文模型的表現。</li>
       <li>只在 CIFAR-100（32×32）上實驗；論文的資料集（Spots-10、光場）與 ImageNet 都還沒做。</li>
-      <li>3 個種子，表中為平均 ± 標準差，沒有逐種子的配對比較。</li>
+      <li>3 個種子，表中為平均 ± 標準差，沒有逐種子的配對比較；第 3 輪的差距（−0.34、−0.22）小於標準差，只能說「沒有可測得的差異」。</li>
+      <li>還沒有一般 CNN（例如 ResNet）在同一套訓練流程下的對照組，無法說 blt 比常見骨幹強。</li>
       <li>自適應只在 batch 1 帶來延遲上的好處；batch 256 時停止策略讓吞吐量明顯下降。blt 的 eager 實作每步比 adapt 慢 3.2 倍，需用 torch.compile。adapt_lat 尚未在閒置 GPU 上重量。</li>
       <li>跨步狀態與 BLT 連線是論文以外的延伸，報告時須與原始 VCNet 區分。</li>
     </ul>
@@ -482,14 +537,14 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
 <section id="next">
   <h2><span class="no">7</span>下一步</h2>
   <div class="tbl"><table>
-    <tr><th>實驗</th><th>內容</th><th>回答的問題</th></tr>
-    <tr><td><code>c100_vcnet_blt_orig2</code></td><td>blt 架構，固定 2 步，只在最後讀出，只用 CE</td><td>與 orig 比：跨步狀態本身的價值</td></tr>
-    <tr><td><code>c100_vcnet_blt_orig4</code></td><td>同上，固定 4 步</td><td>與 adapt_blt + 停止策略比：自適應本身的價值；每步讀出是否拖累最終準確率</td></tr>
-    <tr><td>benchmark</td><td>在沒有其他程式的 GPU 上，同一個行程量 blt_orig2、blt_orig4 與 adapt_blt（orig、carry、blt 已於閒置 GPU 重量）</td><td>同架構下，自適應與固定步數的實際延遲</td></tr>
+    <tr><th>方向</th><th>內容</th><th>回答的問題</th></tr>
+    <tr><td>一般 CNN 對照組</td><td>ResNet-20 / 56、WRN-16-4 用同一套訓練流程</td><td>仿皮層架構是否真的比常見骨幹強</td></tr>
+    <tr><td>元件消融</td><td>拿掉 CBAM、側向交互、背側流、預測編碼回饋；只有側向 vs 只有由上而下</td><td>blt 的增益來自哪些連線</td></tr>
+    <tr><td>其他仿皮層遞迴網路</td><td>以同一介面實作 CORnet-RT、BLT、hGRU；閘門式（相乘）回饋</td><td>哪種皮層機制對哪種任務有效</td></tr>
+    <tr><td>難度可控的任務</td><td>路徑追蹤（Pathfinder）等需要逐步傳播的任務，含超出訓練步數的外推</td><td>難的圖是否自動多跑幾步；自適應步數本身的價值</td></tr>
+    <tr><td>更大的影像</td><td>Tiny-ImageNet 或 ImageNet-100；穩健度（CIFAR-100-C）</td><td>每步計算量夠大時，加速是否實際出現</td></tr>
   </table></div>
-  <pre>python scripts/run_experiment.py c100_vcnet_blt_orig2 c100_vcnet_blt_orig4 --seeds 0 1 2</pre>
-  <pre>python scripts/benchmark_adaptive.py c100_vcnet_blt_orig2 c100_vcnet_blt_orig4 c100_vcnet_adapt_blt --seeds 0 1 2 --lams 0.003 0.01 0.03 0.1 0.3</pre>
-  <p>之後可考慮：找出 blt eager 每步慢 3.2 倍的原因並優化（狀態打包、上採樣）、改善 batch 推論時的移除與重組（目前讓吞吐量降到固定步數的 27–42%）、把 T<sub>max</sub> 降到 4–5（blt 在第 4 步後持平）、優化 batch 推論的 compaction、改善 blt 的訓練速度，以及在論文的資料集或更大的影像上驗證。</p>
+  <p>推論方面可考慮：改善 batch 推論時的移除與重組（目前讓吞吐量降到固定步數的 27–42%）、把 T<sub>max</sub> 降到 4–5（blt 在第 4 步後持平）。</p>
 </section>
 
 <!-- ================================================================ A -->
@@ -499,7 +554,7 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
     <h3>A.1 檔案</h3>
     <ul>
       <li>模型：<code>fsv/models/vcnet.py</code>；實驗登記：<code>fsv/experiments.py</code>；設計與假設：<code>docs/vcnet.md</code></li>
-      <li>結果原始輸出：<code>results/vcnet_round1_h100/</code>（adaptive.md、original.md）、<code>results/vcnet_round2_h100/summary.md</code></li>
+      <li>結果原始輸出：<code>results/vcnet_round1_h100/</code>（adaptive.md、original.md）、<code>results/vcnet_round2_h100/summary.md</code>、<code>results/vcnet_round3_h100/summary.md</code></li>
       <li>測試：<code>tests/test_vcnet.py</code>（介面一致性、論文結構、FLOPs、線上停止與 CUDA graph 邏輯）</li>
       <li>程式庫：<a href="https://github.com/kthfan/fast-slow-vision">github.com/kthfan/fast-slow-vision</a>（PR #2 已併入 main）</li>
     </ul>
@@ -508,6 +563,7 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
     <h3>A.2 重現指令</h3>
     <pre>python scripts/run_experiment.py c100_vcnet_orig c100_vcnet_orig_ff --seeds 0 1 2</pre>
     <pre>python scripts/run_experiment.py c100_vcnet_adapt c100_vcnet_adapt_carry c100_vcnet_adapt_lat c100_vcnet_adapt_blt --seeds 0 1 2 --halting</pre>
+    <pre>python scripts/run_experiment.py c100_vcnet_blt_orig2 c100_vcnet_blt_orig4 --seeds 0 1 2</pre>
     <pre>python scripts/summarize.py</pre>
   </div>
   <div class="sub">
@@ -647,12 +703,16 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
     blt: { step: 0.1223, pts: [[0.3, 1.40, 66.74], [0.1, 1.74, 67.77], [0.03, 2.09, 68.20], [0.01, 2.41, 68.34], [0.003, 2.89, 68.46], [0.001, 3.27, 68.49], [0.0003, 4.15, 68.43], [0.0001, 4.80, 68.52]] }
   };
   const ORIG = { gf: 0.275, acc: 64.55, sd: 0.96 }, ORIGFF = { gf: 0.161, acc: 63.72, sd: 1.22 };
+  // round 3: the blt architecture trained like the original VCNet (last readout only, CE)
+  const BLTO = [{ k: 2, gf: 0.284, acc: 67.61, sd: 0.74 }, { k: 4, gf: 0.528, acc: 68.90, sd: 0.62 }];
 
   // ---------------------------------------------------------------- step table
   (function stepTable() {
     let h = "<tr><th>模型</th>" + [...Array(8).keys()].map(t => `<th class="n">${t + 1} 步</th>`).join("") + "</tr>";
     h += `<tr class="ref"><td>orig</td><td class="n">—</td><td class="n">64.55</td>` + "<td class='n'></td>".repeat(6) + "</tr>";
     h += `<tr><td>orig_ff</td><td class="n">63.72</td>` + "<td class='n'></td>".repeat(7) + "</tr>";
+    for (const b of BLTO)
+      h += `<tr><td>blt_orig${b.k}</td>` + [...Array(8).keys()].map(t => `<td class="n">${t === b.k - 1 ? b.acc.toFixed(2) : t < b.k - 1 ? "—" : ""}</td>`).join("") + "</tr>";
     for (const s of SER) {
       const best = Math.max(...ACC[s.key]);
       h += `<tr><td><span class="sw" style="background:var(${s.color})"></span>${s.name}</td>` +
@@ -792,7 +852,8 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
     }
     for (const r of cfg.refs) {
       const x = X(r.x), y = Y(r.y), k = 6;
-      s += `<path d="M${x} ${y - k} L${x + k} ${y} L${x} ${y + k} L${x - k} ${y} Z" style="fill:${r.hollow ? "var(--surface)" : "var(--fg)"};stroke:var(--fg)" stroke-width="${r.hollow ? 2 : 1}"/>`;
+      if (r.sq) s += `<rect x="${x - 5}" y="${y - 5}" width="10" height="10" style="fill:var(--surface);stroke:var(${r.sq})" stroke-width="2.4"/>`;
+      else s += `<path d="M${x} ${y - k} L${x + k} ${y} L${x} ${y + k} L${x - k} ${y} Z" style="fill:${r.hollow ? "var(--surface)" : "var(--fg)"};stroke:var(--fg)" stroke-width="${r.hollow ? 2 : 1}"/>`;
       s += `<text x="${x + (r.dx || 10)}" y="${y + (r.dy || 4)}" text-anchor="${r.anchor || "start"}" style="fill:var(--fg);font:500 11.5px var(--font-body)">${r.label}</text>`;
       pts.push({ x, y, tip: r.tip });
     }
@@ -819,18 +880,34 @@ pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: 
   });
   const origRef = { x: ORIG.gf, y: ORIG.acc, label: "原始 VCNet", dx: 0, dy: 20, anchor: "middle", tip: `原始 VCNet · 2 步<br>0.275 GFLOPs · 64.55±0.96%` };
   const ffRef = { x: ORIGFF.gf, y: ORIGFF.acc, hollow: true, label: "原始，無回饋", dx: 0, dy: 22, anchor: "start", tip: `原始，無回饋 · 1 步<br>0.161 GFLOPs · 63.72±1.22%` };
+  const bltoRefs = (dy) => BLTO.map(b => ({ x: b.gf, y: b.acc, sq: "--s4", label: `blt_orig${b.k}`, dx: b.k === 2 ? -12 : 10, dy: b.k === 2 ? dy : -8, anchor: b.k === 2 ? "end" : "start",
+    tip: `blt_orig${b.k} · 原始方式訓練 · ${b.k} 步<br>${b.gf.toFixed(3)} GFLOPs · ${b.acc.toFixed(2)}±${b.sd.toFixed(2)}%` }));
 
   const legend = (id, items) => {
     document.getElementById(id).innerHTML = items.map(([html, txt]) => `<span>${html}${txt}</span>`).join("");
   };
   legend("legA", [...SER.map(s => [`<i style="border-color:var(${s.color})"></i>`, s.name]),
-    [`<i class="dia"></i>`, "原始 VCNet"], [`<i class="dia hollow"></i>`, "原始，無回饋"]]);
+    [`<i class="dia"></i>`, "原始 VCNet"], [`<i class="dia hollow"></i>`, "原始，無回饋"],
+    [`<i class="sq" style="border-color:var(--s4)"></i>`, "blt_orig（原始方式訓練）"]]);
   chart(document.getElementById("chartA"), {
     label: "各變體固定步數的準確率對 GFLOPs", x0: 0.1, x1: 1.05, y0: 63, y1: 69.5,
     xt: [0.2, 0.4, 0.6, 0.8, 1.0], yt: [63, 64, 65, 66, 67, 68, 69],
     lines: SER.map(s => ({ color: s.color, pts: fixedPts(s), label: s.name.replace("adapt_", ""), labelDy: s.key === "adapt" ? 4 : s.key === "carry" ? -2 : 0 })),
-    refs: [origRef, ffRef]
+    refs: [origRef, ffRef, ...bltoRefs(-8)]
   });
+
+  legend("legC", [[`<i style="border-color:var(--s4)"></i>`, "adapt_blt 固定步數"], [`<i class="dash" style="border-color:var(--s4)"></i>`, "adapt_blt + 停止策略"],
+    [`<i class="sq" style="border-color:var(--s4)"></i>`, "blt_orig2 / 4（原始方式訓練）"], [`<i class="dia"></i>`, "原始 VCNet"]]);
+  {
+    const sb = SER.find(x => x.key === "blt");
+    chart(document.getElementById("chartC"), {
+      label: "blt 架構：固定步數、停止策略與原始方式訓練的準確率對 GFLOPs", x0: 0.14, x1: 0.58, y0: 63.5, y1: 69.5,
+      xt: [0.2, 0.3, 0.4, 0.5], yt: [64, 65, 66, 67, 68, 69], xfmt: v => v.toFixed(1),
+      lines: [{ color: "--s4", pts: fixedPts(sb).filter(p => p.x <= 0.55) },
+              { color: "--s4", pts: polPts("blt", "adapt_blt").filter(p => p.x <= 0.55), dash: true, hollow: true }],
+      refs: [origRef, ...bltoRefs(16)]
+    });
+  }
 
   const SB = SER.slice(1);
   legend("legB", [...SB.map(s => [`<i style="border-color:var(${s.color})"></i>`, s.name]),

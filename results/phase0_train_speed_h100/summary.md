@@ -96,3 +96,33 @@ Decision: new experiments use `_FAST`. Rounds 1-3 keep their recipes, so their n
 * Bigger batches remain the largest lever (blt 1.55x, orig 1.54x from 256 to 1024); validation experiments
   c100_vcnet_adapt_blt_fast_bs512 / _bs1024 (sqrt-scaled learning rate).
 * Parallel copies: no gain once CUDA graphs are on (first measurement), so the fast runs should go one after another.
+
+## Third measurement and the batch-size validation (0.15.2)
+
+Speed of the blt step after the upsampling change: gpu-cg 6,577 -> 6,858 img/s (+4%), cpu-cg 6,874 -> 6,986 (+2%),
+batch 1024 10,219 -> 11,102 (+9%). Smaller than the ~9% of GPU time the profile attributed to the upsampling
+backward at batch 256; the two paths are now within 2%.
+
+Larger batches lose accuracy (learning rate scaled with sqrt(batch / 256), same epochs and warmup epochs):
+
+| step | 1 | 2 | 3 | 4 | 8 | train min / run |
+|---|---|---|---|---|---|---|
+| adapt_blt_fast, batch 256 (reference) | 63.84±0.53 | 67.62±0.44 | 68.51±0.31 | 68.85±0.49 | 68.85±0.44 | 27.5 (82.6 / 3 in parallel) |
+| batch 512, lr 1.4e-3 | 62.36±0.30 | 66.67±0.39 | 67.58±0.53 | 67.83±0.37 | 67.87±0.43 | 20.8 |
+| batch 1024, lr 2e-3 | 60.24±0.32 | 63.96±0.44 | 65.11±0.47 | 65.42±0.40 | 65.35±0.26 | 15.5 |
+
+* Batch 512 is 1.0 point below batch 256 at every step from step 2 on (about two seed standard deviations);
+  batch 1024 is 3.4 points below. Both fail the validation.
+* The final training loss and the held-out accuracy point to under-training (4x fewer updates at batch 1024 with
+  the same 200 epochs), not to instability: loss 3.34 / 3.29 vs 3.24, smooth per-step curves, calibration
+  unchanged after temperature scaling.
+* Recovering it would need a higher learning rate (linear scaling) and/or more epochs, which eats most of the
+  1.2x (512) / 1.6x (1024) speed gain. Not pursued: the training recipe stays at batch 256.
+* The bs512 run's evaluate.py batch-256 latencies are disturbed (standard deviation up to 80% of the mean); not used.
+
+## Phase 0 outcome
+
+The default training recipe for new experiments is `_FAST` at batch 256: augmentation on the GPU, forward + loss
+compiled with CUDA graphs, fused AdamW, runs one after another. Against the recipe of rounds 1-3 on the same idle
+GPU: orig 2.9x (about 6 min per run), adapt_blt 4.6x (about 22 min per run; 3 seeds about 65 min instead of 300).
+Accuracy reproduces rounds 1-2 within the seed spread.
