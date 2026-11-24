@@ -68,12 +68,7 @@ class AdaptiveRunner:
         if compile:
             # one graph per step index t (and per batch-size regime): raise dynamo's small default cache
             # limit so it does not silently fall back to eager after 8 variants
-            import torch._dynamo as dynamo
-
-            for key in ("cache_size_limit", "recompile_limit", "accumulated_cache_size_limit",
-                        "accumulated_recompile_limit"):
-                if hasattr(dynamo.config, key):
-                    setattr(dynamo.config, key, max(getattr(dynamo.config, key), 256))
+            _raise_dynamo_cache_limit()
             self._step = torch.compile(self._step_impl, dynamic=True)
             self._decide = torch.compile(self._decide_impl, dynamic=True)
         else:
@@ -251,6 +246,77 @@ class _Replay:
             self.fn()
         else:
             self.graph.replay()
+
+
+def _raise_dynamo_cache_limit(n: int = 256) -> None:
+    import torch._dynamo as dynamo
+
+    for key in ("cache_size_limit", "recompile_limit", "accumulated_cache_size_limit",
+                "accumulated_recompile_limit"):
+        if hasattr(dynamo.config, key):
+            setattr(dynamo.config, key, max(getattr(dynamo.config, key), n))
+
+
+class FixedDepthGraph:
+    """Fixed-depth batched inference with the launch overhead removed: for every depth t, the whole
+    forward pass (embed + steps 0..t + readout + argmax) at a fixed batch size is ONE CUDA graph.
+
+    This is the fair throughput baseline for the slot pool, which also replays one graph per tick
+    (round 10: against eager or merely compiled fixed depth, a graph runner looks better than it is).
+    ``compile=True`` first compiles the forward pass with Inductor (fused kernels, no graphs of its
+    own), then captures the compiled kernels; use it against ``SlotPoolRunner(compile=True)``.
+    A last partial batch is padded (the padding rows are computed and discarded)."""
+
+    def __init__(self, model, device, amp: str = "none", batch: int = 256, compile: bool = False,
+                 graph: bool | None = None):
+        self.model, self.device, self.amp, self.B = model.eval(), device, amp, batch
+        self.T = model.cfg.t_max
+        self.graph = (device.type == "cuda") if graph is None else graph
+        self._embed, self._step = self._embed_impl, self._step_impl
+        if compile:  # one compiled graph per step index, shared by every depth >= that step
+            _raise_dynamo_cache_limit()
+            self._embed = torch.compile(self._embed_impl, dynamic=False)
+            self._step = torch.compile(self._step_impl, dynamic=False)
+        self.x = None
+        self.g = {}
+
+    def _embed_impl(self, x):
+        with autocast_ctx(self.device, self.amp, cache_enabled=False):
+            return self.model.embed(x)
+
+    def _step_impl(self, s, x0, k: int):
+        with autocast_ctx(self.device, self.amp, cache_enabled=False):
+            return self.model.forward_step(s, k, x0)
+
+    def _fwd(self, x, t: int):
+        x0 = s = self._embed(x)
+        for k in range(t + 1):
+            s = self._step(s, x0, k)
+        with autocast_ctx(self.device, self.amp, cache_enabled=False):
+            return self.model.readout(s, t).argmax(-1)
+
+    def _graph(self, t: int):
+        if t not in self.g:
+            def fn(t=t):
+                self.pred.copy_(self._fwd(self.x, t))
+            self.g[t] = _Replay(fn, self.graph)
+        return self.g[t]
+
+    @torch.no_grad()
+    def run_fixed(self, X: torch.Tensor, t: int) -> torch.Tensor:
+        """All of X [N, C, H, W] (on the device) at depth t, in batches of B -> predictions [N]."""
+        if self.x is None or self.x.shape[1:] != X.shape[1:]:
+            self.x = torch.zeros(self.B, *X.shape[1:], device=self.device)
+            self.pred = torch.zeros(self.B, dtype=torch.long, device=self.device)
+            self.g = {}
+        g = self._graph(t)
+        out = []
+        for i in range(0, X.shape[0], self.B):
+            xb = X[i:i + self.B]
+            self.x[:xb.shape[0]].copy_(xb)
+            g()
+            out.append(self.pred[:xb.shape[0]].clone())
+        return torch.cat(out)
 
 
 class CudaGraphBS1:

@@ -692,6 +692,10 @@ H100 結果（[`results/phase0_train_speed_h100`](results/phase0_train_speed_h10
 快速管線的實驗請依序跑（開了 CUDA graph 後並行多份不會更快）。
 batch 512 / 1024（學習率按 √ 放大）各低 1.0 / 3.4 點，不採用；新實驗預設為快速管線 + batch 256（blt 3 個種子約 65 分鐘，原本約 300 分鐘）。
 
+**推論加速（階段 2，0.16.0）**：槽位池支援 VCNet（每列各自的步數、V1 預先計算、可編譯），並加入公平對照組：固定步數在 batch 256
+整個錄成一張 CUDA graph（`FixedDepthGraph`，benchmark 模式 `graph-bs256` / `graph-compiled-bs256`）。步驟見
+[`docs/vcnet.md`](docs/vcnet.md)「推論加速」。
+
 ## 下一階段方向（討論中）
 
 使用者決定：之後尋找**適合此架構的任務**，並考慮加入**仿皮層遞迴網路**（TODO.md 第 4 節）。

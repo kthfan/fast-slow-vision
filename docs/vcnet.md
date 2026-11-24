@@ -306,3 +306,41 @@ python scripts/run_experiment.py c100_vcnet_adapt_blt_fast_bs1024 c100_vcnet_ada
   會吃掉大部分的速度優勢（1.2 / 1.6 倍）。
 - **新實驗的預設訓練設定**：`_FAST`、batch 256、依序執行。與第 1–3 輪的設定相比（同一張閒置 GPU）：orig 快 2.9 倍
   （每個執行約 6 分鐘），adapt_blt 快 4.6 倍（每個執行約 22 分鐘，3 個種子約 65 分鐘，原本約 300 分鐘）；準確率在種子差異內重現第 1–2 輪。
+
+## 推論加速（階段 2，0.16.0）
+
+閒置 GPU 量測的結論是：batch 1 時自適應有效，batch 256 時停止策略讓吞吐量降到固定步數的 27–42%。
+原因是壓縮式 runner（`AdaptiveRunner`）每一步都要移除已停的影像，後段 batch 越來越小，而且每步都要同步一次 CPU 與 GPU。
+`main` 上為 bViT 做的**固定大小槽位池**（`fsv/halting/slots.py`）正好解決這兩點；0.16.0 讓它支援 VCNet，
+並補上第 10 輪指出還沒量的**公平對照組**。
+
+| 改動 | 做法 |
+|---|---|
+| VCNet 每列各自的步數 | `forward_step(state, t, x0)` 的 `t` 可為每列一個步數的 tensor：回饋、側向、由上而下各項對所有列都算，只在 t > 0 的列保留（`torch.where`，第 0 步的列忽略舊狀態）；`readout` 依每列步數取步數嵌入。與逐批計算逐位元相同（測試） |
+| 槽位池支援 VCNet | VCNet 的狀態（AIT，或打包的 7 區）不是嵌入（V1），所以分成 `x0` 與狀態兩份緩衝區；補位上限預設為全部 S 個槽位（VCNet 平均 1.4–2.4 步就停，每個 tick 空出的槽位比 bViT 多） |
+| 預先計算 V1 | 每張圖的 V1 在跑 tick 之前以 S 張一批算好；補位只做 gather，不必每個 tick 對全部補位候選算 V1（大多數候選不會被補上） |
+| 編譯 | `SlotPoolRunner(compile=True)`：模型一步 + 讀出先以 Inductor 編譯，再錄進 tick 的 CUDA graph |
+| 公平對照組 | `FixedDepthGraph`：固定 t 步時，batch 256 的整個前向（embed + 第 0..t 步 + 讀出）是一張 CUDA graph；`compile=True` 時先編譯（每個步數一個編譯圖，各深度共用） |
+
+CPU 上槽位池與壓縮式 runner 的預測與停止步數 100% 相同（測試允許 5% 以內的差異，因為批次形狀不同時浮點捨入可能不同）。
+
+### benchmark 新模式
+
+`benchmark_adaptive.py` 新增兩個模式，各自帶自己的固定步數列，所以表中的加速比是同類相比：
+
+- `graph-bs256`：固定步數 = 每批一張 CUDA graph（eager kernel）；自適應 = 槽位池 + 融合 kernel（eager kernel）。
+- `graph-compiled-bs256`：兩者的模型一步都先編譯再錄成 graph。這是最強的固定步數對照組。
+
+```bash
+python scripts/benchmark_adaptive.py c100_vcnet_orig c100_vcnet_adapt_blt --seeds 0 1 2 --lams 0.003 0.01 0.03 0.1 0.3 --no-cudagraph --o3-policies --bs1-images 100
+```
+
+```bash
+python scripts/summarize.py c100_vcnet_orig c100_vcnet_adapt_blt --sections bench
+```
+
+- 用第 2 輪的 `c100_vcnet_adapt_blt`（已有停止策略）；`c100_vcnet_orig` 沒有停止策略，只量固定步數，作為原始模型的對照。
+- `--no-cudagraph --o3-policies --bs1-images 100`：batch 1 已在閒置 GPU 上量過，這次只看 batch 256，省時間。
+- 請在沒有其他程式的 GPU 上跑（先用 `nvidia-smi` 確認）。
+- 要回答的問題：在 `graph-compiled-bs256` 中，adapt_blt + 槽位池（λ=0.1，平均 1.73 步，67.77%）能否快過同準確率的固定步數（約 2 步）？
+  理論上限約為固定 2 步的 1.1–1.2 倍（V1 只算一次、平均 1.73 步）；表中最後一欄 `occupancy` 是槽位使用率。

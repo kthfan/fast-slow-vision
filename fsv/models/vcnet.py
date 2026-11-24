@@ -337,29 +337,31 @@ class VCNet(nn.Module):
         n = self.area_ch["ait"] * hw * hw
         return state[:, -n:].view(-1, self.area_ch["ait"], hw, hw)
 
-    def _recur(self, name: str, a: torch.Tensor, prev: dict | None) -> torch.Tensor:
-        """Add the area's own previous state (lateral) and the previous state of the area above (top-down)."""
+    def _recur(self, name: str, a: torch.Tensor, prev: dict | None, mask: torch.Tensor | None = None) -> torch.Tensor:
+        """Add the area's own previous state (lateral) and the previous state of the area above (top-down).
+        ``mask`` [B, 1, 1, 1] (per-row steps): only rows where it is True get them (rows at step 0)."""
         if prev is None:
             return a
+        out = a
         if self.lat is not None:
-            a = a + self.lat[name](prev[name])
+            out = out + self.lat[name](prev[name])
         if self.td is not None and name in self.td:
             above = self.td[name](prev[TOPDOWN[name]])
             if above.shape[-1] != a.shape[-1]:
                 above = self._upsample(above, a.shape[-2:])
-            a = a + above
-        return a
+            out = out + above
+        return out if mask is None else torch.where(mask, out, a)
 
-    def sweep(self, z: torch.Tensor, prev: dict | None = None) -> dict[str, torch.Tensor]:
+    def sweep(self, z: torch.Tensor, prev: dict | None = None, mask: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
         """One bottom-up pass V2 ... AIT from the (corrected) V1 activity z; ``prev`` = the
-        previous step's area maps (used only with ``lateral`` / ``topdown``)."""
-        v2 = self._recur("v2", self.v2_mix(torch.cat([self.v2_inter(z), self.v2_thin(z)], 1)), prev)
-        mt = self._recur("mt", self.mt(self.v2_thick(z)), prev)
-        v4 = self._recur("v4", self.v4_post(self.v4_in(v2) + self.mt_to_v4(mt)), prev)
-        pit = self._recur("pit", self.pit(v4), prev)
-        cit = self._recur("cit", self.cit(pit), prev)
-        mst = self._recur("mst", self.mst(mt), prev)
-        ait = self._recur("ait", self.ait(self.ait_in(torch.cat([cit, mst], 1))), prev)
+        previous step's area maps (used only with ``lateral`` / ``topdown``); ``mask`` see ``_recur``."""
+        v2 = self._recur("v2", self.v2_mix(torch.cat([self.v2_inter(z), self.v2_thin(z)], 1)), prev, mask)
+        mt = self._recur("mt", self.mt(self.v2_thick(z)), prev, mask)
+        v4 = self._recur("v4", self.v4_post(self.v4_in(v2) + self.mt_to_v4(mt)), prev, mask)
+        pit = self._recur("pit", self.pit(v4), prev, mask)
+        cit = self._recur("cit", self.cit(pit), prev, mask)
+        mst = self._recur("mst", self.mst(mt), prev, mask)
+        ait = self._recur("ait", self.ait(self.ait_in(torch.cat([cit, mst], 1))), prev, mask)
         return {"v2": v2, "mt": mt, "v4": v4, "pit": pit, "cit": cit, "mst": mst, "ait": ait}
 
     def _step_areas(self, prev: dict | None, t: int, x0: torch.Tensor) -> dict[str, torch.Tensor]:
@@ -373,26 +375,50 @@ class VCNet(nn.Module):
             areas["ait"] = areas["ait"] + self.carry_gate * ait_prev
         return areas
 
-    def forward_step(self, state: torch.Tensor, t: int, x0: torch.Tensor | None = None) -> torch.Tensor:
+    def _step_areas_rows(self, prev: dict, t: torch.Tensor, x0: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Every row at its own step ``t`` (long [B]): the feedback / state terms are computed for all
+        rows and kept only where t > 0, so a row at step 0 gets exactly the plain bottom-up sweep
+        (its stale previous state is ignored by ``torch.where``, never multiplied)."""
+        m = (t > 0).view(-1, 1, 1, 1)
+        ait_prev = prev["ait"]
+        z = torch.where(m, x0 + self.err_in(self.prediction_error(x0, ait_prev)), x0)
+        areas = self.sweep(z, prev if self.packed else None, m)
+        if self.carry_gate is not None:
+            areas["ait"] = torch.where(m, areas["ait"] + self.carry_gate * ait_prev, areas["ait"])
+        return areas
+
+    def forward_step(self, state: torch.Tensor, t: int | torch.Tensor, x0: torch.Tensor | None = None,
+                     out: torch.Tensor | None = None) -> torch.Tensor:
         """Step t. ``x0`` is the V1 activity from ``embed``; ``state`` is the previous step's state for
         t >= 1 (at t = 0 it is ignored, the runners pass the embedding there).
 
         The state is AIT_t [B, c_ait, h, w], or, with ``lateral`` / ``topdown``, all area maps packed
-        into [B, N] (see ``pack``)."""
-        if t == 0:
+        into [B, N] (see ``pack``).
+        ``t`` is the step of the whole batch (int) or of every row (long tensor [B]; slot-pool runner).
+        ``out``: tensor to copy the new state into (may be ``state`` itself)."""
+        if isinstance(t, torch.Tensor):
+            assert x0 is not None, "per-row VCNet steps need x0 = model.embed(x)"
+            prev = self.unpack(state) if self.packed else {"ait": state}
+            areas = self._step_areas_rows(prev, t, x0)
+        elif t == 0:
             areas = self.sweep(x0 if x0 is not None else state)
         else:
             assert x0 is not None, "VCNet steps t >= 1 need x0 = model.embed(x)"
             prev = self.unpack(state) if self.packed else {"ait": state}
             areas = self._step_areas(prev, t, x0)
-        return self.pack(areas) if self.packed else areas["ait"]
+        res = self.pack(areas) if self.packed else areas["ait"]
+        if out is None:
+            return res
+        return out.copy_(res)
 
-    def _readout_ait(self, ait: torch.Tensor, t: int) -> torch.Tensor:
-        # steps past the trained length (evaluate.py --steps) reuse the last trained step embedding
-        e = self.step_out[min(t, self.step_out.shape[0] - 1)]
+    def _readout_ait(self, ait: torch.Tensor, t: int | torch.Tensor) -> torch.Tensor:
+        # steps past the trained length (evaluate.py --steps) reuse the last trained step embedding;
+        # t may be a long tensor [B] (per-row steps)
+        last = self.step_out.shape[0] - 1
+        e = self.step_out[t.clamp(max=last) if isinstance(t, torch.Tensor) else min(t, last)]
         return self.head(self.head_norm(ait.mean((2, 3))) + e)
 
-    def readout(self, state: torch.Tensor, t: int) -> torch.Tensor:
+    def readout(self, state: torch.Tensor, t: int | torch.Tensor) -> torch.Tensor:
         return self._readout_ait(self.ait_of(state), t)
 
     def extend_steps(self, t_max: int) -> None:

@@ -20,6 +20,11 @@ one host read. They report latency only (accuracy is taken from the eager modes)
 (fsv/halting/fused.py; GPU only).
 Slot-pool modes ("slots", "slots-triton"; --slots) keep --slots images in flight, each at its own step,
 and run one CUDA graph per tick over the whole test set (throughput only; fsv/halting/slots.py).
+Batch CUDA-graph modes (0.16.0; skip with --no-graph-batch), the fair batch-256 comparison:
+  "graph-bs<B>":          fixed depth = embed + steps 0..t as ONE graph per batch of B (FixedDepthGraph),
+                          vs the slot pool (+ fused kernel when Triton is available); eager kernels in both;
+  "graph-compiled-bs<B>": the same with the model step compiled by Inductor before capture, in both.
+Each mode carries its own fixed-depth rows, so the speed-ups printed for it compare like with like.
 O3 modes ("o3k0-eager", "o3k1-compiled", ...) time step predictors that decide every
 image's depth once after step k (one host sync per batch); they need the O3 policy
 files written by ``halting_study.py --o3-ks``.
@@ -68,6 +73,11 @@ def parse_args(argv=None):
     p.add_argument("--naive", action="store_true", help="also time the first runner (several syncs per step)")
     p.add_argument("--slots", type=int, default=256,
                    help="slot-pool modes (\"slots\", \"slots-triton\"): images in flight; 0 skips them")
+    p.add_argument("--refill", type=int, default=None,
+                   help="slot pool: refill cap per tick (default S/2 for bViT, S for VCNet)")
+    p.add_argument("--no-graph-batch", dest="graph_batch", action="store_false",
+                   help="skip the modes graph-bs<B> / graph-compiled-bs<B> (fixed depth as one CUDA graph per batch "
+                        "vs the slot pool)")
     p.add_argument("--no-cudagraph", dest="cudagraph", action="store_false",
                    help="skip the batch-1 CUDA-graph modes (measured by default)")
     p.add_argument("--o3-policies", nargs="*", default=["S0-o3k0-reward_acc", "S0-o3k1-reward_acc"],
@@ -90,6 +100,51 @@ def timed(fn, repeats: int, sync) -> tuple[float, object]:
         sync()
         times.append(time.perf_counter() - t0)
     return st.median(times), out
+
+
+def slot_rows(sp, X, Y, N, lams, T, args, sync) -> list[dict]:
+    rows = []
+    for lam in lams:
+        sec, (pred, steps) = timed(lambda: sp.run(X, lam), args.repeats, sync)
+        rows.append({"lam": lam, "acc": float((pred == Y).float().mean()),
+                     "mean_steps": float(steps.float().mean()) + 1, "img_per_s": N / sec,
+                     "bs1_ms": None, "ticks": sp.last_ticks, "occupancy": sp.occupancy(steps),
+                     "steps_hist": torch.bincount(steps, minlength=T).tolist()})
+    return rows
+
+
+def measure_graph_batch(res, model, policy, pc, device, amp, T, X, Y, N, sync, args, lams):
+    """Modes graph-bs<B> / graph-compiled-bs<B>: fixed depth as one CUDA graph per batch vs the slot pool."""
+    from fsv.halting.fused import triton_usable
+    from fsv.halting.online import FixedDepthGraph
+    from fsv.halting.slots import SlotPoolRunner, supports_slots
+
+    bs = args.batch_size
+    for tag, comp in ((f"graph-bs{bs}", False), (f"graph-compiled-bs{bs}", True)):
+        if comp and not args.compile:
+            continue
+        try:
+            fg = FixedDepthGraph(model, device, amp, batch=bs, compile=comp)
+            fixed = []
+            for t in range(T):
+                sec, pred = timed(lambda t=t: fg.run_fixed(X, t), args.repeats, sync)
+                fixed.append({"step": t, "acc": float((pred == Y).float().mean()), "img_per_s": N / sec,
+                              "bs1_ms": None})
+            del fg
+            mode = {"fixed": fixed, "adaptive": []}
+            if policy is not None and args.slots and supports_slots(model):
+                fz = triton_usable(device)
+                sp = SlotPoolRunner(model, policy, pc["temperatures"], device, amp, slots=args.slots,
+                                    refill=args.refill, fused=fz, compile=comp)
+                mode["adaptive"] = slot_rows(sp, X, Y, N, lams, T, args, sync)
+                mode.update({"slots": args.slots, "refill": sp.R, "fused": fz})
+                del sp
+            res["modes"][tag] = mode
+        except Exception as e:
+            res[f"{tag}_error"] = repr(e)[:500]
+            print(f"[benchmark] {tag} failed, skipped: {res[f'{tag}_error']}")
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
 
 
 def measure_cudagraph(res, model, policy, pc, o3_loaded, device, amp, T, X, n1, single, sync, args, lams):
@@ -231,19 +286,15 @@ def main(argv=None):
                 for tag, fz in variants:
                     try:
                         sp = SlotPoolRunner(model, policy, pc["temperatures"], device, amp, slots=args.slots,
-                                            fused=fz)
-                        rows = []
-                        for lam in lams:
-                            sec, (pred, steps) = timed(lambda: sp.run(X, lam), args.repeats, sync)
-                            rows.append({"lam": lam, "acc": float((pred == Y).float().mean()),
-                                         "mean_steps": float(steps.float().mean()) + 1, "img_per_s": N / sec,
-                                         "bs1_ms": None, "ticks": sp.last_ticks, "occupancy": sp.occupancy(steps),
-                                         "steps_hist": torch.bincount(steps, minlength=T).tolist()})
+                                            refill=args.refill, fused=fz)
+                        rows = slot_rows(sp, X, Y, N, lams, T, args, sync)
                         res["modes"][tag] = {"fixed": res["modes"]["eager"]["fixed"], "adaptive": rows,
-                                             "slots": args.slots}
+                                             "slots": args.slots, "refill": sp.R}
                     except Exception as e:
                         res[f"{tag}_error"] = repr(e)[:500]
                         print(f"[benchmark] {tag} failed, skipped: {res[f'{tag}_error']}")
+            if args.graph_batch:  # fair batch comparison: fixed depth as one CUDA graph vs the slot pool
+                measure_graph_batch(res, model, policy, pc, device, amp, T, X, Y, N, sync, args, lams)
             if args.naive:  # the first runner: boolean-mask indexing, several host syncs per step
                 res["modes"]["eager-naive"] = measure(eager, "run_naive")
             compiled = None
