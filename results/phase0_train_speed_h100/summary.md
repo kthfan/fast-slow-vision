@@ -69,3 +69,30 @@ Reading:
   the other runs on the GPU and are not valid; from 0.15.1 `--parallel` runs skip that measurement.
 
 Decision: new experiments use `_FAST`. Rounds 1-3 keep their recipes, so their numbers stay reproducible.
+
+## Second measurement (0.15.1: no host syncs in the GPU augmentation, side-stream prefetch, channels_last)
+
+| config | orig img/s | x | adapt_blt img/s | x |
+|---|---|---|---|---|
+| cpu-eager | 8,382 | 1.00 | 1,484 | 1.00 |
+| cpu-cg | 12,994 | 1.55 | **6,874** | **4.63** |
+| gpu-cg-noprefetch (syncs removed) | 21,884 | 2.61 | 6,616 | 4.46 |
+| **gpu-cg** (+ side stream) | **24,387** | **2.91** | 6,577 | 4.43 |
+| cpu-cg-cl / gpu-cg-cl (channels_last) | 13,955 / 14,451 | 1.66 / 1.72 | 4,489 / 4,363 | 3.03 / 2.94 |
+| gpu-cg, batch 512 | 31,024 | 3.70 | 8,280 | 5.58 |
+| gpu-cg, batch 1024 | 37,641 | 4.49 | 10,219 | 6.89 |
+
+* The fix worked for orig: gpu-cg 15,494 -> 24,387 img/s (2.9x the old pipeline; 6 min per run). Removing the host
+  syncs gives most of it, the side stream another 11%.
+* blt: the GPU augmentation is now within 4% of the CPU one (6,577 vs 6,874). The blt step is bound by GPU time,
+  not by the CPU, so the augmentation's own GPU work (43k img/s alone) is no longer hidden.
+* channels_last is slower for both (-35 to -41%). Not used.
+* Profile of the blt step (compiled, no graph; 40 ms of GPU time per iteration): convolutions dominate, as ~360
+  small convolutions forward and ~360 backward per iteration (8 steps), 20-50 us each; cuDNN converts layouts
+  NCHW <-> NHWC around them (~20% of GPU time, but channels_last made the rest slower). The single most expensive
+  kernel is the backward of the AIT -> V1 bilinear upsampling (Inductor: index_put with atomic adds, 526 us per call,
+  7 per iteration = ~9%). 0.15.2 computes the upsampling in training as two small matmuls (same values; inference
+  unchanged).
+* Bigger batches remain the largest lever (blt 1.55x, orig 1.54x from 256 to 1024); validation experiments
+  c100_vcnet_adapt_blt_fast_bs512 / _bs1024 (sqrt-scaled learning rate).
+* Parallel copies: no gain once CUDA graphs are on (first measurement), so the fast runs should go one after another.

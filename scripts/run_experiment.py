@@ -11,9 +11,11 @@ Each (experiment, seed) pair writes
     reports/<name>[_s<seed>]/   report.md, results.json, history.jsonl, config.json, env.json, logs
 Seed 0 uses the bare experiment name.
 
-Several runs side by side on the same GPU (VCNet uses < 1% of an H100, so three seeds in parallel
-take about as long as one); the CPU cap is split into disjoint core sets, one per run:
-    python scripts/run_experiment.py c100_vcnet_adapt_blt_fast --seeds 0 1 2 --parallel 3
+Several runs side by side on the same GPU; the CPU cap is split into disjoint core sets, one per run.
+Helps eager runs (they leave the GPU idle between kernel launches); runs with CUDA graphs (the *_fast
+recipes) gain nothing (the GPU time-slices between processes, H100 phase 0), and runs with the CPU
+DataLoader starve when each gets only a few cores (raise --max-cpus):
+    python scripts/run_experiment.py c100_vcnet_orig c100_vcnet_orig_ff --seeds 0 1 2 --parallel 3 --max-cpus 24
 
 Afterwards print one compact, paste-friendly block for everything in reports/:
     python scripts/summarize.py

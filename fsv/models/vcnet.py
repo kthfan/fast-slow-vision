@@ -260,6 +260,13 @@ class VCNet(nn.Module):
         self.td = nn.ModuleDict({a: nn.Conv2d(self.area_ch[src], self.area_ch[a], 1, bias=False)
                                  for a, src in TOPDOWN.items()}) if c.topdown else None
 
+        # bilinear upsampling as two small matmuls (same values as F.interpolate, see bilinear_matrix):
+        # non-persistent buffers, so checkpoints are unchanged
+        pairs = {(h8, h)} | ({(self.area_hw[src], self.area_hw[a]) for a, src in TOPDOWN.items()} if c.topdown else set())
+        for n_in, n_out in pairs:
+            if n_in != n_out:
+                self.register_buffer(f"up_{n_in}_{n_out}", bilinear_matrix(n_in, n_out), persistent=False)
+
         # shared readout: head(LN(avgpool AIT_t) + step_emb(t))
         self.head_norm = nn.LayerNorm(c.c_ait, eps=1e-6)
         self.step_out = nn.Parameter(torch.zeros(c.t_max, c.c_ait))
@@ -284,6 +291,22 @@ class VCNet(nn.Module):
     def no_weight_decay(self) -> set[str]:
         return {"step_out", "carry_gate"}
 
+    def _upsample(self, x: torch.Tensor, size) -> torch.Tensor:
+        """F.interpolate(x, size, mode="bilinear", align_corners=False), in training as U_h @ x @ U_w^T.
+
+        Same values (up to float rounding). Why: Inductor turns the backward of upsample_bilinear2d
+        into an index_put with atomic adds, which took ~9% of the blt training step on the H100
+        (525 us per call for AIT -> V1, 4x4 -> 32x32); the backward of a matmul is a matmul."""
+        (hi, wi), (ho, wo) = x.shape[-2:], tuple(size)
+        if (hi, wi) == (ho, wo):
+            return x
+        uh, uw = getattr(self, f"up_{hi}_{ho}", None), getattr(self, f"up_{wi}_{wo}", None)
+        # training only: inference keeps F.interpolate, so evaluation, latency and the measured FLOPs
+        # (which do not count the interpolation) stay exactly as in rounds 1-3
+        if uh is None or uw is None or not self.training:
+            return F.interpolate(x, size=(ho, wo), mode="bilinear", align_corners=False)
+        return uh.to(x.dtype) @ x @ uw.to(x.dtype).T
+
     # ------------------------------------------------------- step interface (same as RecurrentViT)
     def embed(self, x: torch.Tensor) -> torch.Tensor:
         """V1 bottom-up activity [B, c_v1, H, W]; computed once per image."""
@@ -291,7 +314,7 @@ class VCNet(nn.Module):
         return self.v1_post(v1)
 
     def predict_v1(self, ait: torch.Tensor, size) -> torch.Tensor:
-        return F.interpolate(self.td_pred(ait), size=size, mode="bilinear", align_corners=False)
+        return self._upsample(self.td_pred(ait), size)
 
     def prediction_error(self, v1: torch.Tensor, ait: torch.Tensor) -> torch.Tensor:
         """eps = ReLU(V1_bottom-up - AIT_top-down)."""
@@ -323,7 +346,7 @@ class VCNet(nn.Module):
         if self.td is not None and name in self.td:
             above = self.td[name](prev[TOPDOWN[name]])
             if above.shape[-1] != a.shape[-1]:
-                above = F.interpolate(above, size=a.shape[-2:], mode="bilinear", align_corners=False)
+                above = self._upsample(above, a.shape[-2:])
             a = a + above
         return a
 
@@ -408,6 +431,20 @@ class VCNet(nn.Module):
         if return_feats:
             return out, {k: torch.stack(v) for k, v in feats.items()}
         return out
+
+
+def bilinear_matrix(n_in: int, n_out: int) -> torch.Tensor:
+    """[n_out, n_in] weights of 1-D linear interpolation as F.interpolate(mode="bilinear",
+    align_corners=False) computes them: source index max(0, (i + 0.5) * n_in / n_out - 0.5)."""
+    u_mat = torch.zeros(n_out, n_in)
+    for i in range(n_out):
+        u = max(0.0, (i + 0.5) * n_in / n_out - 0.5)
+        i0 = min(int(u), n_in - 1)
+        i1 = min(i0 + 1, n_in - 1)
+        w = u - i0
+        u_mat[i, i0] += 1 - w
+        u_mat[i, i1] += w
+    return u_mat
 
 
 def build_vcnet(name: str = "vcnet", **overrides) -> VCNet:

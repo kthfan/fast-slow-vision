@@ -162,4 +162,14 @@ EXPERIMENTS: dict[str, dict] = {
                 "68.68% at 4 steps, 3 seeds).",
         "train": _VC_ADAPT + ["--lateral", "--topdown"] + _FAST,
     },
+    # ---- phase 0, step 2: bigger batches (bench_train: blt 6.6k -> 8.3k / 10.2k img/s at 512 / 1024).
+    # AdamW learning rate scaled with sqrt(batch / 256); same epochs and warmup epochs (fewer updates).
+    "c100_vcnet_adapt_blt_fast_bs512": {
+        "desc": "c100_vcnet_adapt_blt_fast with batch 512, lr 1.4e-3 (sqrt scaling); must match the batch-256 run.",
+        "train": _VC_ADAPT + ["--lateral", "--topdown"] + _FAST + ["--batch-size", "512", "--lr", "1.4e-3"],
+    },
+    "c100_vcnet_adapt_blt_fast_bs1024": {
+        "desc": "c100_vcnet_adapt_blt_fast with batch 1024, lr 2e-3 (sqrt scaling); must match the batch-256 run.",
+        "train": _VC_ADAPT + ["--lateral", "--topdown"] + _FAST + ["--batch-size", "1024", "--lr", "2e-3"],
+    },
 }

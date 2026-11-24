@@ -255,3 +255,45 @@ python scripts/bench_train.py c100_vcnet_adapt_blt --configs gpu-compile --profi
 - 第一個指令的預設組合改為：`cpu-eager`、`cpu-cg`、`gpu-cg-noprefetch`（修正常數複製、但不用另一個 stream）、
   `gpu-cg`（再加上另一個 stream）、`cpu-cg-cl` / `gpu-cg-cl`（channels_last）、batch 512 / 1024。
 - 第二個指令列出 blt 訓練步中最耗 GPU 時間的 kernel（CUDA graph 內看不到個別 kernel，所以用沒有 graph 的 `gpu-compile`）。
+
+### 階段 0 第 2 次量測結果與第 3 步（0.15.2）
+
+[`results/phase0_train_speed_h100`](../results/phase0_train_speed_h100/summary.md)：
+
+- 修正後 orig 用 GPU 增強 + CUDA graph 達每秒 24,387 張（原本的 2.9 倍，每個執行約 6 分鐘）。
+- blt 的 GPU 增強與 CPU 增強只差 4%（6,577 vs 6,874）：blt 受 GPU 計算時間限制，不再受 CPU 限制。
+- channels_last 兩者都慢 35–41%，不採用。
+- blt 訓練步的 GPU 時間：每次迭代約 360 個小卷積前向、360 個反向（20–50 µs），cuDNN 在前後轉換 NCHW ↔ NHWC（約 20%）。
+  單一最貴的 kernel 是 AIT → V1 雙線性上採樣的反向（Inductor 用帶原子加法的 index_put，每次 526 µs，約 9%）。
+  0.15.2 在訓練時把上採樣改成兩個小矩陣乘法（數值相同；推論、FLOPs 與 checkpoint 都不變）。
+- 開了 CUDA graph 後，並行多份不會增加總吞吐量（GPU 在行程間分時），**快速管線的實驗請依序跑，不要加 `--parallel`**。
+- 更大的 batch 仍是最大的槓桿：驗證實驗 `c100_vcnet_adapt_blt_fast_bs512`（lr 1.4e-3）、`_bs1024`（lr 2e-3），
+  學習率按 √(batch / 256) 放大，epoch 數與暖身 epoch 數不變。
+
+```bash
+python scripts/bench_train.py c100_vcnet_adapt_blt --configs cpu-cg gpu-cg gpu-cg-bs1024 --no-data-only
+```
+
+```bash
+python scripts/run_experiment.py c100_vcnet_adapt_blt_fast_bs1024 c100_vcnet_adapt_blt_fast_bs512 --seeds 0 1 2
+```
+
+通過標準：與 `c100_vcnet_adapt_blt_fast`（batch 256）每一步的差距在種子標準差以內。
+
+### 第 3 輪結果（[`results/vcnet_round3_h100`](../results/vcnet_round3_h100/summary.md)）
+
+| 模型 | 訓練方式 | 步數 | GFLOPs | acc % |
+|---|---|---|---|---|
+| orig | 單一讀出、CE | 2 | 0.275 | 64.55±0.96 |
+| **blt_orig2** | 單一讀出、CE | 2 | 0.284 | **67.61±0.74** |
+| adapt_blt 固定 2 步（第 2 輪 / fast） | 每步讀出、Stage A | 2 | 0.284 | 67.27±0.57 / 67.62±0.44 |
+| **blt_orig4** | 單一讀出、CE | 4 | 0.528 | **68.90±0.62** |
+| adapt_blt 固定 4 步（第 2 輪 / fast） | 每步讀出、Stage A | 4 | 0.528 | 68.68±0.58 / 68.85±0.49 |
+| adapt_blt + 停止策略 λ=0.1 / 0.03 / 0.01 | 每步讀出、Stage A | 1.73 / 2.09 / 2.41 | ≈0.251 / 0.295 / 0.334 | 67.77 / 68.20 / 68.34 |
+
+- **增益來自架構**：同樣計算量，blt_orig2 比原始 VCNet 高 3.1 點。
+- **每步讀出不拖累最終準確率**：adapt_blt 固定 2 / 4 步與 blt_orig2 / blt_orig4 相同（都在一個標準差內）。
+- **自適應在 CIFAR 上的增益不大**：一個 adapt_blt 模型就能在每種深度都達到該深度專門訓練模型的準確率（原始方式的中間讀出沒有用，
+  blt_orig4 第 1–3 步只有 19 / 45 / 49%）；停止策略 λ=0.1 以 88% 的計算量追平 blt_orig2，但沒有任何 λ 追上 blt_orig4。
+- 延遲不必重量：blt_orig2 / 4 的計算與 adapt_blt 固定 2 / 4 步相同（batch 1 CUDA graph 1.949 / 3.882 ms）。
+- 溫度縮放後，原始訓練方式的校準略好（ECE 1.5–1.6% vs 2.3–2.6%）。

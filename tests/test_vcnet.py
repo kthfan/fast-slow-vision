@@ -239,3 +239,28 @@ def test_extend_steps_past_trained_length(tmp_path):
     res = json.loads((out / "steps4" / "results.json").read_text())
     assert res["steps_run"] == 4 and len(res["test_ts"]) == 4 and len(res["flops"]["cumulative"]) == 4
     assert not (out / "results.json").exists()  # the normal evaluation output is not overwritten
+
+
+def test_training_upsample_matches_interpolate():
+    # training replaces F.interpolate by two matmuls (fast backward under Inductor); same values,
+    # nothing new in the checkpoint
+    import torch.nn.functional as F
+
+    from fsv.models.vcnet import bilinear_matrix
+
+    for n_in, n_out in [(4, 32), (4, 8), (8, 16), (3, 7)]:
+        x = torch.randn(2, 3, n_in, n_in)
+        u = bilinear_matrix(n_in, n_out)
+        ref = F.interpolate(x, size=(n_out, n_out), mode="bilinear", align_corners=False)
+        assert torch.allclose(u @ x @ u.T, ref, atol=1e-6)
+    m = _model(T=3, lateral=True, topdown=True)
+    with torch.no_grad():
+        for p in m.parameters():
+            if p.ndim > 1:
+                p.normal_(0, 0.05)
+    x = torch.randn(2, 3, 32, 32)
+    with torch.no_grad():
+        ev = m.eval()(x)
+        tr = m.train()(x)
+    assert torch.allclose(ev, tr, atol=1e-4)
+    assert not [k for k in m.state_dict() if k.startswith("up_")]
