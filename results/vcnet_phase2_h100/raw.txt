@@ -1,0 +1,98 @@
+# Pasted by the user. Code 0.16.0 (dev/vcnet; the header shows the training code versions of the runs).
+# python scripts/benchmark_adaptive.py c100_vcnet_orig c100_vcnet_adapt_blt --seeds 0 1 2 --lams 0.003 0.01 0.03 0.1 0.3 --no-cudagraph --o3-policies --bs1-images 100
+# python scripts/summarize.py c100_vcnet_orig c100_vcnet_adapt_blt --sections bench
+
+===== BEGIN FSV SUMMARY =====
+code 0.10.0+85e59bca386a | NVIDIA H100 NVL | torch 2.6.0+cu124 | cpus 8/48
+NOTE: runs use different code versions: ['0.10.0+85e59bca386a', '0.9.0+dec7d6e42181']
+
+[benchmark c100_vcnet_adapt_blt] seeds 3 | NVIDIA H100 NVL | AMP bf16 | policy S0-reward_acc | batch 256 throughput with compaction, batch-1 latency on 100 images
+  [eager]  setting      acc%           steps         img/s            bs1 ms        speed-up vs fixed (bs256 / bs1); * = more accurate than every fixed depth, compared with the most accurate one
+  fixed t=0              63.71±0.78           1.00      66696±1231     3.700±0.106
+  fixed t=1              67.27±0.56           2.00        12572±11     7.342±0.158
+  fixed t=2              68.29±0.47           3.00          6854±9    10.883±0.350
+  fixed t=3              68.68±0.55           4.00          4713±3    14.738±0.315
+  fixed t=4              68.64±0.41           5.00          3589±4    18.363±0.180
+  fixed t=5              68.65±0.31           6.00          2898±3    21.685±0.279
+  fixed t=6              68.56±0.28           7.00          2433±4    25.133±0.455
+  fixed t=7              68.58±0.28           8.00          2095±2    28.378±0.536
+  lam=0.003              68.46±0.65      2.89±0.62        4931±746    11.942±3.077   1.05±0.16x / 1.31±0.41x
+  lam=0.01               68.34±0.55      2.41±0.40        5950±493    10.106±1.985   1.13±0.24x / 1.34±0.09x
+  lam=0.03               68.20±0.58      2.09±0.26        6867±762     8.501±1.152   1.17±0.41x / 1.44±0.14x
+  lam=0.1                67.77±0.42      1.74±0.05       8942±1010     7.074±0.306   1.30±0.15x / 1.54±0.08x
+  lam=0.3                66.74±0.45      1.40±0.08      12240±1182     6.055±0.115   0.97±0.09x / 1.21±0.02x
+  [eager-triton]  setting      acc%           steps         img/s            bs1 ms        speed-up vs fixed (bs256 / bs1); * = more accurate than every fixed depth, compared with the most accurate one
+  lam=0.003              68.47±0.65      2.90±0.62        5082±829    10.880±2.713   1.08±0.18x / 1.43±0.43x
+  lam=0.01               68.34±0.55      2.41±0.40        6177±435     9.529±1.952   1.17±0.24x / 1.42±0.12x
+  lam=0.03               68.20±0.58      2.09±0.26        7106±721     8.896±2.360   1.21±0.41x / 1.43±0.39x
+  lam=0.1                67.77±0.42      1.74±0.05        9545±997     6.594±0.192   1.39±0.15x / 1.65±0.07x
+  lam=0.3                66.74±0.45      1.40±0.08      13202±1511     5.581±0.250   1.05±0.12x / 1.32±0.07x
+  [slots]  setting      acc%           steps         img/s            bs1 ms        speed-up vs fixed (bs256 / bs1); * = more accurate than every fixed depth, compared with the most accurate one
+  lam=0.003              68.49±0.65      2.89±0.62       4986±1079               -   1.06±0.23x / -x   occupancy 95.1±2.2%
+  lam=0.01               68.34±0.56      2.41±0.40        5804±850               -   1.08±0.11x / -x   occupancy 94.1±2.2%
+  lam=0.03               68.19±0.57      2.08±0.26        6539±588               -   1.09±0.16x / -x   occupancy 92.7±2.9%
+  lam=0.1                67.77±0.44      1.74±0.05        7864±192               -   1.15±0.03x / -x   occupancy 94.2±1.0%
+  lam=0.3                66.73±0.43      1.40±0.08       8013±2268               -   0.64±0.18x / -x   occupancy 92.9±1.3%
+  [slots-triton]  setting      acc%           steps         img/s            bs1 ms        speed-up vs fixed (bs256 / bs1); * = more accurate than every fixed depth, compared with the most accurate one
+  lam=0.003              68.49±0.64      2.90±0.62       4023±2463               -   0.85±0.52x / -x   occupancy 94.7±2.6%
+  lam=0.01               68.34±0.56      2.41±0.40       4687±2724               -   0.85±0.45x / -x   occupancy 94.1±2.2%
+  lam=0.03               68.19±0.57      2.09±0.26       5210±2901               -   0.80±0.35x / -x   occupancy 92.4±2.4%
+  lam=0.1                67.77±0.44      1.74±0.05        7922±173               -   1.16±0.03x / -x   occupancy 94.3±1.0%
+  lam=0.3                66.73±0.43      1.40±0.08       9602±543               -   0.76±0.04x / -x   occupancy 92.9±1.3%
+  [graph-bs256]  setting      acc%           steps         img/s            bs1 ms        speed-up vs fixed (bs256 / bs1); * = more accurate than every fixed depth, compared with the most accurate one
+  fixed t=0              63.71±0.78           1.00      87205±2605               -
+  fixed t=1              67.27±0.56           2.00        12778±42               -
+  fixed t=2              68.29±0.47           3.00         6969±38               -
+  fixed t=3              68.68±0.55           4.00          4788±9               -
+  fixed t=4              68.64±0.41           5.00          3648±6               -
+  fixed t=5              68.65±0.31           6.00          2939±6               -
+  fixed t=6              68.56±0.28           7.00          2466±2               -
+  fixed t=7              68.58±0.28           8.00        2025±171               -
+  lam=0.003              68.49±0.64      2.90±0.62       3963±2389               -   0.83±0.50x / -x   occupancy 94.7±2.6%
+  lam=0.01               68.34±0.56      2.41±0.40       4542±2510               -   0.80±0.37x / -x   occupancy 94.1±2.2%
+  lam=0.03               68.19±0.57      2.09±0.26       5061±2641               -   0.85±0.49x / -x   occupancy 92.4±2.4%
+  lam=0.1                67.77±0.44      1.74±0.05       6095±3072               -   0.88±0.44x / -x   occupancy 94.3±1.0%
+  lam=0.3                66.73±0.43      1.40±0.08        9594±552               -   0.75±0.04x / -x   occupancy 92.9±1.3%
+  [graph-compiled-bs256]  setting      acc%           steps         img/s            bs1 ms        speed-up vs fixed (bs256 / bs1); * = more accurate than every fixed depth, compared with the most accurate one
+  fixed t=0              63.72±0.73           1.00     180759±4534               -
+  fixed t=1              67.33±0.60           2.00      105289±102               -
+  fixed t=2              68.30±0.42           3.00      76032±2410               -
+  fixed t=3              68.65±0.57           4.00      60074±1909               -
+  fixed t=4              68.66±0.38           5.00        47220±11               -
+  fixed t=5              68.64±0.29           6.00      40695±1366               -
+  fixed t=6              68.57±0.27           7.00      35261±1186               -
+  fixed t=7              68.59±0.27           8.00         30438±6               -
+  lam=0.003              68.49±0.65      2.90±0.62      49745±8651               -   0.74±0.04x / -x   occupancy 94.6±2.2%
+  lam=0.01               68.38±0.59      2.41±0.40      56754±5628               -   0.85±0.06x / -x   occupancy 93.7±2.5%
+  lam=0.03               68.24±0.58      2.09±0.26      62075±3775               -   0.87±0.07x / -x   occupancy 92.8±2.9%
+  lam=0.1                67.83±0.46      1.74±0.05      70475±1032               -   0.93±0.03x / -x   occupancy 94.3±0.9%
+  lam=0.3                66.70±0.49      1.40±0.08      79684±2907               -   0.76±0.03x / -x   occupancy 92.9±1.3%
+  [compiled]  setting      acc%           steps         img/s            bs1 ms        speed-up vs fixed (bs256 / bs1); * = more accurate than every fixed depth, compared with the most accurate one
+  fixed t=0              63.71±0.75           1.00      72375±2216     3.238±0.064
+  fixed t=1              67.28±0.56           2.00      40590±1263     5.566±0.106
+  fixed t=2              68.31±0.44           3.00       28483±512     7.853±0.153
+  fixed t=3              68.67±0.56           4.00      21796±286    10.023±0.100
+  fixed t=4              68.66±0.41           5.00      18105±112    12.156±0.163
+  fixed t=5              68.66±0.30           6.00      15248±261    14.447±0.078
+  fixed t=6              68.58±0.26           7.00      12987±100    16.876±0.189
+  fixed t=7              68.58±0.26           8.00      11388±271    19.352±0.811
+  lam=0.003              68.48±0.61      2.90±0.62       10030±738     8.815±1.808   0.46±0.03x / 1.18±0.28x
+  lam=0.01               68.37±0.55      2.41±0.40      11007±2913     8.388±0.667   0.47±0.17x / 1.12±0.19x
+  lam=0.03               68.20±0.57      2.08±0.26      11445±2875     7.402±0.672   0.45±0.18x / 1.17±0.16x
+  lam=0.1                67.79±0.43      1.74±0.05      13241±3304     5.662±0.172   0.46±0.11x / 1.39±0.06x
+  lam=0.3                66.74±0.46      1.40±0.08      17530±1324     4.840±0.112   0.43±0.02x / 1.15±0.01x
+
+[benchmark c100_vcnet_orig] seeds 3 | NVIDIA H100 NVL | AMP bf16 | policy None | batch 256 throughput with compaction, batch-1 latency on 100 images
+  [eager]  setting      acc%           steps         img/s            bs1 ms        speed-up vs fixed (bs256 / bs1); * = more accurate than every fixed depth, compared with the most accurate one
+  fixed t=0              61.00±0.94           1.00       66894±500     3.604±0.044
+  fixed t=1              64.56±0.93           2.00       29018±110     6.627±0.301
+  [graph-bs256]  setting      acc%           steps         img/s            bs1 ms        speed-up vs fixed (bs256 / bs1); * = more accurate than every fixed depth, compared with the most accurate one
+  fixed t=0              61.00±0.94           1.00      86556±2676               -
+  fixed t=1              64.56±0.93           2.00       31513±691               -
+  [graph-compiled-bs256]  setting      acc%           steps         img/s            bs1 ms        speed-up vs fixed (bs256 / bs1); * = more accurate than every fixed depth, compared with the most accurate one
+  fixed t=0              61.01±0.95           1.00      180759±182               -
+  fixed t=1              64.54±0.91           2.00       115122±36               -
+  [compiled]  setting      acc%           steps         img/s            bs1 ms        speed-up vs fixed (bs256 / bs1); * = more accurate than every fixed depth, compared with the most accurate one
+  fixed t=0              61.01±0.92           1.00       76418±813     3.100±0.022
+  fixed t=1              64.60±0.96           2.00       45993±356     4.874±0.108
+===== END FSV SUMMARY =====

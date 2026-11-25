@@ -33,7 +33,10 @@ VCNet stops after fewer steps (1.4-2.4 on CIFAR-100 vs 3-4.6 for bViT), so more 
 per tick and the default refill cap is all S slots. Its embedding (V1, a third of step 0) is
 computed once per image before the ticks, in batches of S (``pre_embed``): refilling then only
 gathers rows, instead of embedding all R refill candidates every tick (most are not taken).
-Memory: one V1 map per queued image (96 KB in bf16 on CIFAR). ``compile=True`` compiles the model step +
+Memory: one V1 map per queued image (96 KB in bf16 on CIFAR). The pre-embedding of a batch is
+itself one CUDA graph (compiled with ``compile=True``): run eagerly it cost about as much per
+image as the whole tick overhead (H100, phase 2, 0.16.0 -> 0.16.1).
+``last_embed_ms`` / ``last_tick_ms``: GPU time of the pre-embedding and of the ticks of the last run. ``compile=True`` compiles the model step +
 readout with Inductor (no graphs of its own) before the tick is captured as a CUDA graph.
 """
 
@@ -96,9 +99,11 @@ class SlotPoolRunner:
         # x0 is read by every VCNet step, and by bViT only with input injection
         self.keep_x0 = self.vcnet or model.inject_gate is not None
         self.pre_embed = self.vcnet if pre_embed is None else pre_embed
-        self._step_readout = self._step_readout_impl
+        self._step_readout, self._embed = self._step_readout_impl, self._embed_impl
         if compile:
             self._step_readout = torch.compile(self._step_readout_impl, dynamic=False)
+            self._embed = torch.compile(self._embed_impl, dynamic=False)
+        self.last_embed_ms = self.last_tick_ms = 0.0
         self.temps = temps.float().to(device)
         self.graph = (device.type == "cuda") if graph is None else graph
         self.fd = None
@@ -140,6 +145,10 @@ class SlotPoolRunner:
             self.prev_pred = torch.zeros(S, dtype=torch.long, device=dev)
             self.run_ = torch.zeros(S, device=dev)
             self.lam = torch.ones(S, device=dev)
+            if self.pre_embed:  # static input / output of the pre-embedding graph (S images per replay)
+                self.pe_x = torch.zeros(S, *shape, device=dev)
+                self.pe_out = torch.zeros(S, *emb.shape[1:], dtype=emb.dtype, device=dev)
+                self.g_embed = _Replay(lambda: self.pe_out.copy_(self._embed(self.pe_x)), self.graph)
             self.n_total.fill_(0)  # the warm-up / capture ticks below then do nothing useful
             self.g_tick = _Replay(self._tick, self.graph)
             self.done_host = torch.zeros(2, dtype=torch.long, pin_memory=self.graph)
@@ -199,6 +208,10 @@ class SlotPoolRunner:
         self.active.copy_(self.active & ~stop)
         self.t.copy_((self.t + 1).clamp(max=T - 1))
 
+    def _embed_impl(self, x):
+        with autocast_ctx(self.device, self.amp, cache_enabled=False):
+            return self.model.embed(x)
+
     def _step_readout_impl(self, tok, t, x0):
         with autocast_ctx(self.device, self.amp, cache_enabled=False):
             self.model.forward_step(tok, t, x0, out=tok)  # bViT: in place, no buffer copy
@@ -212,10 +225,24 @@ class SlotPoolRunner:
         if N > self.Q:
             self._build(max(N, 2 * self.Q), tuple(x.shape[1:]))
         self.queue[:N].copy_(x)
-        if self.pre_embed:  # every image embedded exactly once, in full batches of S
-            with autocast_ctx(self.device, self.amp):
-                for i in range(0, N, self.S):
-                    self.emb_queue[i:min(N, i + self.S)].copy_(self.model.embed(x[i:i + self.S]))
+        cuda = self.graph
+        if cuda:
+            ev = [torch.cuda.Event(enable_timing=True) for _ in range(3)]
+            ev[0].record()
+        else:
+            import time
+
+            t0 = time.perf_counter()
+        if self.pre_embed:  # every image embedded exactly once, in full batches of S (one graph each)
+            for i in range(0, N, self.S):
+                n = min(self.S, N - i)
+                self.pe_x[:n].copy_(x[i:i + n])
+                self.g_embed()
+                self.emb_queue[i:i + n].copy_(self.pe_out[:n])
+        if cuda:
+            ev[1].record()
+        else:
+            t1 = time.perf_counter()
         if lam is not None:
             self.lam.fill_(float(lam))
         self._reset(N)
@@ -239,6 +266,13 @@ class SlotPoolRunner:
                         break
                 prev = i
         self.last_ticks = ticks
+        if cuda:
+            ev[2].record()
+            ev[2].synchronize()
+            self.last_embed_ms, self.last_tick_ms = ev[0].elapsed_time(ev[1]), ev[1].elapsed_time(ev[2])
+        else:
+            t2 = time.perf_counter()
+            self.last_embed_ms, self.last_tick_ms = (t1 - t0) * 1e3, (t2 - t1) * 1e3
         return self.out_pred[:N].clone(), self.out_step[:N].clone()
 
     def occupancy(self, steps: torch.Tensor) -> float:

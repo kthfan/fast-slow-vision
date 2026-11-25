@@ -364,3 +364,10 @@ def test_benchmark_batch_graph_modes_with_vcnet(tmp_path):
     summary = subprocess.run([sys.executable, str(ROOT / "scripts/summarize.py"), "smoke", "--reports",
                               str(tmp_path / "reports")], check=True, capture_output=True, text=True, cwd=ROOT).stdout
     assert "[graph-bs32]" in summary and "occupancy" in summary
+    subprocess.run([sys.executable, str(ROOT / "scripts/benchmark_adaptive.py"), "smoke", "--fake-data",
+                    "--out-root", str(tmp_path), "--repeats", "1", "--batch-size", "32", "--slots", "16",
+                    "--lams", "0.1", "--max-cpus", "2", "--graph-only"], check=True, cwd=ROOT, env=env)
+    bench = json.loads((tmp_path / "reports" / "smoke" / "benchmark.json").read_text())
+    assert set(bench["modes"]) == {"graph-compiled-bs32"}
+    row = bench["modes"]["graph-compiled-bs32"]["adaptive"][0]
+    assert row["ticks"] > 0 and row["tick_ms"] > 0 and row["embed_ms"] > 0

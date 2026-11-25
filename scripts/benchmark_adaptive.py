@@ -75,6 +75,9 @@ def parse_args(argv=None):
                    help="slot-pool modes (\"slots\", \"slots-triton\"): images in flight; 0 skips them")
     p.add_argument("--refill", type=int, default=None,
                    help="slot pool: refill cap per tick (default S/2 for bViT, S for VCNet)")
+    p.add_argument("--graph-only", action="store_true",
+                   help="only the mode graph-compiled-bs<B> (fixed depth as one compiled CUDA graph vs the compiled "
+                        "slot pool): the fair batch comparison, without the slower eager / compaction modes")
     p.add_argument("--no-graph-batch", dest="graph_batch", action="store_false",
                    help="skip the modes graph-bs<B> / graph-compiled-bs<B> (fixed depth as one CUDA graph per batch "
                         "vs the slot pool)")
@@ -102,6 +105,21 @@ def timed(fn, repeats: int, sync) -> tuple[float, object]:
     return st.median(times), out
 
 
+def save_and_print(res, rep, run, args, bs) -> None:
+    rep.mkdir(parents=True, exist_ok=True)
+    (rep / "benchmark.json").write_text(json.dumps(res, indent=2))
+    print(f"\n[benchmark] {run} (AMP {res['amp']}, policy {args.policy})")
+    for mode, m in res["modes"].items():
+        print(f"  [{mode}] setting   acc %   steps   img/s (bs {bs})   bs1 ms")
+        for r in m["fixed"]:
+            print(f"  fixed t={r['step']}      {r['acc'] * 100:6.2f}  {r['step'] + 1:6.2f}  "
+                  f"{(r['img_per_s'] or float('nan')):14.0f}  {(r['bs1_ms'] or float('nan')):7.3f}")
+        for r in m["adaptive"]:
+            print(f"  lam={r['lam']!s:<10}  {r['acc'] * 100:6.2f}  {r['mean_steps']:6.2f}  "
+                  f"{(r['img_per_s'] or float('nan')):14.0f}  {(r['bs1_ms'] or float('nan')):7.3f}"
+                  + (f"   V1 {r['embed_ms']:.1f} ms, tick {r['tick_ms']:.3f} ms x {r['ticks']}" if r.get("tick_ms") else ""))
+
+
 def slot_rows(sp, X, Y, N, lams, T, args, sync) -> list[dict]:
     rows = []
     for lam in lams:
@@ -109,6 +127,7 @@ def slot_rows(sp, X, Y, N, lams, T, args, sync) -> list[dict]:
         rows.append({"lam": lam, "acc": float((pred == Y).float().mean()),
                      "mean_steps": float(steps.float().mean()) + 1, "img_per_s": N / sec,
                      "bs1_ms": None, "ticks": sp.last_ticks, "occupancy": sp.occupancy(steps),
+                     "embed_ms": sp.last_embed_ms, "tick_ms": sp.last_tick_ms / max(1, sp.last_ticks),
                      "steps_hist": torch.bincount(steps, minlength=T).tolist()})
     return rows
 
@@ -121,7 +140,7 @@ def measure_graph_batch(res, model, policy, pc, device, amp, T, X, Y, N, sync, a
 
     bs = args.batch_size
     for tag, comp in ((f"graph-bs{bs}", False), (f"graph-compiled-bs{bs}", True)):
-        if comp and not args.compile:
+        if (comp and not args.compile) or (args.graph_only and not comp):
             continue
         try:
             fg = FixedDepthGraph(model, device, amp, batch=bs, compile=comp)
@@ -268,6 +287,10 @@ def main(argv=None):
                    "bs1_images": n1,
                    "code_version": code_info()["code_version"],
                    "device": torch.cuda.get_device_name() if device.type == "cuda" else "cpu", "modes": {}}
+            if args.graph_only:
+                measure_graph_batch(res, model, policy, pc, device, amp, T, X, Y, N, sync, args, lams)
+                save_and_print(res, rep, run, args, bs)
+                continue
             eager = AdaptiveRunner(model, policy, pc["temperatures"], device, amp)
             res["modes"]["eager"] = measure(eager, "run")
             from fsv.halting.fused import triton_usable
@@ -333,17 +356,7 @@ def main(argv=None):
                 except Exception as e:
                     res["cudagraph_error"] = repr(e)[:500]
                     print(f"[benchmark] CUDA-graph modes failed, skipped: {res['cudagraph_error']}")
-            rep.mkdir(parents=True, exist_ok=True)
-            (rep / "benchmark.json").write_text(json.dumps(res, indent=2))
-            print(f"\n[benchmark] {run} (AMP {amp}, policy {args.policy})")
-            for mode, m in res["modes"].items():
-                print(f"  [{mode}] setting   acc %   steps   img/s (bs {bs})   bs1 ms")
-                for r in m["fixed"]:
-                    print(f"  fixed t={r['step']}      {r['acc'] * 100:6.2f}  {r['step'] + 1:6.2f}  "
-                          f"{(r['img_per_s'] or float('nan')):14.0f}  {(r['bs1_ms'] or float('nan')):7.3f}")
-                for r in m["adaptive"]:
-                    print(f"  lam={r['lam']!s:<10}  {r['acc'] * 100:6.2f}  {r['mean_steps']:6.2f}  "
-                          f"{(r['img_per_s'] or float('nan')):14.0f}  {(r['bs1_ms'] or float('nan')):7.3f}")
+            save_and_print(res, rep, run, args, bs)
 
 
 if __name__ == "__main__":

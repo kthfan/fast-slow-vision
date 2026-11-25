@@ -344,3 +344,31 @@ python scripts/summarize.py c100_vcnet_orig c100_vcnet_adapt_blt --sections benc
 - 請在沒有其他程式的 GPU 上跑（先用 `nvidia-smi` 確認）。
 - 要回答的問題：在 `graph-compiled-bs256` 中，adapt_blt + 槽位池（λ=0.1，平均 1.73 步，67.77%）能否快過同準確率的固定步數（約 2 步）？
   理論上限約為固定 2 步的 1.1–1.2 倍（V1 只算一次、平均 1.73 步）；表中最後一欄 `occupancy` 是槽位使用率。
+
+### 階段 2 第 1 次結果（[`results/vcnet_phase2_h100`](../results/vcnet_phase2_h100/summary.md)）
+
+最強對照組 `graph-compiled-bs256`（兩邊都先編譯再錄成 CUDA graph）：
+
+| 設定 | acc % | 平均步數 | 每秒張數 | 對同準確率固定步數 | 對固定步數混合 |
+|---|---|---|---|---|---|
+| 固定 2 步 | 67.33 | 2 | 105,289 | | |
+| 固定 3 步 | 68.30 | 3 | 76,032 | | |
+| 槽位池 λ=0.3 | 66.70 | 1.40 | 79,684 | 0.76× | 0.70× |
+| 槽位池 λ=0.1 | 67.83 | 1.74 | 70,475 | 0.93× | 0.80× |
+| 槽位池 λ=0.03 | 68.24 | 2.09 | 62,075 | 0.87× | 0.80× |
+
+- 「固定步數混合」：把每張圖隨機分到相鄰的兩個固定步數，使平均準確率相同；這是停止策略要贏過的前緣。
+- batch 256 時自適應仍輸（前緣的 0.70–0.80 倍），但差距大幅縮小：壓縮式 runner 只有固定步數的 27–42%，編譯後的槽位池比編譯後的壓縮式快 5.3 倍。
+- 理想值（V1 一次 + 1.84 個槽位步 × 約 3.8 µs）約每張 8.8 µs、每秒 11.3 萬張，是前緣的 1.28 倍；實測每張 14.2 µs，約 5.3 µs 是額外開銷。
+  明顯的嫌疑：V1 的預先計算在編譯模式下仍是 eager、不在 graph 內。0.16.1 把它編譯並錄成 graph，並輸出 V1 時間、每個 tick 的時間與 tick 數。
+- 固定步數對照組本身也快很多：blt 2 步 eager 12,572 → 編譯 + graph 105,289 張/秒（8.4 倍），是原始 VCNet（115,122）的 91%，準確率高 2.8 點。
+
+第 2 次量測（0.16.1）只量 `graph-compiled-bs256`（`--graph-only`）：
+
+```bash
+python scripts/benchmark_adaptive.py c100_vcnet_adapt_blt --seeds 0 1 2 --lams 0.01 0.03 0.1 0.3 --graph-only
+```
+
+```bash
+python scripts/summarize.py c100_vcnet_adapt_blt --sections bench
+```
