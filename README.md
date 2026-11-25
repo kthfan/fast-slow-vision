@@ -695,6 +695,9 @@ batch 512 / 1024（學習率按 √ 放大）各低 1.0 / 3.4 點，不採用；
 **推論加速（階段 2，0.16.0）**：槽位池支援 VCNet（每列各自的步數、V1 預先計算、可編譯），並加入公平對照組：固定步數在 batch 256
 整個錄成一張 CUDA graph（`FixedDepthGraph`，benchmark 模式 `graph-bs256` / `graph-compiled-bs256`）。步驟見
 [`docs/vcnet.md`](docs/vcnet.md)「推論加速」。
+H100 結果（[`results/vcnet_phase2_h100`](results/vcnet_phase2_h100/summary.md)）：編譯後的槽位池比壓縮式 runner 快約 6 倍，
+λ=0.1 時對同準確率固定步數為 1.05 倍，但仍低於固定步數的前緣（0.82–0.89 倍）；就算沒有任何額外開銷也最多快約 10%。
+CIFAR 上 batch 推論建議用「固定步數 + 編譯 + CUDA graph」（blt 2 步每秒 105,000 張，是原始 VCNet 的 91%、高 2.8 點）。
 
 ## 下一階段方向（討論中）
 

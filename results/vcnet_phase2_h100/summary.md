@@ -43,3 +43,37 @@ Reading:
 * Eager-kernel modes (`slots`, `slots-triton`, `graph-bs256`) are slow and unstable (one seed 2-3x slower in several
   rows); they are not used for conclusions.
 * Accuracy and mean steps of the slot pool match the compaction runner (e.g. lam=0.1: 67.77-67.83%, 1.74 steps).
+
+## Second measurement (0.16.1: V1 pre-embedding compiled and captured)
+
+| setting | acc % | steps | img/s (0.16.0 -> 0.16.1) | vs matched fixed | vs mix of fixed depths | V1 | tick x ticks |
+|---|---|---|---|---|---|---|---|
+| lam=0.3 | 66.75 | 1.40 | 79,684 -> **92,653** | 0.88x (2 steps) | 0.82x | 29.0 ms | 1.337 ms x 59 |
+| lam=0.1 | 67.78 | 1.74 | 70,475 -> **79,210** | **1.05x** (3 steps) | 0.89x | 29.0 ms | 1.336 ms x 73 |
+| lam=0.03 | 68.21 | 2.08 | 62,075 -> **68,636** | 1.00x (3 steps) | 0.89x | 29.0 ms | 1.334 ms x 88 |
+| lam=0.01 | 68.37 | 2.41 | 56,754 -> **62,068** | 0.98x (4 steps) | 0.87x | 29.0 ms | 1.335 ms x 100 |
+
+(10,000 test images; fixed depth in the same run: 178,226 / 105,170 / 75,391 / 58,555 img/s at 1-4 steps.)
+
+Time budget per image at lam=0.1 (126 ms per 10,000 images = 29.0 ms V1 + 73 ticks x 1.336 ms):
+
+| part | us / image | note |
+|---|---|---|
+| V1, once | 2.90 | real compute, also in every fixed-depth pass (fixed step 0 = 5.61 us = V1 + first sweep) |
+| ticks | 9.75 | 73 ticks x 256 slots; 93.5% of the slot-steps useful |
+| of which: the step itself | 7.29 | a fixed step >= 1 at batch 256 takes ~1.00 ms (105,170 vs 178,226 img/s) |
+| of which: tick overhead | 2.46 | 0.34 ms per tick: readout + decision + refill + record + per-row masks and the packed state |
+
+Reading:
+
+* The compiled, captured V1 pre-embedding gave +10-16%. The slot pool now beats the matched fixed depth at lam=0.1
+  (1.05x vs 3 steps) and ties it at lam=0.03, but stays below the fixed-depth frontier (0.82-0.89x).
+* Bound on what is left: without any tick overhead (tick = 1.00 ms) lam=0.1 would reach ~98k img/s, 1.10x the
+  frontier. The ceiling is low because (1) the mean depth is only 1.74 steps, so adaptivity can save at most part of
+  the gap between 2 and 3 fixed steps; (2) V1 (2.9 us, a quarter of the per-image time) is paid by every image
+  whatever its depth; (3) in a slot every row pays a feedback step (~3.9 us) even at its step 0, which fixed depth
+  does more cheaply as a plain sweep (~2.7 us).
+* Conclusion for CIFAR-100: at batch 256, fixed depth compiled + captured as one CUDA graph is the best way to
+  serve this model; the adaptive slot pool is within 11-18% of it and at most ~10% ahead even with zero overhead.
+  Adaptivity pays at batch 1 (6-9% over blt_orig2 at equal accuracy, and 1.4x over blt's own fixed 3 steps).
+  Larger images / more steps per image (phase 4) leave more room.

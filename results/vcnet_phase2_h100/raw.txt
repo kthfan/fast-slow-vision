@@ -96,3 +96,25 @@ NOTE: runs use different code versions: ['0.10.0+85e59bca386a', '0.9.0+dec7d6e42
   fixed t=0              61.01±0.92           1.00       76418±813     3.100±0.022
   fixed t=1              64.60±0.96           2.00       45993±356     4.874±0.108
 ===== END FSV SUMMARY =====
+
+# Second measurement, code 0.16.1 (V1 pre-embedding compiled + one CUDA graph per batch)
+# python scripts/benchmark_adaptive.py c100_vcnet_adapt_blt --seeds 0 1 2 --lams 0.01 0.03 0.1 0.3 --graph-only
+
+===== BEGIN FSV SUMMARY =====
+code 0.10.0+85e59bca386a | NVIDIA H100 NVL | torch 2.6.0+cu124 | cpus 8/48
+
+[benchmark c100_vcnet_adapt_blt] seeds 3 | NVIDIA H100 NVL | AMP bf16 | policy S0-reward_acc | batch 256 throughput with compaction, batch-1 latency on 500 images
+  [graph-compiled-bs256]  setting      acc%           steps         img/s            bs1 ms        speed-up vs fixed (bs256 / bs1); * = more accurate than every fixed depth, compared with the most accurate one
+  fixed t=0              63.72±0.73           1.00       178226±68               -
+  fixed t=1              67.33±0.60           2.00      105170±103               -
+  fixed t=2              68.30±0.42           3.00      75391±1309               -
+  fixed t=3              68.65±0.57           4.00      58555±1325               -
+  fixed t=4              68.66±0.38           5.00      48123±1613               -
+  fixed t=5              68.64±0.29           6.00         39897±4               -
+  fixed t=6              68.57±0.27           7.00       34704±295               -
+  fixed t=7              68.59±0.27           8.00      31600±1001               -
+  lam=0.01               68.37±0.60      2.41±0.40      62068±7494               -   0.98±0.06x / -x   occupancy 94.0±2.1% | V1 29.0±0.0 ms, tick 1.335±0.001 ms x 100±15
+  lam=0.03               68.21±0.58      2.08±0.25      68636±4979               -   1.00±0.09x / -x   occupancy 92.7±2.9% | V1 29.0±0.0 ms, tick 1.334±0.001 ms x 88±8
+  lam=0.1                67.78±0.44      1.74±0.05      79210±1285               -   1.05±0.03x / -x   occupancy 93.5±2.4% | V1 29.0±0.0 ms, tick 1.336±0.000 ms x 73±2
+  lam=0.3                66.75±0.45      1.40±0.08      92653±4034               -   0.88±0.04x / -x   occupancy 92.9±1.3% | V1 29.0±0.0 ms, tick 1.337±0.001 ms x 59±4
+===== END FSV SUMMARY =====
