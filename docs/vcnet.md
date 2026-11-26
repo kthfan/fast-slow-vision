@@ -448,3 +448,19 @@ python scripts/summarize.py c100_resnet56_sgd c100_resnet56_fast c100_vcnet_r56p
   2. 參數量相同：`vcnet_r56p` 第 2 步（0.232 GFLOPs）與第 3 步（0.327）對 ResNet-56（0.252），取兩種訓練方式中 ResNet 較好的那個。
   3. 計算量相同：`vcnet_r56f4` 第 4 步對 ResNet-56（參數只有 0.63 倍）。
   4. 若 `resnet56_sgd` 較好，再跑 `c100_vcnet_r56p_blt_sgd`；若 ResNet 用 AdamW 方式明顯變差，再跑 `c100_resnet56_gn_fast` 看是不是 BatchNorm 的關係。
+
+### 階段 1 第 1 次結果（[`results/phase1_resnet56_h100`](../results/phase1_resnet56_h100/summary.md)）
+
+| 模型 | 參數 | GFLOPs | acc % |
+|---|---|---|---|
+| **ResNet-56，SGD 方式** | 0.862M | 0.251 | **71.25±0.20** |
+| ResNet-56，VCNet 方式（種子 0 失敗，只有 2 個種子） | 0.862M | 0.251 | 70.68±0.04 |
+| `vcnet_r56p` 2 / 3 / 5（最佳）步 | 0.864M | 0.232 / 0.327 / 0.517 | 65.49 / 66.55 / 67.17 |
+| `vcnet_r56f4` 4 步 | 0.545M | 0.249 | 63.01±0.86 |
+| `blt` 全寬 4 步（階段 0） | 1.150M | 0.528 | 68.85±0.49 |
+
+- ResNet-56 重現文獻，且勝過所有 VCNet：同參數、計算量相近時低 5.8 點；同計算量低 8.2 點；全寬 `blt` 用 1.33 倍參數、2.1 倍計算量仍低 2.4 點。
+  即使 oracle 停止（每張圖選最好的一步）也只有 70.01%。
+- 訓練方式不是 ResNet 那邊的原因（VCNet 方式只讓 ResNet-56 低 0.57 點）；對 VCNet 是否不利，要看 `c100_vcnet_r56p_blt_sgd`。
+- 驗證清單第 1 項未通過。下一步：`c100_resnet56_gn_fast`（GroupNorm 的影響）、`c100_vcnet_r56p_blt_sgd`，以及補跑 `c100_resnet56_fast` 種子 0。
+- 縮窄的 VCNet 訓練反而比全寬慢（通道數不是 8 / 16 的倍數，bf16 卷積用不到快的 kernel）。之後的新寬度要取 16 的倍數。
