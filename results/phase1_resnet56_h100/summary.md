@@ -1,8 +1,11 @@
 # Phase 1, first round: ResNet-56 vs VCNet at the same size (H100, pasted by the user)
 
 Code 0.17.0 (`dev/vcnet`), NVIDIA H100 NVL, torch 2.6.0+cu124. Raw output: [`raw.txt`](raw.txt).
-`c100_resnet56_fast` seed 0 has no results (run_experiment: FAILED; logs not yet seen), so its numbers are
-seeds 1-2 only.
+`c100_resnet56_fast` seed 0 has no results, so its numbers are seeds 1-2 only. Its training died with
+`CUDA error: an illegal memory access was encountered` (exit -6 after 32.7 min, vs ~9.5 min for a full run of the
+other seeds; the error is asynchronous, so the reported line in `GPUAugment.random_erase` is only where the CPU
+noticed it). One failure in about 30 runs with the same pipeline (GPU augmentation + CUDA graphs), including the
+other 5 ResNet-56 runs with BatchNorm; to be rerun with `--fresh` to see whether it is reproducible.
 
 ## CIFAR-100 test accuracy (3 seeds; 45k training images)
 
