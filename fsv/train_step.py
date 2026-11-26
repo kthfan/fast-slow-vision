@@ -65,9 +65,15 @@ class TrainStep:
         return parts
 
 
-def make_optimizer(groups, lr: float, device, impl: str = "foreach") -> torch.optim.Optimizer:
-    """AdamW; ``impl="fused"`` uses the single-kernel CUDA implementation (CPU: falls back to foreach)."""
+def make_optimizer(groups, lr: float, device, impl: str = "foreach", kind: str = "adamw",
+                   momentum: float = 0.9, nesterov: bool = True) -> torch.optim.Optimizer:
+    """AdamW (the recipe of all VCNet / bViT runs) or SGD with momentum (the standard CIFAR ResNet recipe).
+    ``impl="fused"`` uses the single-kernel CUDA implementation (CPU: falls back to foreach)."""
     kw = {}
     if impl == "fused" and torch.device(device).type == "cuda":
         kw["fused"] = True
+    if kind == "sgd":
+        return torch.optim.SGD(groups, lr=lr, momentum=momentum, nesterov=nesterov, **kw)
+    if kind != "adamw":
+        raise ValueError(f"unknown optimizer {kind!r}")
     return torch.optim.AdamW(groups, lr=lr, betas=(0.9, 0.999), **kw)

@@ -158,6 +158,7 @@ python scripts/summarize.py
 |---|---|
 | `fsv/models/bvit.py` | `RecurrentViT`：共用 Transformer 區塊遞迴 `t_max` 次；共用讀出頭 `head(LN(CLS_t) + step_emb(t))`；`n_blocks=t_max` 時為不共用權重的 ViT 對照組 |
 | `fsv/models/vcnet.py` | `VCNet`：仿視覺皮層 CNN（Hill et al., 2025），把 AIT→V1 預測編碼迴路展開成步數、每步讀出；設計與假設見 [`docs/vcnet.md`](docs/vcnet.md) |
+| `fsv/models/resnet.py` | `ResNet`：CIFAR ResNet-20 / 56 / 110（He et al., 2016，option A shortcut），階段 1 的 CNN 對照組；同一步驟介面、只有 1 步 |
 | `fsv/losses.py` | Stage A 損失：每步 CE + β·Brier + γ·Gatekeeper 信心損失 + δ·最後一步自我蒸餾 |
 | `fsv/calibration.py` | 每步溫度縮放（held-out 上以 LBFGS 擬合） |
 | `fsv/metrics.py` | acc、ECE、Brier、NLL、AURC |
@@ -698,6 +699,10 @@ batch 512 / 1024（學習率按 √ 放大）各低 1.0 / 3.4 點，不採用；
 H100 結果（[`results/vcnet_phase2_h100`](results/vcnet_phase2_h100/summary.md)）：編譯後的槽位池比壓縮式 runner 快約 6 倍，
 λ=0.1 時對同準確率固定步數為 1.05 倍，但仍低於固定步數的前緣（0.82–0.89 倍）；就算沒有任何額外開銷也最多快約 10%。
 CIFAR 上 batch 推論建議用「固定步數 + 編譯 + CUDA graph」（blt 2 步每秒 105,000 張，是原始 VCNet 的 91%、高 2.8 點）。
+
+**對照組（階段 1，0.17.0）**：ResNet-56（0.862M 參數、0.252 GFLOPs）與同等大小的 VCNet：`vcnet_r56p`（參數量相同，
+0.864M）、`vcnet_r56f4`（4 步的計算量相同，0.249 GFLOPs）。ResNet-56 跑兩種訓練方式（與 VCNet 相同的 AdamW + 強增強、
+一般的 SGD + crop/flip）。實驗與步驟見 [`docs/vcnet.md`](docs/vcnet.md)「對照組」。
 
 ## 下一階段方向（討論中）
 

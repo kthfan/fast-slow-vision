@@ -157,7 +157,7 @@ def measure(exp: str, cfg: dict, args, device, workers) -> dict:
     cl = bool(cfg.get("cl", 0))
     if cl:
         model = model.to(memory_format=torch.channels_last)
-    opt = make_optimizer(T.param_groups(model, targs.wd), targs.lr, device, cfg["opt"])
+    opt = make_optimizer(T.param_groups(model, targs.wd), targs.lr, device, cfg["opt"], targs.opt, targs.momentum)
     scaler = torch.amp.GradScaler("cuda", enabled=amp == "fp16")
     mixup = Mixup(NUM_CLASSES[targs.dataset], targs.mixup, targs.cutmix, targs.mix_prob, groups=targs.mix_groups)
     step = TrainStep(model, model.parameters(), opt, scaler, T.loss_config(targs), device, amp, targs.clip,

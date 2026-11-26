@@ -66,6 +66,7 @@ def parse_args(argv=None):
     p.add_argument("--ait-carry", action="store_true", help="VCNet: carry AIT_{t-1} into AIT_t (zero-init gate)")
     p.add_argument("--lateral", action="store_true", help="VCNet: every area keeps a state across steps")
     p.add_argument("--topdown", action="store_true", help="VCNet: BLT-style top-down from the area above")
+    p.add_argument("--resnet-norm", default="bn", choices=["bn", "gn"], help="ResNet: BatchNorm or GroupNorm")
     # optimisation
     p.add_argument("--epochs", type=int, default=200)
     p.add_argument("--batch-size", type=int, default=256, help="global batch size")
@@ -79,7 +80,9 @@ def parse_args(argv=None):
     p.add_argument("--compile", action="store_true", help="shorthand for --compile-mode default")
     p.add_argument("--compile-mode", default="none", choices=COMPILE_MODES,
                    help="torch.compile the forward + loss; reduce-overhead also captures CUDA graphs")
-    p.add_argument("--opt-impl", default="foreach", choices=["foreach", "fused"], help="AdamW implementation")
+    p.add_argument("--opt", default="adamw", choices=["adamw", "sgd"], help="optimizer (sgd: momentum, Nesterov)")
+    p.add_argument("--momentum", type=float, default=0.9, help="SGD momentum")
+    p.add_argument("--opt-impl", default="foreach", choices=["foreach", "fused"], help="optimizer implementation")
     p.add_argument("--channels-last", action="store_true", help="NHWC memory format for weights and activations")
     # augmentation
     p.add_argument("--mixup", type=float, default=0.8)
@@ -165,6 +168,8 @@ def summarize_steps(rows):
 
 
 def model_from_args(args, num_classes: int):
+    if args.model.startswith("resnet"):
+        return build_model(args.model, num_classes=num_classes, t_max=args.t_max, norm=args.resnet_norm)
     if args.model.startswith("vcnet"):
         return build_model(args.model, num_classes=num_classes, t_max=args.t_max,
                            ait_carry=args.ait_carry, lateral=args.lateral, topdown=args.topdown)
@@ -237,7 +242,7 @@ def main(argv=None):
     if args.channels_last:
         model = model.to(memory_format=torch.channels_last)
     n_params = sum(p.numel() for p in model.parameters())
-    opt = make_optimizer(param_groups(model, args.wd), args.lr, device, args.opt_impl)
+    opt = make_optimizer(param_groups(model, args.wd), args.lr, device, args.opt_impl, args.opt, args.momentum)
     scaler = torch.amp.GradScaler("cuda", enabled=amp == "fp16")
     ema = EMA(model, args.ema) if args.ema > 0 else None
     loss_cfg = loss_config(args)
@@ -269,7 +274,7 @@ def main(argv=None):
         (out / "config.json").write_text(json.dumps(meta, indent=2))
         print(f"[train] params={n_params / 1e6:.2f}M world={world} amp={amp} iters/epoch={iters_per_epoch} "
               f"cpus/rank={n_cpus} workers/rank={args.workers} data={'gpu' if args.gpu_aug else 'cpu'} "
-              f"compile={compile_mode(args)} opt={args.opt_impl} channels_last={args.channels_last}",
+              f"compile={compile_mode(args)} opt={args.opt}/{args.opt_impl} channels_last={args.channels_last}",
               flush=True)
 
     t_start = time.time()

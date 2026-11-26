@@ -92,6 +92,11 @@ PRESETS = {
     # "we reduced VCNet's hidden-layer widths to form the Mini variant" [assumption: x0.25]
     "vcnet_mini": _scaled(0.25, **_FULL),
     "vcnet_wide": _scaled(2.0, **_FULL),
+    # phase 1: matched to ResNet-56 (0.862M params, 0.252 GFLOPs) with --lateral --topdown (the blt model)
+    # params-matched: 0.864M; cumulative GFLOPs 0.137 / 0.232 / 0.327 / 0.422 at steps 1-4
+    "vcnet_r56p": dict(c_v1=48, c_v2=56, c_v2d=28, c_v4=68, c_pit=68, c_cit=112, c_ait=136, c_mt=56, c_mst=68),
+    # FLOPs-matched at 4 steps (the best fixed depth of the blt model): 0.545M params; 0.080 / 0.136 / 0.193 / 0.249
+    "vcnet_r56f4": dict(c_v1=36, c_v2=40, c_v2d=20, c_v4=56, c_pit=56, c_cit=88, c_ait=108, c_mt=44, c_mst=56),
 }
 
 

@@ -389,3 +389,62 @@ V1 預先計算改成編譯 + CUDA graph 後，槽位池快了 10–16%：
   槽位中第 0 步的列也付一次帶回饋的步數成本。
 - **結論**：CIFAR-100 上，batch 256 用「固定步數 + 編譯 + CUDA graph」最快；自適應槽位池落後前緣 11–18%，
   即使沒有任何額外開銷也最多快約 10%。自適應的好處在 batch 1。影像更大、每張圖步數更多時（階段 4）空間較大，屆時再量。
+
+## 對照組（階段 1，0.17.0）：ResNet-56 與同等大小的 VCNet
+
+驗證清單第 1 項：相同參數量與計算量下，VCNet 要勝過一般 CNN。第一個對照組是 ResNet-56（He et al. 2016 的 CIFAR 版）。
+
+**ResNet**（`fsv/models/resnet.py`）：深度 6n + 2；3×3 stem 16 通道，三段各 n 個 basic block（16 / 32 / 64 通道，32 / 16 / 8 像素），
+全域平均池化 + 一層線性。shortcut 用論文的 option A（恆等；形狀改變時取樣 + 補零通道，不含參數），
+BatchNorm（`--resnet-norm gn` 可改 GroupNorm）。用同一套步驟介面、只有 1 步，所以訓練、評估、FLOPs 計算都不用改；停止曲線只有一個點。
+參數量與論文相符（10 類：ResNet-20 0.27M、ResNet-56 0.85M、ResNet-110 1.7M，測試確認）。
+
+**同等大小的 VCNet**：現有的 `blt`（全寬）是 1.15M 參數，2 步 0.284、4 步 0.528 GFLOPs，比 ResNet-56 大。
+依寬度縮小，做兩個對齊版本（都是 `--lateral --topdown`）：
+
+| 模型 | 參數 | 1 步 | 2 步 | 3 步 | 4 步 GFLOPs | 對齊什麼 |
+|---|---|---|---|---|---|---|
+| ResNet-56 | 0.862M | 0.252 | | | | |
+| `blt`（全寬，第 2 輪） | 1.150M | 0.161 | 0.284 | 0.406 | 0.528 | |
+| `vcnet_r56p` | 0.864M | 0.137 | 0.232 | 0.327 | 0.422 | 參數量（ResNet-56 的計算量落在 2 與 3 步之間） |
+| `vcnet_r56f4` | 0.545M | 0.080 | 0.136 | 0.193 | 0.249 | 4 步（`blt` 最佳固定步數）的計算量 |
+
+V1 在全解析度（32×32），每張圖佔一大塊計算量，所以寬度只要小一點，FLOPs 就降很多。
+
+**訓練方式**：ResNet 跑兩種，VCNet 預設用 VCNet 的方式；兩者分開，才知道差距來自架構還是訓練方式。
+
+| 實驗 | 模型 | 訓練方式 |
+|---|---|---|
+| `c100_resnet56_fast` | ResNet-56 | 與 `c100_vcnet_orig_fast` 完全相同，只換模型與步數：AdamW 1e-3、RandAugment、erasing、Mixup / CutMix、CE、快速管線 |
+| `c100_resnet56_sgd` | ResNet-56 | 一般 CIFAR ResNet 的做法：SGD + Nesterov，batch 256 lr 0.2（= 每 128 張 0.1），wd 5e-4，cosine，只做 crop + flip，不裁梯度；用來對照文獻（CIFAR-100 約 71–72%） |
+| `c100_vcnet_r56p_blt_fast` | `vcnet_r56p` | `c100_vcnet_adapt_blt_fast` 的做法（8 步、每步讀出、Stage A） |
+| `c100_vcnet_r56f4_blt_fast` | `vcnet_r56f4` | 同上 |
+| `c100_resnet56_gn_fast`（可選） | ResNet-56 GroupNorm | 同 `c100_resnet56_fast`；VCNet 用 GroupNorm，這個區分正規化的影響 |
+| `c100_vcnet_r56p_blt_sgd`（視結果） | `vcnet_r56p` | SGD 做法；只有 `resnet56_sgd` 勝過 `resnet56_fast` 時才需要，讓兩邊都用各自最好的訓練方式 |
+
+注意：這裡都只用 45,000 張訓練（5,000 張留做 held-out 校準），文獻用 50,000 張，ResNet-56 預期低約 0.5–1 點。
+
+### 步驟
+
+先量速度（ResNet 的 BatchNorm 在 CUDA graph 中會更新 running stats，要確認沒有退回非 graph 執行）：
+
+```bash
+python scripts/bench_train.py c100_resnet56_fast c100_resnet56_sgd c100_vcnet_r56p_blt_fast c100_vcnet_r56f4_blt_fast --configs gpu-cg --no-data-only
+```
+
+再依序跑 3 個種子：
+
+```bash
+python scripts/run_experiment.py c100_resnet56_sgd c100_resnet56_fast c100_vcnet_r56p_blt_fast c100_vcnet_r56f4_blt_fast --seeds 0 1 2
+```
+
+```bash
+python scripts/summarize.py c100_resnet56_sgd c100_resnet56_fast c100_vcnet_r56p_blt_fast c100_vcnet_r56f4_blt_fast
+```
+
+- 訓練 log 若出現 `skipping cudagraphs`，請連同訊息一起貼上（結果仍正確，只是較慢）。
+- 判讀：
+  1. `resnet56_sgd` 應約 70–71%。低於 69% 表示實作或訓練方式有問題，先查這個。
+  2. 參數量相同：`vcnet_r56p` 第 2 步（0.232 GFLOPs）與第 3 步（0.327）對 ResNet-56（0.252），取兩種訓練方式中 ResNet 較好的那個。
+  3. 計算量相同：`vcnet_r56f4` 第 4 步對 ResNet-56（參數只有 0.63 倍）。
+  4. 若 `resnet56_sgd` 較好，再跑 `c100_vcnet_r56p_blt_sgd`；若 ResNet 用 AdamW 方式明顯變差，再跑 `c100_resnet56_gn_fast` 看是不是 BatchNorm 的關係。
