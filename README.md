@@ -704,6 +704,11 @@ CIFAR 上 batch 推論建議用「固定步數 + 編譯 + CUDA graph」（blt 2 
 0.864M）、`vcnet_r56f4`（4 步的計算量相同，0.249 GFLOPs）。ResNet-56 跑兩種訓練方式（與 VCNet 相同的 AdamW + 強增強、
 一般的 SGD + crop/flip）。實驗與步驟見 [`docs/vcnet.md`](docs/vcnet.md)「對照組」。
 
+**階段 1 結果與決定**（[`results/phase1_resnet56_h100`](results/phase1_resnet56_h100/summary.md)）：ResNet-56 BN 70.44–71.25%，
+同參數的 `vcnet_r56p` 2 / 3 步 65.49 / 66.55%；差距大多來自正規化（ResNet-56 GN 62.84%），但同樣用 GN + weight standardization
+時 ResNet-56 仍領先 1–2 點（68.64 vs 66.84 / 67.82%）。使用者決定方向 B：維持 GN + WS、改進仿皮質層架構（暫不實作，見
+[`docs/vcnet.md`](docs/vcnet.md)「階段 1 方向決定」）。
+
 ## 下一階段方向（討論中）
 
 使用者決定：之後尋找**適合此架構的任務**，並考慮加入**仿皮層遞迴網路**（TODO.md 第 4 節）。
