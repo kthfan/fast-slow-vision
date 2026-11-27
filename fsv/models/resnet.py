@@ -11,7 +11,7 @@ Exposed through the same step interface as bViT and VCNet with a single step (``
 evaluation and FLOP-counting code then runs unchanged; halting curves have one point.
 
 ``norm``: "bn" (BatchNorm, the paper) or "gn" (GroupNorm, as VCNet), to separate the normalisation from
-the architecture when the two are compared.
+the architecture when the two are compared; ``ws``: weight standardisation in every conv (GN + WS).
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from .vcnet import WSConv2d
 
 
 @dataclass
@@ -34,6 +36,7 @@ class ResNetConfig:
     width: int = 16  # channels of the first stage (x2, x4 in stages 2, 3)
     norm: str = "bn"  # "bn" | "gn"
     gn_groups: int = 8
+    ws: bool = False  # weight standardisation in every conv (GN + WS, Qiao et al. 2019)
 
     @property
     def dim(self) -> int:
@@ -58,11 +61,12 @@ def _norm(c: int, kind: str, groups: int) -> nn.Module:
 class BasicBlock(nn.Module):
     """conv3x3 - norm - ReLU - conv3x3 - norm, + shortcut, ReLU."""
 
-    def __init__(self, cin: int, cout: int, stride: int, norm: str, groups: int):
+    def __init__(self, cin: int, cout: int, stride: int, norm: str, groups: int, ws: bool = False):
         super().__init__()
-        self.conv1 = nn.Conv2d(cin, cout, 3, stride, 1, bias=False)
+        conv = WSConv2d if ws else nn.Conv2d
+        self.conv1 = conv(cin, cout, 3, stride, 1, bias=False)
         self.n1 = _norm(cout, norm, groups)
-        self.conv2 = nn.Conv2d(cout, cout, 3, 1, 1, bias=False)
+        self.conv2 = conv(cout, cout, 3, 1, 1, bias=False)
         self.n2 = _norm(cout, norm, groups)
         self.stride, self.pad = stride, cout - cin
 
@@ -87,12 +91,13 @@ class ResNet(nn.Module):
         assert (c.depth - 2) % 6 == 0, "CIFAR ResNet depth must be 6n + 2"
         assert c.t_max == 1, "ResNet is feed-forward: t_max must be 1"
         n, w = (c.depth - 2) // 6, c.width
-        self.stem = nn.Sequential(nn.Conv2d(c.in_chans, w, 3, 1, 1, bias=False), _norm(w, c.norm, c.gn_groups),
+        conv = WSConv2d if c.ws else nn.Conv2d
+        self.stem = nn.Sequential(conv(c.in_chans, w, 3, 1, 1, bias=False), _norm(w, c.norm, c.gn_groups),
                                   nn.ReLU(inplace=True))
         blocks, cin = [], w
         for i, cout in enumerate((w, 2 * w, 4 * w)):
             for j in range(n):
-                blocks.append(BasicBlock(cin, cout, 2 if (j == 0 and i > 0) else 1, c.norm, c.gn_groups))
+                blocks.append(BasicBlock(cin, cout, 2 if (j == 0 and i > 0) else 1, c.norm, c.gn_groups, c.ws))
                 cin = cout
         self.blocks = nn.Sequential(*blocks)
         self.head = nn.Linear(cin, c.num_classes)

@@ -222,6 +222,22 @@ EXPERIMENTS: dict[str, dict] = {
                 "0.249 GFLOPs at 4 steps), fast pipeline.",
         "train": _set(_VC_ADAPT, "--model", "vcnet_r56f4") + ["--lateral", "--topdown"] + _FAST,
     },
+    # ---- phase 1, round 2: GroupNorm costs ResNet-56 7.6 points (62.84 vs 70.44%), so VCNet's gap may be the
+    # normalisation. GN + weight standardisation keeps the TODO.md rule (no BatchNorm) and usually closes most of
+    # the GN-BN gap.
+    "c100_resnet56_gnws_fast": {
+        "desc": "c100_resnet56_gn_fast + weight standardisation in every conv (GN + WS): how much of BatchNorm's "
+                "7.6-point lead does it recover?",
+        "train": _RN_FAST + ["--resnet-norm", "gn", "--ws"],
+    },
+    "c100_vcnet_r56p_blt_ws_fast": {
+        "desc": "c100_vcnet_r56p_blt_fast + weight standardisation in every conv before a GroupNorm.",
+        "train": _set(_VC_ADAPT, "--model", "vcnet_r56p") + ["--lateral", "--topdown", "--ws"] + _FAST,
+    },
+    "c100_vcnet_r56f4_blt_ws_fast": {
+        "desc": "c100_vcnet_r56f4_blt_fast + weight standardisation (FLOPs-matched at 4 steps).",
+        "train": _set(_VC_ADAPT, "--model", "vcnet_r56f4") + ["--lateral", "--topdown", "--ws"] + _FAST,
+    },
     "c100_vcnet_r56p_blt_sgd": {
         "desc": "c100_vcnet_r56p_blt_fast with the standard ResNet recipe (SGD, crop + flip only); "
                 "only needed if c100_resnet56_sgd beats c100_resnet56_fast.",

@@ -32,3 +32,29 @@ other 5 ResNet-56 runs with BatchNorm; to be rerun with `--fresh` to see whether
   counts (28, 36, 44, 68, 108, 136) are not multiples of 8 or 16, which bf16 convolutions need for fast kernels.
 
 Verification item 1 (beat ResNet-56 at the same parameters and compute) fails by a wide margin.
+
+## Second paste: seed-0 rerun, GroupNorm control, VCNet with the SGD recipe
+
+* The `--fresh` rerun of `c100_resnet56_fast` seed 0 finished normally (9.6 min, the same augmentation stream), so
+  the illegal memory access was a one-off. With 3 seeds: 70.44±0.42% (seed 0 about 69.96%).
+
+| model (normalisation) | params | GFLOPs | acc % | NLL TS |
+|---|---|---|---|---|
+| ResNet-56 BN, SGD recipe | 0.862M | 0.251 | 71.25±0.20 | 1.074 |
+| ResNet-56 BN, VCNet recipe | 0.862M | 0.251 | 70.44±0.42 | 1.059 |
+| **ResNet-56 GN, VCNet recipe** | 0.862M | 0.251 | **62.84±0.45** | 1.321 |
+| vcnet_r56p (GN), 2 / 3 steps | 0.864M | 0.232 / 0.327 | 65.49 / 66.55 | 1.256 / 1.216 |
+| vcnet_r56f4 (GN), 4 steps | 0.545M | 0.249 | 63.01±0.86 | 1.338 |
+| vcnet_r56p (GN), SGD recipe, best step | 0.864M | | 62.27±3.60 | |
+
+* GroupNorm costs ResNet-56 7.6 points (and 1.56x the batch-256 latency, 6.32 vs 4.05 ms). With the same
+  normalisation, VCNet is ahead: vcnet_r56p beats ResNet-56-GN by 2.65 points at 2 steps (with 8% fewer FLOPs) and
+  by 3.7 points at 3 steps; vcnet_r56f4 ties it at the same FLOPs with 0.63x the parameters.
+* So most of the 5.8-point gap of the first paste is the normalisation, not the architecture. Caveat: GN may hurt
+  a 56-layer plain-depth network more than the shallower VCNet sweep, so "VCNet > ResNet at equal GN" is not yet
+  "VCNet can beat the best ResNet".
+* The SGD recipe does not suit VCNet: 4.7 points lower at the best step, one unstable seed (step-1 accuracy
+  56.8±8.5), the final training loss 0.81±0.54 (overfitting without Mixup / CutMix) and over-confident
+  (temperatures 1.1-1.4). VCNet keeps the AdamW recipe.
+
+Next (0.18.0): GroupNorm + weight standardisation (keeps the TODO.md no-BatchNorm rule) for ResNet-56 and VCNet.

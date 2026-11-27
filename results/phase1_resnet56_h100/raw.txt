@@ -76,3 +76,56 @@ code 0.17.0+f0486173edff | NVIDIA H100 NVL | torch 2.6.0+cu124 | cpus 8/48
   AUC maxprob 66.18±0.20 entropy 65.92±0.19 fixed_depth 66.42±0.10
   oracle full 67.00±0.21% @ 0.375±0.001 GFLOPs | any 70.01±0.26% @ 0.155±0.002 GFLOPs
 ===== END FSV SUMMARY =====
+
+# ---- second paste (code 0.17.0): c100_resnet56_fast seed 0 rerun with --fresh, GN control, VCNet with the SGD recipe
+===== BEGIN FSV SUMMARY =====
+code 0.17.0+f0486173edff | NVIDIA H100 NVL | torch 2.6.0+cu124 | cpus 8/48
+
+[c100_resnet56_fast] seeds 0,1,2 | params 0.86M | train 9.6±0.1 min | epoch 2.7±0.0s
+  test acc%  70.44±0.42
+  ECE raw%   9.75±0.83
+  ECE TS%    1.43±0.20
+  NLL TS     1.059±0.010
+  AURC TS%   10.05±0.27
+  temp       0.784±0.010
+  GFLOPs     0.251
+  lat bs1 ms 4.45±0.89
+  lat bs256 ms 4.05±0.00
+  holdout%   69.8±0.4
+  final train loss 2.412±0.035 | AMP bf16
+  best-step acc 70.44±0.42 | last-step acc 70.44±0.42
+  AUC maxprob 70.44±0.42 entropy 70.44±0.42 fixed_depth 70.44±0.42
+  oracle full 70.44±0.42% @ 0.251±0.000 GFLOPs | any 70.44±0.42% @ 0.251±0.000 GFLOPs
+
+[c100_resnet56_gn_fast] seeds 0,1,2 | params 0.86M | train 10.1±0.1 min | epoch 2.9±0.0s
+  test acc%  62.84±0.45
+  ECE raw%   11.62±0.22
+  ECE TS%    1.46±0.04
+  NLL TS     1.321±0.009
+  AURC TS%   14.27±0.38
+  temp       0.753±0.003
+  GFLOPs     0.251
+  lat bs1 ms 5.51±0.84
+  lat bs256 ms 6.32±0.75
+  holdout%   62.1±0.6
+  final train loss 2.699±0.034 | AMP bf16
+  best-step acc 62.84±0.45 | last-step acc 62.84±0.45
+  AUC maxprob 62.84±0.45 entropy 62.84±0.45 fixed_depth 62.84±0.45
+  oracle full 62.84±0.45% @ 0.251±0.000 GFLOPs | any 62.84±0.45% @ 0.251±0.000 GFLOPs
+
+[c100_vcnet_r56p_blt_sgd] seeds 0,1,2 | params 0.86M | train 25.5±1.3 min | epoch 7.3±0.4s
+  test acc%  56.78±8.54 61.10±5.00 62.04±3.88 62.12±3.60 62.08±3.39 61.90±3.47 61.87±3.40 61.90±3.40
+  ECE raw%   5.32±3.57 10.00±4.90 12.19±4.00 13.45±3.72 13.57±3.66 13.57±3.11 13.65±3.32 13.66±3.42
+  ECE TS%    1.91±0.41 2.11±0.62 2.53±0.61 2.46±0.86 2.47±0.76 2.59±0.98 2.74±1.27 2.73±1.18
+  NLL TS     1.664±0.315 1.507±0.140 1.495±0.095 1.507±0.090 1.519±0.096 1.528±0.104 1.534±0.109 1.537±0.113
+  AURC TS%   19.32±7.50 15.37±3.78 14.71±2.80 14.74±2.51 14.79±2.45 14.84±2.58 14.86±2.59 14.90±2.67
+  temp       1.101±0.119 1.288±0.191 1.379±0.215 1.431±0.239 1.428±0.224 1.418±0.202 1.423±0.207 1.426±0.211
+  GFLOPs     0.137 0.232 0.327 0.422 0.517 0.612 0.707 0.802
+  lat bs1 ms 3.52±0.03 6.88±0.11 9.90±0.10 13.15±0.38 16.31±0.43 19.03±0.50 22.28±0.55 25.85±0.89
+  lat bs256 ms 3.54±0.05 18.89±0.00 34.34±0.00 49.79±0.01 65.24±0.00 80.68±0.02 96.12±0.03 111.43±0.13
+  holdout%   56.5±8.4 60.6±5.1 61.5±3.7 61.6±3.7 61.6±3.6 61.5±3.8 61.4±3.8 61.5±3.8
+  final train loss 0.813±0.535 | AMP bf16
+  best-step acc 62.27±3.60 | last-step acc 61.90±3.40
+  AUC maxprob 61.09±4.34 entropy 60.79±4.54 fixed_depth 61.66±4.19
+  oracle full 61.90±3.40% @ 0.413±0.038 GFLOPs | any 66.57±2.78% @ 0.159±0.015 GFLOPs
+===== END FSV SUMMARY =====

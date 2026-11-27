@@ -464,3 +464,40 @@ python scripts/summarize.py c100_resnet56_sgd c100_resnet56_fast c100_vcnet_r56p
 - 訓練方式不是 ResNet 那邊的原因（VCNet 方式只讓 ResNet-56 低 0.57 點）；對 VCNet 是否不利，要看 `c100_vcnet_r56p_blt_sgd`。
 - 驗證清單第 1 項未通過。下一步：`c100_resnet56_gn_fast`（GroupNorm 的影響）、`c100_vcnet_r56p_blt_sgd`，以及補跑 `c100_resnet56_fast` 種子 0。
 - 縮窄的 VCNet 訓練反而比全寬慢（通道數不是 8 / 16 的倍數，bf16 卷積用不到快的 kernel）。之後的新寬度要取 16 的倍數。
+
+### 階段 1 第 2 次結果：差距主要來自正規化
+
+| 模型（正規化） | 參數 | GFLOPs | acc % |
+|---|---|---|---|
+| ResNet-56 BN，SGD 方式 | 0.862M | 0.251 | 71.25±0.20 |
+| ResNet-56 BN，VCNet 方式（種子 0 重跑後 3 個種子） | 0.862M | 0.251 | 70.44±0.42 |
+| **ResNet-56 GN，VCNet 方式** | 0.862M | 0.251 | **62.84±0.45** |
+| `vcnet_r56p`（GN）2 / 3 步 | 0.864M | 0.232 / 0.327 | 65.49 / 66.55 |
+| `vcnet_r56f4`（GN）4 步 | 0.545M | 0.249 | 63.01±0.86 |
+| `vcnet_r56p`（GN），SGD 方式，最佳步 | 0.864M | | 62.27±3.60 |
+
+- 種子 0 用 `--fresh` 重跑（同樣的亂數序列）正常完成，上次的非法記憶體存取是一次性的。
+- GroupNorm 讓 ResNet-56 掉 7.6 點。同樣用 GN 時，`vcnet_r56p` 第 2 步（計算量少 8%）高 2.65 點、第 3 步高 3.7 點；
+  `vcnet_r56f4` 同計算量、0.63 倍參數打平。第 1 次結果的 5.8 點差距，大部分是正規化，不是架構。
+  但 GN 對 56 層深的 ResNet 可能比對較淺的 VCNet 傷得更重，所以這還不等於「VCNet 能勝過最好的 ResNet」。
+- SGD 方式不適合 VCNet：最佳步低 4.7 點、一個種子不穩定、沒有 Mixup / CutMix 時過擬合（最終訓練損失 0.81±0.54）。VCNet 維持 AdamW 方式。
+
+### 0.18.0：GroupNorm + weight standardization
+
+TODO.md 規定 CNN 一律 GroupNorm、禁止每步分別統計的 BatchNorm（[定案]），所以先試不違反規定的做法：
+weight standardization（WS，Qiao et al. 2019）。每個接在正規化前的卷積，濾波器先減平均、除以標準差再用；不依賴 batch，
+也沒有每步統計，文獻上 GN + WS 能補回大部分與 BN 的差距。`--ws` 開關（VCNet：20 個卷積；ResNet：所有卷積），參數量不變；
+零初始化的回饋 / 跨步 1×1 卷積不加（對全零濾波器標準化會除以約 0）。
+
+| 實驗 | 內容 |
+|---|---|
+| `c100_resnet56_gnws_fast` | ResNet-56 GN + WS：能補回 BN 領先的 7.6 點中的多少 |
+| `c100_vcnet_r56p_blt_ws_fast` | `vcnet_r56p` + WS |
+| `c100_vcnet_r56f4_blt_ws_fast`（可選） | `vcnet_r56f4` + WS |
+
+```bash
+python scripts/run_experiment.py c100_resnet56_gnws_fast c100_vcnet_r56p_blt_ws_fast c100_vcnet_r56f4_blt_ws_fast --seeds 0 1 2
+```
+
+判讀：若 `vcnet_r56p` + WS 追上 ResNet-56 BN（約 70.4–71.3%），驗證清單第 1 項在不改正規化規則下就有機會通過；
+若 ResNet GN + WS 補回很多、VCNet + WS 補回很少，差距就回到架構本身。

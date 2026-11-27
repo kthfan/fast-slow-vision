@@ -67,6 +67,7 @@ def parse_args(argv=None):
     p.add_argument("--lateral", action="store_true", help="VCNet: every area keeps a state across steps")
     p.add_argument("--topdown", action="store_true", help="VCNet: BLT-style top-down from the area above")
     p.add_argument("--resnet-norm", default="bn", choices=["bn", "gn"], help="ResNet: BatchNorm or GroupNorm")
+    p.add_argument("--ws", action="store_true", help="VCNet / ResNet: weight standardisation in the convs before a norm")
     # optimisation
     p.add_argument("--epochs", type=int, default=200)
     p.add_argument("--batch-size", type=int, default=256, help="global batch size")
@@ -169,10 +170,10 @@ def summarize_steps(rows):
 
 def model_from_args(args, num_classes: int):
     if args.model.startswith("resnet"):
-        return build_model(args.model, num_classes=num_classes, t_max=args.t_max, norm=args.resnet_norm)
+        return build_model(args.model, num_classes=num_classes, t_max=args.t_max, norm=args.resnet_norm, ws=args.ws)
     if args.model.startswith("vcnet"):
         return build_model(args.model, num_classes=num_classes, t_max=args.t_max,
-                           ait_carry=args.ait_carry, lateral=args.lateral, topdown=args.topdown)
+                           ait_carry=args.ait_carry, lateral=args.lateral, topdown=args.topdown, ws=args.ws)
     return build_model(args.model, num_classes=num_classes, t_max=args.t_max, n_blocks=args.n_blocks,
                        patch_size=args.patch_size,
                        norm=args.norm, step_embed_in=args.step_embed_in, input_inject=args.input_inject,

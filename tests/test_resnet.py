@@ -99,3 +99,36 @@ def test_train_then_evaluate_resnet(tmp_path):
     res = json.loads((out / "results.json").read_text())
     assert res["model_cfg"]["arch"] == "resnet" and len(res["test_ts"]) == 1
     assert 0.07 < res["flops"]["cumulative"][0] / 1e9 < 0.09  # ResNet-20: 0.082 GFLOPs
+
+
+def test_weight_standardisation():
+    from fsv.models.vcnet import WSConv2d
+
+    torch.manual_seed(0)
+    c = WSConv2d(4, 6, 3, padding=1, bias=False)
+    x = torch.randn(2, 4, 8, 8)
+    w = c.weight
+    w_std = (w - w.mean((1, 2, 3), keepdim=True)) / torch.sqrt(w.var((1, 2, 3), keepdim=True, unbiased=False) + 1e-5)
+    assert torch.allclose(c(x), torch.nn.functional.conv2d(x, w_std, padding=1), atol=1e-5)
+    # scale invariance: the output does not change when a filter is rescaled (up to the eps)
+    y = c(x)
+    with torch.no_grad():
+        c.weight.mul_(3.0)
+    assert torch.allclose(c(x), y, rtol=1e-2, atol=1e-2)
+
+    m = build_model("vcnet_r56p", t_max=2, lateral=True, topdown=True, ws=True)
+    assert sum(isinstance(x, WSConv2d) for x in m.modules()) == 20
+    # zero-init feedback / state convs stay plain (standardising a zero filter would divide by ~0)
+    assert type(m.err_in) is torch.nn.Conv2d and all(type(v) is torch.nn.Conv2d for v in m.lat.values())
+    assert n_params(m) == n_params(build_model("vcnet_r56p", t_max=2, lateral=True, topdown=True))
+    m2 = model_from_config(config_dict(m))
+    m2.load_state_dict(m.state_dict())
+    xi = torch.randn(2, 3, 32, 32)
+    assert torch.allclose(m2.eval()(xi), m.eval()(xi), atol=1e-5)
+    r = build_model("resnet20", norm="gn", ws=True)
+    assert sum(isinstance(x, WSConv2d) for x in r.modules()) == 19  # stem + 2 per block
+
+
+def test_phase1_ws_recipes():
+    for name in ("c100_resnet56_gnws_fast", "c100_vcnet_r56p_blt_ws_fast", "c100_vcnet_r56f4_blt_ws_fast"):
+        assert "--ws" in EXPERIMENTS[name]["train"]

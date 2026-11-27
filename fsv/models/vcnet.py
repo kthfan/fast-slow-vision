@@ -66,6 +66,7 @@ class VCNetConfig:
     rec_iters: int = 3  # Recurrent Block iterations in MT / MST (paper: t = 3)
     gn_groups: int = 8  # GroupNorm groups (largest divisor of the width <= this)
     cbam_reduction: int = 8
+    ws: bool = False  # weight standardisation in every conv that feeds a GroupNorm (GN + WS, Qiao et al. 2019)
     ait_carry: bool = False  # AIT_t += g * AIT_{t-1} (zero-init gate): state carried across steps
     # Extensions beyond the paper (docs/vcnet.md, "跨步狀態"); both zero-init, so a new model starts
     # out identical to the plain loop:
@@ -104,6 +105,29 @@ PRESETS = {
 def gn(c: int, groups: int) -> nn.GroupNorm:
     g = max(d for d in range(1, groups + 1) if c % d == 0)
     return nn.GroupNorm(g, c, eps=1e-5)
+
+
+class WSConv2d(nn.Conv2d):
+    """Conv2d with weight standardisation (Qiao et al. 2019): every output filter is used with zero mean and
+    unit variance. With GroupNorm it closes most of the gap to BatchNorm without batch statistics, so it keeps
+    the TODO.md rule (no BatchNorm; nothing depends on the batch or on per-step statistics)."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        w = self.weight
+        mean = w.mean((1, 2, 3), keepdim=True)
+        var = w.var((1, 2, 3), keepdim=True, unbiased=False)
+        return self._conv_forward(x, (w - mean) * torch.rsqrt(var + 1e-5), self.bias)
+
+
+def standardize_convs(model: nn.Module) -> None:
+    """Swap the convolutions that feed a normalisation layer (ConvGN, the pointwise conv of DSConv) for
+    WSConv2d, in place; call before the weights are initialised."""
+    for m in list(model.modules()):
+        if isinstance(m, (ConvGN, DSConv)):
+            i = 0 if isinstance(m, ConvGN) else 1
+            c = m[i]
+            m[i] = WSConv2d(c.in_channels, c.out_channels, c.kernel_size, c.stride, c.padding,
+                            groups=c.groups, bias=c.bias is not None)
 
 
 class ConvGN(nn.Sequential):
@@ -276,6 +300,8 @@ class VCNet(nn.Module):
         self.head_norm = nn.LayerNorm(c.c_ait, eps=1e-6)
         self.step_out = nn.Parameter(torch.zeros(c.t_max, c.c_ait))
         self.head = nn.Linear(c.c_ait, c.num_classes)
+        if c.ws:
+            standardize_convs(self)
         self._init_weights()
 
     def _init_weights(self) -> None:
