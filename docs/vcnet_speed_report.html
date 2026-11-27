@@ -1,0 +1,576 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VCNet 速度優化報告</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one report column (~860px) with numbered sections; figures and tables break out to the column width and scroll inside their own box */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --fg: #16191f;
+  --fg2: #4f5866;
+  --line: #d5dae1;
+  --grid: #e7eaef;
+  --accent: #1f5fbf;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --fb: #c2410c; --state: #1d4ed8; --td: #6250d6;
+  --hl: #eaf1fc;
+  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111418; --surface: #191d23; --fg: #e8eaee; --fg2: #a3acb9; --line: #313842; --grid: #252b33;
+    --accent: #6ea3f0; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --fb: #fb923c; --state: #7aa7ff; --td: #9085e9; --hl: #1b2638;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111418; --surface: #191d23; --fg: #e8eaee; --fg2: #a3acb9; --line: #313842; --grid: #252b33;
+  --accent: #6ea3f0; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --fb: #fb923c; --state: #7aa7ff; --td: #9085e9; --hl: #1b2638;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.75; }
+.wrap {
+  max-width: 860px; margin: 0 auto; display: grid; gap: 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 48px 80px;
+}
+h1, h2, h3 { margin: 0; line-height: 1.3; text-wrap: balance; }
+h1 { font-size: 2rem; font-weight: 700; }
+h2 { font-size: 1.4rem; font-weight: 700; display: flex; gap: 12px; align-items: baseline; }
+h2 .no { font-family: var(--font-mono); font-size: 0.95rem; color: var(--accent); font-weight: 500; }
+h3 { font-size: 1.08rem; font-weight: 700; }
+p, li { max-width: 68ch; }
+p { margin: 0; }
+ul, ol { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+section { display: grid; gap: 18px; }
+.sub { display: grid; gap: 12px; }
+.meta { font-family: var(--font-mono); font-size: 0.8rem; color: var(--fg2); letter-spacing: 0.03em; }
+header { display: grid; gap: 14px; }
+.lead { color: var(--fg2); font-size: 1.05rem; }
+.toc { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.92rem; }
+.toc a { text-decoration: none; }
+.toc a span { font-family: var(--font-mono); color: var(--fg2); margin-right: 4px; }
+.findings { display: grid; gap: 10px; padding: 0; list-style: none; }
+.findings li { display: grid; grid-template-columns: 7.5em 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); max-width: none; }
+.findings li:last-child { border-bottom: 1px solid var(--line); }
+.findings b { font-family: var(--font-mono); font-weight: 500; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.findings small { display: block; color: var(--fg2); font-size: 0.78rem; line-height: 1.4; }
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font-weight: 500; color: var(--fg2); font-size: 0.82rem; white-space: nowrap; background: var(--bg); }
+td.n, th.n { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.ref td { font-weight: 700; }
+tr.hl td { background: var(--hl); }
+td .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+figure { margin: 0; display: grid; gap: 10px; }
+figcaption { font-size: 0.86rem; color: var(--fg2); max-width: 72ch; }
+.fig { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; position: relative; }
+.fig svg { display: block; width: 100%; height: auto; }
+.fig.diagram svg { min-width: 560px; }
+.fig.diagram.unroll svg { min-width: 360px; }
+.fig.chart svg { min-width: 520px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.82rem; color: var(--fg2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { display: inline-block; width: 20px; height: 0; border-top: 2px solid; }
+.legend i.dash { border-top-style: dashed; }
+.legend i.dot { width: 9px; height: 9px; border: 2px solid; border-radius: 50%; }
+.legend i.dia { width: 9px; height: 9px; border: 0; background: var(--fg); transform: rotate(45deg); }
+.legend i.dia.hollow { background: transparent; border: 2px solid var(--fg); }
+.legend i.sq { width: 9px; height: 9px; border: 2px solid; border-radius: 1px; }
+.tip { position: absolute; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 0.78rem; line-height: 1.45; padding: 6px 9px; border-radius: 6px; white-space: nowrap; font-family: var(--font-mono); }
+.names { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 14px 16px; display: grid; gap: 10px; }
+.names dl { margin: 0; display: grid; grid-template-columns: 8.5em 1fr; gap: 6px 14px; }
+.names dt { font-family: var(--font-mono); font-size: 0.9rem; font-weight: 500; }
+.names dd { margin: 0; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button { font: 500 0.85rem var(--font-body); color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+td.noisy { color: var(--fg2); text-decoration: underline dotted; text-underline-offset: 3px; }
+#tblIdle td:first-child, #tblBench td:first-child { min-width: 12em; }
+td.grp { background: var(--bg); font-weight: 500; color: var(--fg2); font-size: 0.82rem; }
+@media (max-width: 640px) { .names dl { grid-template-columns: 1fr; } }
+.note { border-left: 3px solid var(--line); padding: 4px 0 4px 14px; color: var(--fg2); font-size: 0.92rem; }
+.eq { font-family: var(--font-mono); font-size: 0.92rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; overflow-x: auto; white-space: nowrap; }
+pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; overflow-x: auto; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.two > * { min-width: 0; }
+@media (max-width: 640px) {
+  h1 { font-size: 1.6rem; }
+  .two { grid-template-columns: 1fr; }
+  .findings li { grid-template-columns: 1fr; gap: 2px; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+.lg2 { display:flex; flex-wrap:wrap; gap:6px 18px; font-size:0.82rem; color:var(--fg2); }
+.lg2 span { display:inline-flex; align-items:center; gap:6px; }
+.lg2 i { display:inline-block; width:12px; height:12px; border-radius:2px; }
+.tag { font-family: var(--font-mono); font-size: 0.74rem; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; color: var(--fg2); white-space: nowrap; }
+.tag.same { border-color: var(--s3); color: var(--s3); }
+.tag.new { border-color: var(--s2); color: var(--s2); }
+.tag.no { border-color: var(--fg2); }
+</style>
+</head><body><div class="wrap">
+<header>
+  <div class="meta">fast-slow-vision · dev/vcnet · 階段 0（訓練加速，0.15.0–0.15.2）與階段 2（推論加速，0.16.0–0.16.1） · CIFAR-100 · H100 NVL · 2026 年 11 月</div>
+  <h1>VCNet 速度優化報告</h1>
+  <p class="lead">本報告整理 VCNet 在訓練與推論兩方面的加速：各用了哪些技術、在 H100 上量到多少、哪些試過但不採用。
+    與 bViT 共用的推論技術只簡述，細節見 README 的「實際延遲與吞吐量」到「H100 三個種子」各節。</p>
+  <nav class="toc" aria-label="目錄">
+    <a href="#summary"><span>1</span>摘要</a>
+    <a href="#why"><span>2</span>時間花在哪裡</a>
+    <a href="#train-tech"><span>3</span>訓練加速：技術</a>
+    <a href="#train-exp"><span>4</span>訓練加速：實驗</a>
+    <a href="#infer-tech"><span>5</span>推論加速：技術</a>
+    <a href="#infer-exp"><span>6</span>推論加速：實驗</a>
+    <a href="#end"><span>7</span>結論與未完成項目</a>
+    <a href="#repro"><span>附</span>重現指令</a>
+  </nav>
+</header>
+
+<section id="summary">
+  <h2><span class="no">1</span>摘要</h2>
+  <ul class="findings">
+    <li><b>4.6×</b><div>adapt_blt（8 步）的訓練速度：每秒 1,484 → 6,858 張。3 個種子從約 300 分鐘降到約 65 分鐘（依序跑）。
+      <small>bench_train.py，batch 256，閒置 H100</small></div></li>
+    <li><b>2.9×</b><div>原始 VCNet（2 步）的訓練速度：每秒 8,382 → 24,387 張，每次訓練約 6 分鐘。
+      <small>主要來自 CUDA graph 與 GPU 上的資料增強</small></div></li>
+    <li><b>±0.35</b><div>快速管線重現第 1–2 輪的準確率：blt 每步差 +0.1～+0.35 點，orig 差 +0.9 點，都在種子差異之內。
+      <small>3 個種子；校準（溫度縮放後的 ECE、NLL）相同</small></div></li>
+    <li><b>8.4×</b><div>batch 256 的推論：blt 固定 2 步從 eager 每秒 12,572 張到「編譯 + 一張 CUDA graph」105,289 張，
+      是原始 VCNet（115,122）的 91%，準確率高 2.8 點。<small>graph-compiled-bs256 模式</small></div></li>
+    <li><b>1.05×</b><div>自適應的槽位池在 λ=0.1 對同準確率的固定 3 步快 5%，但只有固定步數前緣的 0.89 倍；即使沒有任何額外開銷，上限也只有約 1.10 倍。
+      <small>batch 256，3 個種子</small></div></li>
+    <li><b>batch 1</b><div>自適應在 batch 1 有效：blt + 停止策略 1.78–1.83 ms、67.77%，原始 VCNet 2 步 1.91 ms、64.56%；
+      對 blt 自己的固定 3 步約快 1.4 倍。<small>CUDA graph，閒置 GPU</small></div></li>
+  </ul>
+  <p>結論：新實驗預設用快速訓練管線（GPU 增強 + 編譯 + CUDA graph + fused AdamW，batch 256，依序執行）；
+    CIFAR 上的 batch 推論用「固定步數 + 編譯 + CUDA graph」，自適應步數留給 batch 1 與之後較大的影像。</p>
+</section>
+
+<section id="why">
+  <h2><span class="no">2</span>時間花在哪裡</h2>
+  <p>第 1–2 輪的訓練幾乎沒用到 H100 的算力。adapt 每個 epoch 16.6 秒（約每秒 2,700 張），換算約 8 TFLOPs，不到 bf16 峰值的 1%。
+    VCNet 每步只有約 0.12 GFLOPs，卻由幾十個小模組組成；8 步的訓練一次 iteration 有約 360 個前向卷積與 360 個反向卷積，每個 20–50 µs。
+    時間主要花在三個地方：</p>
+  <div class="tbl"><table>
+    <thead><tr><th>瓶頸</th><th>現象</th><th>對策</th></tr></thead>
+    <tbody>
+      <tr><td>CPU 發送 kernel</td><td>每次 iteration 數千個小 kernel，GPU 在等 CPU；orig 只編譯不錄 graph 反而慢（0.92×）</td><td>CUDA graph：每步只發送一次</td></tr>
+      <tr><td>CPU 資料增強</td><td>PIL + RandAugment 用 7 個 worker 上限約每秒 11,500 張；orig 錄成 graph 後卡在這裡（11,895）</td><td>資料放 GPU，在 GPU 上逐張增強</td></tr>
+      <tr><td>主機同步</td><td>GPU 增強每批把幾個常數從 CPU 複製到 GPU，每次複製都會阻塞，CPU 要等上一個訓練步做完才能排下一批</td><td>常數只建一次並留在 GPU；下一批在副串流上增強</td></tr>
+    </tbody>
+  </table></div>
+  <p>推論也一樣：batch 256 時 eager 的 blt 2 步每秒只有 12,572 張，編譯但不錄 graph 是 40,590，兩者都受發送開銷限制。
+    自適應的壓縮式 runner 每步要同步一次並把已停的影像移出，後段 batch 越來越小，吞吐量只有固定步數的 27–42%。</p>
+</section>
+
+<section id="train-tech">
+  <h2><span class="no">3</span>訓練加速：技術</h2>
+  <p>四項改動都是開關，預設仍是第 1–3 輪的做法，所以舊實驗的結果可以照原樣重現。新實驗的設定集中在 <code>fsv/experiments.py</code> 的 <code>_FAST</code>：
+    <code>--gpu-aug --compile-mode reduce-overhead --opt-impl fused</code>。這些都與模型無關，bViT 也能直接使用；它們是為 VCNet 寫的，bViT 沒有對應的舊做法。</p>
+  <div class="sub">
+    <h3>3.1　GPU 上的資料增強（<code>fsv/gpu_aug.py</code>）</h3>
+    <ul>
+      <li>訓練集以 uint8 整份放在 GPU 上；<code>GPULoader</code> 每個 epoch 在 GPU 上產生排列，取一批後逐張增強，取代 DataLoader。</li>
+      <li>同一套增強：RandomCrop(32, padding 4) → 水平翻轉 → RandAugment(2, 9) → Normalize → RandomErasing。
+        每張圖、每一輪各自抽操作；同一輪的 5 種幾何操作（剪切、平移、旋轉）合成一次 <code>grid_sample</code>。</li>
+      <li>正確性：14 種 RandAugment 操作逐一與 torchvision 的 uint8 實作比對。幾何、亮度、對比、色調分離、曝光、自動對比、直方圖等化完全相同；
+        Color 與 Sharpness 因捨入最多差 1 個灰階；RandomErasing 的觸發比例與平均面積相符。亂數序列不同，所以另外用準確率驗證（第 4.2 節）。</li>
+      <li>沒有主機同步（0.15.1）：所有常數（平均、標準差、旋轉中心、銳化核、索引）在第一次使用時建在 GPU 上並快取。
+        第一版每批都從 Python 值建這些 tensor，每次都是阻塞的 CPU → GPU 複製，CPU 因此等 GPU 做完上一個訓練步，增強與訓練完全沒有重疊。</li>
+      <li>副串流預取：第 k 步訓練在主串流上執行時，第 k+1 批在副 CUDA 串流上增強；用 <code>wait_stream</code> 與 <code>record_stream</code> 保證順序與記憶體生命週期。</li>
+    </ul>
+  </div>
+  <div class="sub">
+    <h3>3.2　編譯 + CUDA graph 的訓練步（<code>fsv/train_step.py</code>）</h3>
+    <ul>
+      <li><code>torch.compile</code> 編譯「所有步的前向 + Stage A 損失」這一整個函式，反向由 AOTAutograd 一起編譯；Inductor 把 GroupNorm、CBAM、通道注意力等小運算融合。</li>
+      <li><code>reduce-overhead</code> 再把前向與反向錄成 CUDA graph（cudagraph trees）：每步 CPU 只重播 graph。每步開頭呼叫 <code>cudagraph_mark_step_begin()</code>，
+        回傳的損失分量先 clone，因為下一次重播會覆寫 graph 的輸出。形狀必須固定，兩種 loader 都 drop_last。</li>
+      <li>Mixup / CutMix 留在編譯函式之外：它們每步抽一個新的 Python 浮點數 λ，放進去每步都會重新編譯。</li>
+      <li>編譯一次約 25–145 秒（每次訓練只付一次）。</li>
+    </ul>
+  </div>
+  <div class="sub">
+    <h3>3.3　fused AdamW</h3>
+    <p><code>--opt-impl fused</code>：AdamW 用單一 kernel 的 CUDA 實作。單獨使用時影響很小（orig 1.04×），但在 CUDA graph 之後，每步剩下的發送次數主要來自最佳化器，這時就有用。</p>
+  </div>
+  <div class="sub">
+    <h3>3.4　訓練時的雙線性上採樣改成矩陣乘法（0.15.2）</h3>
+    <p>剖析 blt 的訓練步（編譯、不錄 graph，每次 iteration 約 40 ms 的 GPU 時間）發現，最貴的單一 kernel 是 AIT → V1 雙線性上採樣（4×4 → 32×32）的反向：
+      Inductor 把 <code>upsample_bilinear2d</code> 的反向變成帶 atomic add 的 <code>index_put</code>，每次 526 µs、每次 iteration 7 次，約佔 9%。
+      訓練時改成 <code>U_h @ x @ U_wᵀ</code>（<code>bilinear_matrix</code> 算出與 <code>align_corners=False</code> 相同的權重），反向也是矩陣乘法。
+      推論時仍用 <code>F.interpolate</code>，所以評估結果、延遲與量到的 FLOPs 都不變。實測 blt 快 4%（6,577 → 6,858 張/秒），batch 1024 快 9%。</p>
+  </div>
+  <div class="sub">
+    <h3>3.5　訓練路徑不打包狀態</h3>
+    <p>有 lat / blt 時，每一步的狀態是 7 個腦區的特徵圖。推論介面把它們打包成一個 [B, N] tensor，讓 runner 能統一索引；
+      訓練用的 <code>forward()</code> 改成步與步之間直接傳各腦區的 dict，不再每步打包、拆包。輸出與逐步介面完全相同（測試確認）。</p>
+  </div>
+  <div class="sub">
+    <h3>3.6　試過、不採用</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>做法</th><th>結果</th><th>原因</th></tr></thead>
+      <tbody>
+        <tr><td>並行多個種子（<code>run_experiment.py --parallel 3</code>）</td><td class="n">5,776 vs 6,105 張/秒</td><td>開了 CUDA graph 後，沒有 MPS 時 GPU 在行程間分時，kernel 不會同時執行；只在沒有 graph 時能互相填補發送空檔（3,664 → 5,095）</td></tr>
+        <tr><td>channels_last（NHWC）</td><td class="n">−35～−41%</td><td>cuDNN 在卷積前後的 NCHW ↔ NHWC 轉換約佔 20% GPU 時間，但改成 NHWC 讓其他運算更慢</td></tr>
+        <tr><td>batch 512 / 1024（學習率 × √2 / × 2）</td><td class="n">−1.0 / −3.4 點</td><td>速度 1.2× / 1.6×，但更新次數少 2 / 4 倍、欠訓練；要補回得加學習率或 epoch，吃掉大部分加速</td></tr>
+        <tr><td>MPS（多行程共用 GPU）</td><td>未測</td><td>可選項目；依序執行已經足夠</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section id="train-exp">
+  <h2><span class="no">4</span>訓練加速：實驗</h2>
+  <div class="sub">
+    <h3>4.1　速度（<code>scripts/bench_train.py</code>）</h3>
+    <p>完整訓練步（資料 + 前向 + 損失 + 反向 + 最佳化器）的每秒張數，batch 256，每種設定先暖機 15 次（含編譯），再量 3 × 50 次取中位數。
+      三次量測分別在 0.15.0、0.15.1、0.15.2，每次修正後重量。</p>
+    <figure>
+      <div class="fig chart"><svg viewBox="0 0 640 184" role="img" aria-label="原始 VCNet（2 步）">
+<text x="0" y="16" style="fill:var(--fg);font-weight:700;font-size:14px">原始 VCNet（2 步）</text>
+<line x1="250.0" y1="28" x2="250.0" y2="154" style="stroke:var(--grid)"/>
+<text x="250.0" y="172" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">0k</text>
+<line x1="296.7" y1="28" x2="296.7" y2="154" style="stroke:var(--grid)"/>
+<text x="296.7" y="172" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">5k</text>
+<line x1="343.3" y1="28" x2="343.3" y2="154" style="stroke:var(--grid)"/>
+<text x="343.3" y="172" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">10k</text>
+<line x1="390.0" y1="28" x2="390.0" y2="154" style="stroke:var(--grid)"/>
+<text x="390.0" y="172" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">15k</text>
+<line x1="436.7" y1="28" x2="436.7" y2="154" style="stroke:var(--grid)"/>
+<text x="436.7" y="172" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">20k</text>
+<line x1="483.3" y1="28" x2="483.3" y2="154" style="stroke:var(--grid)"/>
+<text x="483.3" y="172" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">25k</text>
+<line x1="530.0" y1="28" x2="530.0" y2="154" style="stroke:var(--grid)"/>
+<text x="530.0" y="172" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">30k</text>
+<text x="240" y="52" text-anchor="end" style="fill:var(--fg);font-size:12.5px">CPU 增強、eager（第 1–3 輪）</text>
+<rect x="250" y="39" width="78.2" height="18" rx="2" style="fill:var(--s1)"/>
+<text x="334.2" y="52" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">8,382<tspan style="fill:var(--fg2)"> 1.00×</tspan></text>
+<text x="240" y="82" text-anchor="end" style="fill:var(--fg);font-size:12.5px">CPU 增強 + 編譯 + CUDA graph</text>
+<rect x="250" y="69" width="121.3" height="18" rx="2" style="fill:var(--s1)"/>
+<text x="377.3" y="82" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">12,994<tspan style="fill:var(--fg2)"> 1.55×</tspan></text>
+<text x="240" y="112" text-anchor="end" style="fill:var(--fg);font-size:12.5px">GPU 增強（無同步）+ 編譯 + graph</text>
+<rect x="250" y="99" width="204.3" height="18" rx="2" style="fill:var(--s1)"/>
+<text x="460.3" y="112" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">21,884<tspan style="fill:var(--fg2)"> 2.61×</tspan></text>
+<text x="240" y="142" text-anchor="end" style="fill:var(--fg);font-size:12.5px">＋ 副串流預取</text>
+<rect x="250" y="129" width="227.6" height="18" rx="2" style="fill:var(--s1)"/>
+<text x="483.6" y="142" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">24,387<tspan style="fill:var(--fg2)"> 2.91×</tspan></text>
+</svg></div>
+      <div class="fig chart"><svg viewBox="0 0 640 214" role="img" aria-label="adapt_blt（8 步）">
+<text x="0" y="16" style="fill:var(--fg);font-weight:700;font-size:14px">adapt_blt（8 步）</text>
+<line x1="250.0" y1="28" x2="250.0" y2="184" style="stroke:var(--grid)"/>
+<text x="250.0" y="202" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">0k</text>
+<line x1="320.0" y1="28" x2="320.0" y2="184" style="stroke:var(--grid)"/>
+<text x="320.0" y="202" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">2k</text>
+<line x1="390.0" y1="28" x2="390.0" y2="184" style="stroke:var(--grid)"/>
+<text x="390.0" y="202" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">4k</text>
+<line x1="460.0" y1="28" x2="460.0" y2="184" style="stroke:var(--grid)"/>
+<text x="460.0" y="202" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">6k</text>
+<line x1="530.0" y1="28" x2="530.0" y2="184" style="stroke:var(--grid)"/>
+<text x="530.0" y="202" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">8k</text>
+<text x="240" y="52" text-anchor="end" style="fill:var(--fg);font-size:12.5px">CPU 增強、eager（第 1–3 輪）</text>
+<rect x="250" y="39" width="51.9" height="18" rx="2" style="fill:var(--td)"/>
+<text x="307.9" y="52" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">1,484<tspan style="fill:var(--fg2)"> 1.00×</tspan></text>
+<text x="240" y="82" text-anchor="end" style="fill:var(--fg);font-size:12.5px">編譯，不錄 graph</text>
+<rect x="250" y="69" width="128.2" height="18" rx="2" style="fill:var(--td)"/>
+<text x="384.2" y="82" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">3,664<tspan style="fill:var(--fg2)"> 2.47×</tspan></text>
+<text x="240" y="112" text-anchor="end" style="fill:var(--fg);font-size:12.5px">CPU 增強 + 編譯 + CUDA graph</text>
+<rect x="250" y="99" width="240.6" height="18" rx="2" style="fill:var(--td)"/>
+<text x="496.6" y="112" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">6,874<tspan style="fill:var(--fg2)"> 4.63×</tspan></text>
+<text x="240" y="142" text-anchor="end" style="fill:var(--fg);font-size:12.5px">GPU 增強 + 編譯 + graph</text>
+<rect x="250" y="129" width="230.2" height="18" rx="2" style="fill:var(--td)"/>
+<text x="486.2" y="142" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">6,577<tspan style="fill:var(--fg2)"> 4.43×</tspan></text>
+<text x="240" y="172" text-anchor="end" style="fill:var(--fg);font-size:12.5px">＋ 上採樣改矩陣乘法（0.15.2）</text>
+<rect x="250" y="159" width="240.0" height="18" rx="2" style="fill:var(--td)"/>
+<text x="496.0" y="172" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">6,858<tspan style="fill:var(--fg2)"> 4.62×</tspan></text>
+</svg></div>
+      <figcaption>圖 1　訓練吞吐量，倍數相對於第 1–3 輪的做法（CPU 增強、eager）。orig 用 0.15.1 的量測；blt 的「編譯，不錄 graph」來自 0.15.0，最後一列來自 0.15.2，其餘來自 0.15.1。
+        blt 每步是 GPU 計算受限，GPU 增強本身的 GPU 工作（單獨約每秒 43,000 張）不再被藏住，所以比 CPU 增強略慢 4%；orig 是 CPU 受限，GPU 增強才是關鍵。</figcaption>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>設定（0.15.1）</th><th class="n">orig 張/秒</th><th class="n">×</th><th class="n">blt 張/秒</th><th class="n">×</th></tr></thead>
+      <tbody>
+        <tr><td>cpu-eager（第 1–3 輪）</td><td class="n">8,382</td><td class="n">1.00</td><td class="n">1,484</td><td class="n">1.00</td></tr>
+        <tr><td>cpu-cg（CPU 增強 + 編譯 + graph）</td><td class="n">12,994</td><td class="n">1.55</td><td class="n">6,874</td><td class="n">4.63</td></tr>
+        <tr><td>gpu-cg-noprefetch（無同步）</td><td class="n">21,884</td><td class="n">2.61</td><td class="n">6,616</td><td class="n">4.46</td></tr>
+        <tr class="hl"><td>gpu-cg（＋ 副串流）</td><td class="n">24,387</td><td class="n">2.91</td><td class="n">6,577</td><td class="n">4.43</td></tr>
+        <tr><td>gpu-cg，channels_last</td><td class="n">14,451</td><td class="n">1.72</td><td class="n">4,363</td><td class="n">2.94</td></tr>
+        <tr><td>gpu-cg，batch 512</td><td class="n">31,024</td><td class="n">3.70</td><td class="n">8,280</td><td class="n">5.58</td></tr>
+        <tr><td>gpu-cg，batch 1024</td><td class="n">37,641</td><td class="n">4.49</td><td class="n">10,219</td><td class="n">6.89</td></tr>
+        <tr><td>0.15.2（上採樣改矩陣乘法）gpu-cg / cpu-cg</td><td class="n"></td><td class="n"></td><td class="n">6,858 / 6,986</td><td class="n">4.62 / 4.71</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">第一次量測（0.15.0）的 gpu-cg 只有 orig 15,494、blt 6,105 張/秒，比 cpu-cg 還慢，循線找到 GPU 增強裡的主機同步（第 3.1 節）。
+      第一次與第二次量測的 cpu-eager 也不同（orig 9,034 vs 8,382），表示不同次量測之間約有 ±7% 的差異；表中倍數都以同一次量測的 cpu-eager 為準。</p>
+  </div>
+  <div class="sub">
+    <h3>4.2　快速管線不影響準確率</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>步數</th><th class="n">1</th><th class="n">2</th><th class="n">3</th><th class="n">4</th><th class="n">8</th></tr></thead>
+      <tbody>
+        <tr><td>adapt_blt（第 2 輪）</td><td class="n">63.72±0.77</td><td class="n">67.27±0.57</td><td class="n">68.30±0.48</td><td class="n">68.68±0.58</td><td class="n">68.61±0.30</td></tr>
+        <tr class="hl"><td>adapt_blt_fast</td><td class="n">63.84±0.53</td><td class="n">67.62±0.44</td><td class="n">68.51±0.31</td><td class="n">68.85±0.49</td><td class="n">68.85±0.44</td></tr>
+        <tr><td>差</td><td class="n">+0.12</td><td class="n">+0.35</td><td class="n">+0.21</td><td class="n">+0.17</td><td class="n">+0.24</td></tr>
+      </tbody>
+    </table></div>
+    <p>原始 VCNet：第 1 輪 64.55±0.96%，<code>orig_fast</code> 65.48±1.77%（Welch t 約 0.8，不顯著）。溫度縮放後的 ECE / NLL 兩者相同（blt 溫度 0.69–0.76）。
+      判定通過：新實驗改用快速管線，第 1–3 輪的實驗名稱與設定不變。</p>
+  </div>
+  <div class="sub">
+    <h3>4.3　較大的 batch</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>adapt_blt_fast</th><th class="n">2 步</th><th class="n">4 步</th><th class="n">8 步</th><th class="n">最終訓練損失</th><th class="n">分鐘 / 次</th></tr></thead>
+      <tbody>
+        <tr class="hl"><td>batch 256，lr 1e-3</td><td class="n">67.62±0.44</td><td class="n">68.85±0.49</td><td class="n">68.85±0.44</td><td class="n">3.24</td><td class="n">約 22</td></tr>
+        <tr><td>batch 512，lr 1.4e-3</td><td class="n">66.67±0.39</td><td class="n">67.83±0.37</td><td class="n">67.87±0.43</td><td class="n">3.29</td><td class="n">20.8</td></tr>
+        <tr><td>batch 1024，lr 2e-3</td><td class="n">63.96±0.44</td><td class="n">65.42±0.40</td><td class="n">65.35±0.26</td><td class="n">3.34</td><td class="n">15.5</td></tr>
+      </tbody>
+    </table></div>
+    <p>學習率按 √(batch / 256) 放大，epoch 數與暖機 epoch 數不變。損失曲線平滑、校準不變，看起來是欠訓練而非不穩定。訓練設定維持 batch 256。</p>
+  </div>
+  <div class="sub">
+    <h3>4.4　牆鐘時間</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>3 個種子</th><th class="n">舊管線（閒置 GPU）</th><th class="n">快速管線</th></tr></thead>
+      <tbody>
+        <tr><td>adapt_blt</td><td class="n">約 300 分鐘（3 × 100.7）</td><td class="n">約 65 分鐘（依序）</td></tr>
+        <tr><td>原始 VCNet</td><td class="n">約 50 分鐘</td><td class="n">約 18 分鐘（每次約 6）</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section id="infer-tech">
+  <h2><span class="no">5</span>推論加速：技術</h2>
+  <div class="sub">
+    <h3>5.1　沿用 bViT 的技術（簡述）</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>技術</th><th>bViT 上的版本</th><th>在 VCNet 上</th></tr></thead>
+      <tbody>
+        <tr><td>壓縮式 runner <code>AdaptiveRunner</code>：每步只同步一次，已停的影像移出 batch</td><td>0.7.1</td><td><span class="tag same">直接沿用</span></td></tr>
+        <tr><td>batch 1 CUDA graph <code>CudaGraphBS1</code>：每步一張 graph，每步讀一次停止旗標</td><td>0.8.1</td><td><span class="tag same">直接沿用</span></td></tr>
+        <tr><td>特徵 + 停止策略融合成一個 Triton kernel <code>FusedDecide</code></td><td>0.10.0</td><td><span class="tag same">直接沿用</span>　batch 1 再快 3–9%</td></tr>
+        <tr><td>固定槽位池 <code>SlotPoolRunner</code>：S 個槽位、每個 tick 一張 graph、裝置端佇列指標、晚一個 tick 非同步讀完成數</td><td>0.13.0–0.14.0</td><td><span class="tag new">擴充</span>　見 5.2</td></tr>
+        <tr><td>CPU / GPU 迴圈 pipelining、兩個 batch 交錯</td><td>0.9.0、0.11.0（已移除）</td><td><span class="tag no">未使用</span>　bViT 上已證明沒有幫助</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+  <div class="sub">
+    <h3>5.2　VCNet 特有的部分（0.16.0–0.16.1）</h3>
+    <ul>
+      <li><b>每列各自的步數</b>：<code>forward_step(state, t, x0)</code> 的 <code>t</code> 可以是每列一個步數的 long tensor。
+        預測誤差回饋、側向、由上而下各項對所有列都算，只在 t &gt; 0 的列保留（<code>torch.where</code>），所以第 0 步的列得到的正好是純由下而上的一次掃描，舊狀態只被忽略、不會被乘到；
+        讀出依每列步數取步數嵌入。與逐批計算逐位元相同（測試）。bViT 的權重跨步共用，本來就能這樣做；VCNet 的第 0 步與之後的步計算不同，需要遮罩。</li>
+      <li><b>兩份緩衝區</b>：bViT 的狀態就是嵌入，VCNet 的狀態（AIT，或 lat / blt 時打包的 7 個腦區）與嵌入（V1）不同，所以槽位池分成 <code>x0</code> 與狀態兩份。
+        VCNet 平均 1.4–2.4 步就停，每個 tick 空出的槽位比 bViT 多，補位上限預設為全部 S 個。</li>
+      <li><b>預先計算 V1</b>：V1 在全解析度，每張圖只算一次，但佔每張圖約 1/4 的時間。補位時只做 gather，V1 在跑 tick 之前以 S 張一批先算好，
+        不必每個 tick 對所有補位候選算 V1（大多數候選不會被補上）。0.16.1 把這一步也編譯並錄成 CUDA graph：0.16.0 在編譯模式下它仍是 eager，
+        而 eager 的 blt kernel 即使在 graph 內也比編譯過的慢約 2 倍。這一項讓槽位池快了 10–16%。</li>
+      <li><b>公平的對照組</b> <code>FixedDepthGraph</code>：固定 t 步時，batch 256 的整個前向（V1 + 第 0..t 步 + 讀出）錄成一張 CUDA graph，可先編譯（每個步數一個編譯圖）。
+        第 10 輪的 bViT 比較用的是 eager 固定步數，高估了槽位池；這是最強的固定步數做法。</li>
+      <li><b>前緣比較</b>：除了「準確率不低於自適應的最便宜固定步數」，再加上「把每張圖隨機分到相鄰兩個固定步數、使平均準確率相同」的吞吐量。
+        自適應落在兩個固定步數之間時，前者會讓它看起來比較好；後者才是停止策略要贏過的線。</li>
+    </ul>
+  </div>
+</section>
+
+<section id="infer-exp">
+  <h2><span class="no">6</span>推論加速：實驗</h2>
+  <div class="sub">
+    <h3>6.1　batch 1（閒置 GPU，CUDA graph）</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>模型、設定</th><th class="n">acc %</th><th class="n">平均步數</th><th class="n">ms</th><th class="n">＋ Triton ms</th></tr></thead>
+      <tbody>
+        <tr class="ref"><td>原始 VCNet，2 步</td><td class="n">64.56</td><td class="n">2</td><td class="n">1.908</td><td class="n"></td></tr>
+        <tr><td>adapt_blt，固定 1 / 2 / 3 / 4 步</td><td class="n">63.71 / 67.27 / 68.29 / 68.68</td><td class="n"></td><td class="n">1.008 / 1.949 / 2.915 / 3.882</td><td class="n"></td></tr>
+        <tr><td>adapt_blt + 策略，λ=0.3</td><td class="n">66.74</td><td class="n">1.40</td><td class="n">1.583</td><td class="n">1.486</td></tr>
+        <tr class="hl"><td>adapt_blt + 策略，λ=0.1</td><td class="n">67.77</td><td class="n">1.73</td><td class="n">1.825</td><td class="n">1.776</td></tr>
+        <tr><td>adapt_blt + 策略，λ=0.03</td><td class="n">68.20</td><td class="n">2.09</td><td class="n">2.125</td><td class="n">1.989</td></tr>
+        <tr><td>adapt_blt + 策略，λ=0.01</td><td class="n">68.34</td><td class="n">2.41</td><td class="n">2.598</td><td class="n">2.432</td></tr>
+      </tbody>
+    </table></div>
+    <p>3 個種子的中位數。batch 1 時自適應有效：λ=0.1 比原始 VCNet 快 4–7% 且高 3.2 點；λ=0.03 以 1.99–2.13 ms 達到固定 3 步（2.92 ms）的準確率，約快 1.4 倍。</p>
+  </div>
+  <div class="sub">
+    <h3>6.2　batch 256 的固定步數：執行方式的影響</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>adapt_blt 固定 2 步，batch 256</th><th class="n">張/秒</th><th class="n">×</th></tr></thead>
+      <tbody>
+        <tr><td>eager</td><td class="n">12,572</td><td class="n">1.0</td></tr>
+        <tr><td>eager kernel 錄成一張 graph</td><td class="n">12,778</td><td class="n">1.0</td></tr>
+        <tr><td>編譯，不錄 graph</td><td class="n">40,590</td><td class="n">3.2</td></tr>
+        <tr class="hl"><td>編譯 + 一張 CUDA graph</td><td class="n">105,289</td><td class="n">8.4</td></tr>
+        <tr class="ref"><td>原始 VCNet 2 步，編譯 + graph</td><td class="n">115,122</td><td class="n"></td></tr>
+      </tbody>
+    </table></div>
+    <p>只錄 graph 幾乎沒用：eager 的 blt kernel 本身就慢；編譯（融合）與 graph（去掉發送）要一起用。之前報告中 batch 256 的數字（編譯、不錄 graph）低估了固定步數。</p>
+  </div>
+  <div class="sub">
+    <h3>6.3　槽位池 vs 固定步數（graph-compiled-bs256）</h3>
+    <figure>
+      <div class="lg2">
+        <span><i style="background:var(--s1);border-radius:50%"></i>固定 1–4 步（編譯 + graph）</span>
+        <span><i style="background:var(--s2)"></i>槽位池 0.16.1（V1 預先計算也編譯 + graph）</span>
+        <span><i style="background:var(--surface);border:1.5px solid var(--fg2);border-radius:50%"></i>槽位池 0.16.0</span>
+      </div>
+      <div class="fig chart"><svg viewBox="0 0 640 360" role="img" aria-label="batch 256 的準確率對吞吐量">
+<line x1="56.0" y1="20" x2="56.0" y2="312" style="stroke:var(--grid)"/>
+<text x="56.0" y="330" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">40k</text>
+<line x1="168.0" y1="20" x2="168.0" y2="312" style="stroke:var(--grid)"/>
+<text x="168.0" y="330" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">70k</text>
+<line x1="280.0" y1="20" x2="280.0" y2="312" style="stroke:var(--grid)"/>
+<text x="280.0" y="330" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">100k</text>
+<line x1="392.0" y1="20" x2="392.0" y2="312" style="stroke:var(--grid)"/>
+<text x="392.0" y="330" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">130k</text>
+<line x1="504.0" y1="20" x2="504.0" y2="312" style="stroke:var(--grid)"/>
+<text x="504.0" y="330" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">160k</text>
+<line x1="616.0" y1="20" x2="616.0" y2="312" style="stroke:var(--grid)"/>
+<text x="616.0" y="330" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">190k</text>
+<line x1="56" y1="285.5" x2="616" y2="285.5" style="stroke:var(--grid)"/>
+<text x="48" y="289.5" text-anchor="end" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">64</text>
+<line x1="56" y1="232.4" x2="616" y2="232.4" style="stroke:var(--grid)"/>
+<text x="48" y="236.4" text-anchor="end" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">65</text>
+<line x1="56" y1="179.3" x2="616" y2="179.3" style="stroke:var(--grid)"/>
+<text x="48" y="183.3" text-anchor="end" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">66</text>
+<line x1="56" y1="126.2" x2="616" y2="126.2" style="stroke:var(--grid)"/>
+<text x="48" y="130.2" text-anchor="end" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">67</text>
+<line x1="56" y1="73.1" x2="616" y2="73.1" style="stroke:var(--grid)"/>
+<text x="48" y="77.1" text-anchor="end" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">68</text>
+<line x1="56" y1="20.0" x2="616" y2="20.0" style="stroke:var(--grid)"/>
+<text x="48" y="24.0" text-anchor="end" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">69</text>
+<text x="336.0" y="352" text-anchor="middle" style="fill:var(--fg2);font-size:12px">每秒張數（batch 256，越右越快）</text>
+<text x="14" y="166.0" transform="rotate(-90 14 166.0)" text-anchor="middle" style="fill:var(--fg2);font-size:12px">測試準確率 %</text>
+<polyline points="571.9,300.3 299.4,108.7 188.2,57.2 125.4,38.6" style="fill:none;stroke:var(--s1);stroke-width:2"/>
+<circle cx="571.9" cy="300.3" r="5" style="fill:var(--s1)"/>
+<text x="563.9" y="292.3" text-anchor="end" style="fill:var(--s1);font-size:11.5px">固定 1 步</text>
+<circle cx="299.4" cy="108.7" r="5" style="fill:var(--s1)"/>
+<text x="307.4" y="100.7" text-anchor="start" style="fill:var(--s1);font-size:11.5px">固定 2 步</text>
+<circle cx="188.2" cy="57.2" r="5" style="fill:var(--s1)"/>
+<text x="196.2" y="49.2" text-anchor="start" style="fill:var(--s1);font-size:11.5px">固定 3 步</text>
+<circle cx="125.4" cy="38.6" r="5" style="fill:var(--s1)"/>
+<text x="133.4" y="30.6" text-anchor="start" style="fill:var(--s1);font-size:11.5px">固定 4 步</text>
+<polyline points="204.2,142.1 169.9,82.1 138.5,60.3 118.7,52.9 92.2,47.1" style="fill:none;stroke:var(--fg2);stroke-width:1.5;stroke-dasharray:4 4"/>
+<circle cx="204.2" cy="142.1" r="4" style="fill:var(--surface);stroke:var(--fg2);stroke-width:1.5"/>
+<circle cx="169.9" cy="82.1" r="4" style="fill:var(--surface);stroke:var(--fg2);stroke-width:1.5"/>
+<circle cx="138.5" cy="60.3" r="4" style="fill:var(--surface);stroke:var(--fg2);stroke-width:1.5"/>
+<circle cx="118.7" cy="52.9" r="4" style="fill:var(--surface);stroke:var(--fg2);stroke-width:1.5"/>
+<circle cx="92.2" cy="47.1" r="4" style="fill:var(--surface);stroke:var(--fg2);stroke-width:1.5"/>
+<polyline points="252.7,139.5 202.3,84.8 162.8,61.9 138.5,53.4" style="fill:none;stroke:var(--s2);stroke-width:2;stroke-dasharray:6 4"/>
+<rect x="247.7" y="134.5" width="10" height="10" style="fill:var(--s2)"/>
+<text x="261.7" y="154.5" style="fill:var(--s2);font-size:11px;font-family:var(--font-mono)">λ=0.3</text>
+<rect x="197.3" y="79.8" width="10" height="10" style="fill:var(--s2)"/>
+<text x="211.3" y="99.8" style="fill:var(--s2);font-size:11px;font-family:var(--font-mono)">λ=0.1</text>
+<rect x="157.8" y="56.9" width="10" height="10" style="fill:var(--s2)"/>
+<rect x="133.5" y="48.4" width="10" height="10" style="fill:var(--s2)"/>
+</svg></div>
+      <figcaption>圖 2　batch 256 的準確率對吞吐量（3 個種子）。藍線是固定步數的前緣，連線上的點可以靠隨機混合相鄰兩個步數達到；
+        槽位池的點由右而左是 λ = 0.3、0.1、0.03、0.01（0.16.0 另有 0.003），都在線的左邊（較慢）。編譯後的壓縮式 runner 在 λ=0.1 只有每秒約 13,600 張，在圖的範圍之外。</figcaption>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>槽位池</th><th class="n">acc %</th><th class="n">步數</th><th class="n">0.16.0 → 0.16.1 張/秒</th><th class="n">對同準確率固定步數</th><th class="n">對前緣</th></tr></thead>
+      <tbody>
+        <tr><td>λ=0.3</td><td class="n">66.75</td><td class="n">1.40</td><td class="n">79,684 → 92,653</td><td class="n">0.88×（2 步）</td><td class="n">0.82×</td></tr>
+        <tr class="hl"><td>λ=0.1</td><td class="n">67.78</td><td class="n">1.74</td><td class="n">70,475 → 79,210</td><td class="n">1.05×（3 步）</td><td class="n">0.89×</td></tr>
+        <tr><td>λ=0.03</td><td class="n">68.21</td><td class="n">2.08</td><td class="n">62,075 → 68,636</td><td class="n">1.00×（3 步）</td><td class="n">0.89×</td></tr>
+        <tr><td>λ=0.01</td><td class="n">68.37</td><td class="n">2.41</td><td class="n">56,754 → 62,068</td><td class="n">0.98×（4 步）</td><td class="n">0.87×</td></tr>
+      </tbody>
+    </table></div>
+    <p>槽位使用率 92–95%。編譯後的槽位池比編譯後的壓縮式 runner 快 5.3 倍（0.16.0，λ=0.1），準確率與平均步數兩者相同。</p>
+  </div>
+  <div class="sub">
+    <h3>6.4　每張圖的時間組成（λ=0.1）</h3>
+    <figure>
+      <div class="lg2">
+        <span><i style="background:var(--s4)"></i>V1（每張圖一次）</span>
+        <span><i style="background:var(--s1)"></i>模型步</span>
+        <span><i style="background:var(--s2)"></i>tick 額外開銷</span>
+      </div>
+      <div class="fig chart"><svg viewBox="0 0 640 214" role="img" aria-label="每張圖的時間組成">
+<line x1="190.0" y1="10" x2="190.0" y2="180" style="stroke:var(--grid)"/>
+<text x="190.0" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">0</text>
+<line x1="237.1" y1="10" x2="237.1" y2="180" style="stroke:var(--grid)"/>
+<text x="237.1" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">2</text>
+<line x1="284.3" y1="10" x2="284.3" y2="180" style="stroke:var(--grid)"/>
+<text x="284.3" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">4</text>
+<line x1="331.4" y1="10" x2="331.4" y2="180" style="stroke:var(--grid)"/>
+<text x="331.4" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">6</text>
+<line x1="378.6" y1="10" x2="378.6" y2="180" style="stroke:var(--grid)"/>
+<text x="378.6" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">8</text>
+<line x1="425.7" y1="10" x2="425.7" y2="180" style="stroke:var(--grid)"/>
+<text x="425.7" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">10</text>
+<line x1="472.9" y1="10" x2="472.9" y2="180" style="stroke:var(--grid)"/>
+<text x="472.9" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">12</text>
+<line x1="520.0" y1="10" x2="520.0" y2="180" style="stroke:var(--grid)"/>
+<text x="520.0" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">14</text>
+<text x="355.0" y="210" text-anchor="middle" style="fill:var(--fg2);font-size:12px">µs / 張（越短越快）</text>
+<text x="180" y="30" text-anchor="end" style="fill:var(--fg);font-size:12.5px">固定 2 步</text>
+<rect x="190.0" y="17" width="68.4" height="20" style="fill:var(--s4)"/>
+<rect x="258.4" y="17" width="155.8" height="20" style="fill:var(--s1)"/>
+<text x="420.2" y="30" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">9.51<tspan style="fill:var(--fg2)"> 67.33%</tspan></text>
+<text x="180" y="64" text-anchor="end" style="fill:var(--fg);font-size:12.5px">混合 2 / 3 步（前緣）</text>
+<rect x="190.0" y="51" width="68.4" height="20" style="fill:var(--s4)"/>
+<rect x="258.4" y="51" width="196.8" height="20" style="fill:var(--s1)"/>
+<text x="461.2" y="64" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">11.25<tspan style="fill:var(--fg2)"> 67.78%</tspan></text>
+<text x="180" y="98" text-anchor="end" style="fill:var(--fg);font-size:12.5px">槽位池 λ=0.1</text>
+<rect x="190.0" y="85" width="68.4" height="20" style="fill:var(--s4)"/>
+<rect x="258.4" y="85" width="171.8" height="20" style="fill:var(--s1)"/>
+<rect x="430.2" y="85" width="58.0" height="20" style="fill:var(--s2)"/>
+<text x="494.2" y="98" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">12.65<tspan style="fill:var(--fg2)"> 67.78%</tspan></text>
+<text x="180" y="132" text-anchor="end" style="fill:var(--fg);font-size:12.5px">槽位池，tick 無額外開銷</text>
+<rect x="190.0" y="119" width="68.4" height="20" style="fill:var(--s4)"/>
+<rect x="258.4" y="119" width="171.8" height="20" style="fill:var(--s1)"/>
+<text x="436.2" y="132" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">10.19<tspan style="fill:var(--fg2)"> 上限</tspan></text>
+<text x="180" y="166" text-anchor="end" style="fill:var(--fg);font-size:12.5px">固定 3 步</text>
+<rect x="190.0" y="153" width="68.4" height="20" style="fill:var(--s4)"/>
+<rect x="258.4" y="153" width="244.2" height="20" style="fill:var(--s1)"/>
+<text x="508.6" y="166" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">13.26<tspan style="fill:var(--fg2)"> 68.30%</tspan></text>
+</svg></div>
+      <figcaption>圖 3　每張圖的時間（µs）。10,000 張圖共 126 ms = V1 29.0 ms + 73 個 tick × 1.336 ms。固定步數的一步在 batch 256 約 1.00 ms，
+        tick 多出的 0.34 ms 來自讀出、停止決策、補位、記錄、每列遮罩與打包狀態。</figcaption>
+    </figure>
+    <p>上限：即使 tick 沒有額外開銷，λ=0.1 也只有約每秒 98,000 張、前緣的約 1.10 倍。原因有三：平均只有 1.74 步，自適應最多省下 2 步與 3 步之間的一部分；
+      V1 每張圖都要算（約 1/4 的時間），與步數無關；在槽位裡，第 0 步的列也付一次帶回饋的步數成本（約 3.9 µs），固定步數的第 0 步只是純掃描（約 2.7 µs）。</p>
+  </div>
+</section>
+
+<section id="end">
+  <h2><span class="no">7</span>結論與未完成項目</h2>
+  <ul>
+    <li><b>訓練</b>：新實驗一律用 <code>_FAST</code>、batch 256、依序執行。在同一張閒置 GPU 上，orig 快 2.9 倍、adapt_blt 快 4.6 倍，準確率在種子差異內。</li>
+    <li><b>batch 推論</b>：CIFAR-100 上用固定步數 + 編譯 + CUDA graph（<code>FixedDepthGraph(compile=True)</code>）。blt 2 步每秒 105,000 張，比原始 VCNet 高 2.8 點，速度是它的 91%。</li>
+    <li><b>自適應</b>：batch 1 有效；batch 256 的槽位池到前緣的 0.82–0.89 倍，理論上限約 1.10 倍。影像更大、每張圖的步數更多時（階段 4）空間較大，屆時再量。</li>
+    <li><b>未做</b>：
+      <ul>
+        <li>每個腦區各用一份狀態緩衝區（不打包）、調整補位上限：預估最多再快 5–10%，擱置到階段 4。</li>
+        <li>MPS 並行多個訓練行程（可選）。</li>
+        <li>階段 1 的縮窄 VCNet（<code>vcnet_r56p</code> / <code>r56f4</code>）訓練反而比全寬慢，可能是通道數不是 8 / 16 的倍數，bf16 卷積用不到快的 kernel；尚未驗證，之後的新寬度取 16 的倍數。</li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+<section id="repro">
+  <h2><span class="no">附</span>重現指令</h2>
+  <p>訓練速度（每種設定量 3 × 50 次）：</p>
+  <pre>python scripts/bench_train.py c100_vcnet_orig c100_vcnet_adapt_blt</pre>
+  <p>快速管線的準確率驗證（3 個種子，依序）：</p>
+  <pre>python scripts/run_experiment.py c100_vcnet_adapt_blt_fast c100_vcnet_orig_fast --seeds 0 1 2</pre>
+  <p>batch 256 推論（只量編譯 + graph 的模式）與摘要：</p>
+  <pre>python scripts/benchmark_adaptive.py c100_vcnet_adapt_blt --seeds 0 1 2 --lams 0.01 0.03 0.1 0.3 --graph-only</pre>
+  <pre>python scripts/summarize.py c100_vcnet_adapt_blt --sections bench</pre>
+  <p class="note">原始輸出：<code>results/phase0_train_speed_h100/</code>、<code>results/vcnet_bench_idle_h100/</code>、<code>results/vcnet_phase2_h100/</code>。
+    量測請在沒有其他程式的 GPU 上進行；GPU 被共用時，同一次量測內的比較仍有參考價值，不同時段的數字不可比。</p>
+</section>
+</div>
+</body></html>
