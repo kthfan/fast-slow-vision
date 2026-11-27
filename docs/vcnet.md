@@ -501,3 +501,17 @@ python scripts/run_experiment.py c100_resnet56_gnws_fast c100_vcnet_r56p_blt_ws_
 
 判讀：若 `vcnet_r56p` + WS 追上 ResNet-56 BN（約 70.4–71.3%），驗證清單第 1 項在不改正規化規則下就有機會通過；
 若 ResNet GN + WS 補回很多、VCNet + WS 補回很少，差距就回到架構本身。
+
+### 0.18.0 結果：GN + WS（[`results/phase1_resnet56_h100`](../results/phase1_resnet56_h100/summary.md)）
+
+| 模型 | 參數 | GFLOPs | GN | GN + WS |
+|---|---|---|---|---|
+| ResNet-56 | 0.862M | 0.251 | 62.84 | **68.64±0.33** |
+| `vcnet_r56p` 2 步 | 0.864M | 0.232 | 65.49 | 66.84±0.40 |
+| `vcnet_r56p` 3 步 | 0.864M | 0.327 | 66.55 | 67.82±0.32 |
+| `vcnet_r56f4` 4 步 | 0.545M | 0.249 | 63.01 | 63.86±0.33 |
+
+- WS 補回 ResNet-56 因 GN 損失的 7.6 點中的 5.8 點，對 VCNet 只有 +0.8–1.4 點。
+- 同樣用 GN + WS（不違反 TODO.md）：同參數、計算量相近時 ResNet-56 高 1.8 點；VCNet 多用 1.3 倍計算量（3 步）仍低 0.8 點。
+  驗證清單第 1 項仍未通過，但差距從 5.8 點縮小到 1–2 點。
+- VCNet 的計算量集中在前段：V1 的側向交互 22.5%、V2 28.4%，最後的 CIT + AIT（4×4）只有 9.6%；ResNet-56 三種解析度各約 1/3。

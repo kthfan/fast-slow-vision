@@ -58,3 +58,27 @@ Verification item 1 (beat ResNet-56 at the same parameters and compute) fails by
   (temperatures 1.1-1.4). VCNet keeps the AdamW recipe.
 
 Next (0.18.0): GroupNorm + weight standardisation (keeps the TODO.md no-BatchNorm rule) for ResNet-56 and VCNet.
+
+## Third paste (0.18.0): GroupNorm + weight standardisation
+
+| model | params | GFLOPs | GN | GN + WS | WS gain |
+|---|---|---|---|---|---|
+| ResNet-56 | 0.862M | 0.251 | 62.84±0.45 | **68.64±0.33** | +5.80 |
+| vcnet_r56p, 2 steps | 0.864M | 0.232 | 65.49±0.37 | 66.84±0.40 | +1.35 |
+| vcnet_r56p, 3 steps | 0.864M | 0.327 | 66.55±0.33 | 67.82±0.32 | +1.27 |
+| vcnet_r56p, best (4-5 steps) | 0.864M | 0.42-0.52 | 67.17±0.13 | 67.94±0.39 | +0.77 |
+| vcnet_r56f4, 4 steps | 0.545M | 0.249 | 63.01±0.86 | 63.86±0.33 | +0.85 |
+| (ResNet-56 BN, VCNet recipe) | 0.862M | 0.251 | 70.44±0.42 | | |
+
+* WS recovers 5.8 of the 7.6 points GroupNorm cost ResNet-56; it helps VCNet by only 0.8-1.4 points.
+* With the same normalisation (GN + WS, allowed by TODO.md), ResNet-56 leads again: by 1.8 points over vcnet_r56p
+  at the same parameters and ~the same compute (2 steps, 0.232 GFLOPs), by 0.8 points even when VCNet spends 1.3x the
+  compute (3 steps), and by 4.8 points over vcnet_r56f4 at the same compute. Verification item 1 still fails, but the
+  gap at matched parameters is now 1-2 points instead of 5.8.
+* The oracle stopping of vcnet_r56p + WS (71.00% at 0.153 GFLOPs) exceeds ResNet-56 GN + WS, so per-image
+  adaptivity has room, but no trained policy realises it yet.
+* Compute allocation (vcnet_r56p, 2 steps, flop counter): V1's lateral interaction 22.5% (full resolution, once per
+  image), V2 28.4% (16x16), MT 10.9%, PIT 9.2%; CIT + AIT (4x4) only 9.6%. ResNet-56 splits its compute evenly over
+  32 / 16 / 8 pixels and ends at 8x8 with 54 conv layers in sequence.
+* The batch-256 latencies of c100_vcnet_r56p_blt_ws_fast have standard deviations up to 80% of the mean
+  (disturbed measurement), and its training time varies (32.1±8.5 min); not used.
