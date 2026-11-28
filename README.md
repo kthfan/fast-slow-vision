@@ -123,6 +123,8 @@ tail -f run_all.log
 
 - 中斷後重跑同一個指令，會從 `runs/<名稱>/last.pt` 接續訓練；要從頭來加 `--fresh`。
 - 指定 GPU：`--gpu 1`（預設 0）。
+- 同時跑多個（實驗、種子）：`--parallel 3`（0.15.0 起）。小模型只用到 GPU 的一小部分，3 個種子並行約等於跑 1 個的時間；
+  CPU 上限會切成互不重疊的幾組核心，輸出每行前面標上執行名稱。
 - `runs/` 存放 checkpoint（大檔）、`reports/` 存放每次執行的報告；兩者都只在本機，不在 repo 裡，更新程式不會覆蓋。
 
 ### 6. 回報結果
@@ -156,13 +158,16 @@ python scripts/summarize.py
 |---|---|
 | `fsv/models/bvit.py` | `RecurrentViT`：共用 Transformer 區塊遞迴 `t_max` 次；共用讀出頭 `head(LN(CLS_t) + step_emb(t))`；`n_blocks=t_max` 時為不共用權重的 ViT 對照組 |
 | `fsv/models/vcnet.py` | `VCNet`：仿視覺皮層 CNN（Hill et al., 2025），把 AIT→V1 預測編碼迴路展開成步數、每步讀出；設計與假設見 [`docs/vcnet.md`](docs/vcnet.md) |
+| `fsv/models/resnet.py` | `ResNet`：CIFAR ResNet-20 / 56 / 110（He et al., 2016，option A shortcut），階段 1 的 CNN 對照組；同一步驟介面、只有 1 步 |
 | `fsv/losses.py` | Stage A 損失：每步 CE + β·Brier + γ·Gatekeeper 信心損失 + δ·最後一步自我蒸餾 |
 | `fsv/calibration.py` | 每步溫度縮放（held-out 上以 LBFGS 擬合） |
 | `fsv/metrics.py` | acc、ECE、Brier、NLL、AURC |
 | `fsv/flops.py` | FLOPs（含每步讀出頭）：ViT 用解析式，VCNet 用 `FlopCounterMode` 實測 |
 | `fsv/halting/thresholds.py` | max-prob / 熵門檻曲線、固定深度早退、oracle 停止步數 t*、曲線下面積 |
 | `fsv/engine.py` | 收集每步 logits / 特徵；逐步延遲量測；AMP 自動選擇（H100 用 bf16） |
-| `fsv/cpu.py` | CPU 核心數硬性上限 |
+| `fsv/cpu.py` | CPU 核心數硬性上限；`FSV_CPU_SET` 指定核心（並行執行時各用各的） |
+| `fsv/gpu_aug.py` | 訓練資料放在 GPU 上、逐張在 GPU 上做同樣的增強（`--gpu-aug`） |
+| `fsv/train_step.py` | 一次訓練步（前向 + 損失可 `torch.compile` / CUDA graph，fused AdamW） |
 | `fsv/data.py` | CIFAR-10/100（Hugging Face parquet，快取為 npz）；從訓練集切出固定 5,000 張 held-out |
 | `fsv/experiments.py` | 實驗登記表（每個名稱對應固定的訓練設定） |
 | `fsv/report.py` | 產生 `report.md` |
@@ -171,6 +176,7 @@ python scripts/summarize.py
 | `scripts/summarize.py` | 輸出可貼到對話的精簡摘要（多種子取平均±標準差） |
 | `scripts/train.py`, `scripts/evaluate.py` | 底層訓練 / 評估程式（也可單獨使用，見 `--help`） |
 | `scripts/check_env.py` | 環境檢查 |
+| `scripts/bench_train.py` | 訓練速度量測（各種資料管線 / 編譯 / batch 組合，`--procs N` 並行） |
 | `scripts/halting_study.py` | TODO-1 停止策略研究（在快取上離線訓練與評估；`run_experiment.py --halting` 會自動呼叫） |
 | `fsv/halting/features.py`, `fsv/halting/policy.py` | 停止策略的輸入特徵（S0 / S2 / S3 / S5）、MLP、訓練目標、λ 掃描曲線 |
 | `fsv/halting/online.py`, `scripts/benchmark_adaptive.py` | 線上自適應推論（逐步停止 + batch compaction）與實際延遲 / 吞吐量量測（TODO-4） |
@@ -602,7 +608,7 @@ Kaggle T4、隨機權重、10,240 張圖（吞吐量 img/s）：
 ## VCNet：原始 vs 自適應步數（`dev/vcnet` 分支，0.9.0 起）
 
 使用者決定改用 VCNet，目標是比較**原始 VCNet**與 **VCNet + 自適應步數**。架構、論文沒寫而由我們補上的假設、
-實驗計畫見 [`docs/vcnet.md`](docs/vcnet.md)。取得程式時，把第 1 步指令裡的分支名稱 `claude/charming-ritchie-qycdtj` 換成 `dev/vcnet`。登記的實驗：`vcnet_smoke`、`c100_vcnet_orig`、`c100_vcnet_orig_ff`、
+實驗計畫見 [`docs/vcnet.md`](docs/vcnet.md)；技術說明與實驗報告見 [`docs/vcnet_report.html`](docs/vcnet_report.html)。取得程式時，把第 1 步指令裡的分支名稱 `claude/charming-ritchie-qycdtj` 換成 `dev/vcnet`。登記的實驗：`vcnet_smoke`、`c100_vcnet_orig`、`c100_vcnet_orig_ff`、
 `c100_vcnet_adapt`、`c100_vcnet_adapt_carry`。
 
 **第 1 輪（3 個種子，[`results/vcnet_round1_h100`](results/vcnet_round1_h100/)）：原始 vs 自適應**
@@ -647,7 +653,63 @@ Kaggle T4、隨機權重、10,240 張圖（吞吐量 img/s）：
 - 計時受其他程式干擾（多列標準差達平均值的 30–100%）；`blt` 的 batch 1 + CUDA graph 較一致：
   λ=0.03 為 2.22 ms（68.20%），固定 3 步 3.12 ms（68.29%）。batch 256 時自適應仍比固定深度慢。
 
-**第 3 輪（0.10.1）**：`c100_vcnet_blt_orig2`、`c100_vcnet_blt_orig4`：`blt` 架構，固定 2 / 4 步、只在最後讀出、只用 CE。
+**延遲與吞吐量（閒置 GPU 重量，[`results/vcnet_bench_idle_h100`](results/vcnet_bench_idle_h100/summary.md)）**：
+
+| 模型、設定 | acc % | batch 256 compiled 張/秒 | batch 1 CUDA graph ms |
+|---|---|---|---|
+| 原始 VCNet（2 步） | 64.56 | 41,499 | 1.908 |
+| `adapt_blt` 固定 2 步 | 67.27 | 39,804 | 1.949 |
+| `adapt_blt` 固定 3 步 | 68.29 | 27,081 | 2.915 |
+| `adapt_blt` + 停止策略 λ=0.1 | 67.77 | 13,567 | 1.825 |
+| `adapt_blt` + 停止策略 λ=0.03 | 68.20 | 10,644 | 2.125 |
+
+- batch 1：自適應有效，`blt` + 停止策略比原始 VCNet 略快且高 3.2 點；比 `blt` 固定 3 步快約 1.4 倍。
+- batch 256：自適應無效，停止策略讓吞吐量降到固定步數的 27–42%；`blt` 固定 2 步的吞吐量約為原始的 96%、高 2.7 點。
+- `blt` 的 eager 實作每步很慢，部署需用 torch.compile。
+
+**第 3 輪（[`results/vcnet_round3_h100`](results/vcnet_round3_h100/summary.md)）：架構 vs 自適應**：`blt` 架構照原始方式訓練
+（固定步數、只在最後讀出、只用 CE）。
+
+| 模型 | 步數 | GFLOPs | test acc % |
+|---|---|---|---|
+| 原始 VCNet（`orig`） | 2 | 0.275 | 64.55±0.96 |
+| `blt_orig2` | 2 | 0.284 | 67.61±0.74 |
+| `adapt_blt` 固定 2 步 | 2 | 0.284 | 67.27±0.57 |
+| `blt_orig4` | 4 | 0.528 | 68.90±0.62 |
+| `adapt_blt` 固定 4 步 | 4 | 0.528 | 68.68±0.58 |
+| `adapt_blt` + 停止策略 λ=0.1 | 1.73 | ≈0.251 | 67.77±0.42 |
+
+- 增益幾乎全部來自架構（同計算量 +3.1 點）；每步讀出不拖累最終準確率；自適應的價值是「一個模型適用所有計算預算」，
+  加上停止策略在 batch 1 小幅省計算（λ=0.1 以 88% 計算量追平 `blt_orig2`），但追不上 4 步的模型。
+- 報告（[`docs/vcnet_report.html`](docs/vcnet_report.html)）已加入第 3 輪（5.4 節）。
+
+**訓練加速（階段 0，0.15.0）**：GPU 上的資料增強、編譯 + CUDA graph 的訓練步、fused AdamW、`--parallel` 並行種子。
+量測用 `scripts/bench_train.py`，驗證用 `c100_vcnet_adapt_blt_fast`、`c100_vcnet_orig_fast`；步驟見
+[`docs/vcnet.md`](docs/vcnet.md)「訓練加速」。
+H100 結果（[`results/phase0_train_speed_h100`](results/phase0_train_speed_h100/summary.md)）：CUDA graph 讓訓練快 1.7 倍（orig）
+到 4.6 倍（blt）；快速管線在 3 個種子上重現第 1–2 輪的準確率（blt 每步 +0.1–0.35 點，在種子差異內），3 個種子的 blt 從約 300 分鐘
+降到 83 分鐘。之後的新實驗改用快速管線。
+0.15.1 修正 GPU 增強中的同步後，orig 快 2.9 倍；0.15.2 把訓練時的雙線性上採樣改成矩陣乘法（其反向原本佔 blt 訓練步約 9%）。
+快速管線的實驗請依序跑（開了 CUDA graph 後並行多份不會更快）。
+batch 512 / 1024（學習率按 √ 放大）各低 1.0 / 3.4 點，不採用；新實驗預設為快速管線 + batch 256（blt 3 個種子約 65 分鐘，原本約 300 分鐘）。
+
+**速度優化報告**：[`docs/vcnet_speed_report.html`](docs/vcnet_speed_report.html) 整理階段 0（訓練）與階段 2（推論）的技術與 H100 實驗。
+
+**推論加速（階段 2，0.16.0）**：槽位池支援 VCNet（每列各自的步數、V1 預先計算、可編譯），並加入公平對照組：固定步數在 batch 256
+整個錄成一張 CUDA graph（`FixedDepthGraph`，benchmark 模式 `graph-bs256` / `graph-compiled-bs256`）。步驟見
+[`docs/vcnet.md`](docs/vcnet.md)「推論加速」。
+H100 結果（[`results/vcnet_phase2_h100`](results/vcnet_phase2_h100/summary.md)）：編譯後的槽位池比壓縮式 runner 快約 6 倍，
+λ=0.1 時對同準確率固定步數為 1.05 倍，但仍低於固定步數的前緣（0.82–0.89 倍）；就算沒有任何額外開銷也最多快約 10%。
+CIFAR 上 batch 推論建議用「固定步數 + 編譯 + CUDA graph」（blt 2 步每秒 105,000 張，是原始 VCNet 的 91%、高 2.8 點）。
+
+**對照組（階段 1，0.17.0）**：ResNet-56（0.862M 參數、0.252 GFLOPs）與同等大小的 VCNet：`vcnet_r56p`（參數量相同，
+0.864M）、`vcnet_r56f4`（4 步的計算量相同，0.249 GFLOPs）。ResNet-56 跑兩種訓練方式（與 VCNet 相同的 AdamW + 強增強、
+一般的 SGD + crop/flip）。實驗與步驟見 [`docs/vcnet.md`](docs/vcnet.md)「對照組」。
+
+**階段 1 結果與決定**（[`results/phase1_resnet56_h100`](results/phase1_resnet56_h100/summary.md)）：ResNet-56 BN 70.44–71.25%，
+同參數的 `vcnet_r56p` 2 / 3 步 65.49 / 66.55%；差距大多來自正規化（ResNet-56 GN 62.84%），但同樣用 GN + weight standardization
+時 ResNet-56 仍領先 1–2 點（68.64 vs 66.84 / 67.82%）。使用者決定方向 B：維持 GN + WS、改進仿皮質層架構（暫不實作，見
+[`docs/vcnet.md`](docs/vcnet.md)「階段 1 方向決定」）。
 
 ## 下一階段方向（討論中）
 

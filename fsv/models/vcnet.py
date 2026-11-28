@@ -66,6 +66,7 @@ class VCNetConfig:
     rec_iters: int = 3  # Recurrent Block iterations in MT / MST (paper: t = 3)
     gn_groups: int = 8  # GroupNorm groups (largest divisor of the width <= this)
     cbam_reduction: int = 8
+    ws: bool = False  # weight standardisation in every conv that feeds a GroupNorm (GN + WS, Qiao et al. 2019)
     ait_carry: bool = False  # AIT_t += g * AIT_{t-1} (zero-init gate): state carried across steps
     # Extensions beyond the paper (docs/vcnet.md, "跨步狀態"); both zero-init, so a new model starts
     # out identical to the plain loop:
@@ -92,6 +93,11 @@ PRESETS = {
     # "we reduced VCNet's hidden-layer widths to form the Mini variant" [assumption: x0.25]
     "vcnet_mini": _scaled(0.25, **_FULL),
     "vcnet_wide": _scaled(2.0, **_FULL),
+    # phase 1: matched to ResNet-56 (0.862M params, 0.252 GFLOPs) with --lateral --topdown (the blt model)
+    # params-matched: 0.864M; cumulative GFLOPs 0.137 / 0.232 / 0.327 / 0.422 at steps 1-4
+    "vcnet_r56p": dict(c_v1=48, c_v2=56, c_v2d=28, c_v4=68, c_pit=68, c_cit=112, c_ait=136, c_mt=56, c_mst=68),
+    # FLOPs-matched at 4 steps (the best fixed depth of the blt model): 0.545M params; 0.080 / 0.136 / 0.193 / 0.249
+    "vcnet_r56f4": dict(c_v1=36, c_v2=40, c_v2d=20, c_v4=56, c_pit=56, c_cit=88, c_ait=108, c_mt=44, c_mst=56),
 }
 
 
@@ -99,6 +105,29 @@ PRESETS = {
 def gn(c: int, groups: int) -> nn.GroupNorm:
     g = max(d for d in range(1, groups + 1) if c % d == 0)
     return nn.GroupNorm(g, c, eps=1e-5)
+
+
+class WSConv2d(nn.Conv2d):
+    """Conv2d with weight standardisation (Qiao et al. 2019): every output filter is used with zero mean and
+    unit variance. With GroupNorm it closes most of the gap to BatchNorm without batch statistics, so it keeps
+    the TODO.md rule (no BatchNorm; nothing depends on the batch or on per-step statistics)."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        w = self.weight
+        mean = w.mean((1, 2, 3), keepdim=True)
+        var = w.var((1, 2, 3), keepdim=True, unbiased=False)
+        return self._conv_forward(x, (w - mean) * torch.rsqrt(var + 1e-5), self.bias)
+
+
+def standardize_convs(model: nn.Module) -> None:
+    """Swap the convolutions that feed a normalisation layer (ConvGN, the pointwise conv of DSConv) for
+    WSConv2d, in place; call before the weights are initialised."""
+    for m in list(model.modules()):
+        if isinstance(m, (ConvGN, DSConv)):
+            i = 0 if isinstance(m, ConvGN) else 1
+            c = m[i]
+            m[i] = WSConv2d(c.in_channels, c.out_channels, c.kernel_size, c.stride, c.padding,
+                            groups=c.groups, bias=c.bias is not None)
 
 
 class ConvGN(nn.Sequential):
@@ -260,10 +289,19 @@ class VCNet(nn.Module):
         self.td = nn.ModuleDict({a: nn.Conv2d(self.area_ch[src], self.area_ch[a], 1, bias=False)
                                  for a, src in TOPDOWN.items()}) if c.topdown else None
 
+        # bilinear upsampling as two small matmuls (same values as F.interpolate, see bilinear_matrix):
+        # non-persistent buffers, so checkpoints are unchanged
+        pairs = {(h8, h)} | ({(self.area_hw[src], self.area_hw[a]) for a, src in TOPDOWN.items()} if c.topdown else set())
+        for n_in, n_out in pairs:
+            if n_in != n_out:
+                self.register_buffer(f"up_{n_in}_{n_out}", bilinear_matrix(n_in, n_out), persistent=False)
+
         # shared readout: head(LN(avgpool AIT_t) + step_emb(t))
         self.head_norm = nn.LayerNorm(c.c_ait, eps=1e-6)
         self.step_out = nn.Parameter(torch.zeros(c.t_max, c.c_ait))
         self.head = nn.Linear(c.c_ait, c.num_classes)
+        if c.ws:
+            standardize_convs(self)
         self._init_weights()
 
     def _init_weights(self) -> None:
@@ -284,6 +322,22 @@ class VCNet(nn.Module):
     def no_weight_decay(self) -> set[str]:
         return {"step_out", "carry_gate"}
 
+    def _upsample(self, x: torch.Tensor, size) -> torch.Tensor:
+        """F.interpolate(x, size, mode="bilinear", align_corners=False), in training as U_h @ x @ U_w^T.
+
+        Same values (up to float rounding). Why: Inductor turns the backward of upsample_bilinear2d
+        into an index_put with atomic adds, which took ~9% of the blt training step on the H100
+        (525 us per call for AIT -> V1, 4x4 -> 32x32); the backward of a matmul is a matmul."""
+        (hi, wi), (ho, wo) = x.shape[-2:], tuple(size)
+        if (hi, wi) == (ho, wo):
+            return x
+        uh, uw = getattr(self, f"up_{hi}_{ho}", None), getattr(self, f"up_{wi}_{wo}", None)
+        # training only: inference keeps F.interpolate, so evaluation, latency and the measured FLOPs
+        # (which do not count the interpolation) stay exactly as in rounds 1-3
+        if uh is None or uw is None or not self.training:
+            return F.interpolate(x, size=(ho, wo), mode="bilinear", align_corners=False)
+        return uh.to(x.dtype) @ x @ uw.to(x.dtype).T
+
     # ------------------------------------------------------- step interface (same as RecurrentViT)
     def embed(self, x: torch.Tensor) -> torch.Tensor:
         """V1 bottom-up activity [B, c_v1, H, W]; computed once per image."""
@@ -291,7 +345,7 @@ class VCNet(nn.Module):
         return self.v1_post(v1)
 
     def predict_v1(self, ait: torch.Tensor, size) -> torch.Tensor:
-        return F.interpolate(self.td_pred(ait), size=size, mode="bilinear", align_corners=False)
+        return self._upsample(self.td_pred(ait), size)
 
     def prediction_error(self, v1: torch.Tensor, ait: torch.Tensor) -> torch.Tensor:
         """eps = ReLU(V1_bottom-up - AIT_top-down)."""
@@ -314,75 +368,140 @@ class VCNet(nn.Module):
         n = self.area_ch["ait"] * hw * hw
         return state[:, -n:].view(-1, self.area_ch["ait"], hw, hw)
 
-    def _recur(self, name: str, a: torch.Tensor, prev: dict | None) -> torch.Tensor:
-        """Add the area's own previous state (lateral) and the previous state of the area above (top-down)."""
+    def _recur(self, name: str, a: torch.Tensor, prev: dict | None, mask: torch.Tensor | None = None) -> torch.Tensor:
+        """Add the area's own previous state (lateral) and the previous state of the area above (top-down).
+        ``mask`` [B, 1, 1, 1] (per-row steps): only rows where it is True get them (rows at step 0)."""
         if prev is None:
             return a
+        out = a
         if self.lat is not None:
-            a = a + self.lat[name](prev[name])
+            out = out + self.lat[name](prev[name])
         if self.td is not None and name in self.td:
             above = self.td[name](prev[TOPDOWN[name]])
             if above.shape[-1] != a.shape[-1]:
-                above = F.interpolate(above, size=a.shape[-2:], mode="bilinear", align_corners=False)
-            a = a + above
-        return a
+                above = self._upsample(above, a.shape[-2:])
+            out = out + above
+        return out if mask is None else torch.where(mask, out, a)
 
-    def sweep(self, z: torch.Tensor, prev: dict | None = None) -> dict[str, torch.Tensor]:
+    def sweep(self, z: torch.Tensor, prev: dict | None = None, mask: torch.Tensor | None = None) -> dict[str, torch.Tensor]:
         """One bottom-up pass V2 ... AIT from the (corrected) V1 activity z; ``prev`` = the
-        previous step's area maps (used only with ``lateral`` / ``topdown``)."""
-        v2 = self._recur("v2", self.v2_mix(torch.cat([self.v2_inter(z), self.v2_thin(z)], 1)), prev)
-        mt = self._recur("mt", self.mt(self.v2_thick(z)), prev)
-        v4 = self._recur("v4", self.v4_post(self.v4_in(v2) + self.mt_to_v4(mt)), prev)
-        pit = self._recur("pit", self.pit(v4), prev)
-        cit = self._recur("cit", self.cit(pit), prev)
-        mst = self._recur("mst", self.mst(mt), prev)
-        ait = self._recur("ait", self.ait(self.ait_in(torch.cat([cit, mst], 1))), prev)
+        previous step's area maps (used only with ``lateral`` / ``topdown``); ``mask`` see ``_recur``."""
+        v2 = self._recur("v2", self.v2_mix(torch.cat([self.v2_inter(z), self.v2_thin(z)], 1)), prev, mask)
+        mt = self._recur("mt", self.mt(self.v2_thick(z)), prev, mask)
+        v4 = self._recur("v4", self.v4_post(self.v4_in(v2) + self.mt_to_v4(mt)), prev, mask)
+        pit = self._recur("pit", self.pit(v4), prev, mask)
+        cit = self._recur("cit", self.cit(pit), prev, mask)
+        mst = self._recur("mst", self.mst(mt), prev, mask)
+        ait = self._recur("ait", self.ait(self.ait_in(torch.cat([cit, mst], 1))), prev, mask)
         return {"v2": v2, "mt": mt, "v4": v4, "pit": pit, "cit": cit, "mst": mst, "ait": ait}
 
-    def forward_step(self, state: torch.Tensor, t: int, x0: torch.Tensor | None = None) -> torch.Tensor:
+    def _step_areas(self, prev: dict | None, t: int, x0: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Step t on unpacked area maps: ``prev`` = the previous step's areas (None at t = 0)."""
+        if t == 0:
+            return self.sweep(x0)
+        ait_prev = prev["ait"]
+        z = x0 + self.err_in(self.prediction_error(x0, ait_prev))
+        areas = self.sweep(z, prev if self.packed else None)
+        if self.carry_gate is not None:
+            areas["ait"] = areas["ait"] + self.carry_gate * ait_prev
+        return areas
+
+    def _step_areas_rows(self, prev: dict, t: torch.Tensor, x0: torch.Tensor) -> dict[str, torch.Tensor]:
+        """Every row at its own step ``t`` (long [B]): the feedback / state terms are computed for all
+        rows and kept only where t > 0, so a row at step 0 gets exactly the plain bottom-up sweep
+        (its stale previous state is ignored by ``torch.where``, never multiplied)."""
+        m = (t > 0).view(-1, 1, 1, 1)
+        ait_prev = prev["ait"]
+        z = torch.where(m, x0 + self.err_in(self.prediction_error(x0, ait_prev)), x0)
+        areas = self.sweep(z, prev if self.packed else None, m)
+        if self.carry_gate is not None:
+            areas["ait"] = torch.where(m, areas["ait"] + self.carry_gate * ait_prev, areas["ait"])
+        return areas
+
+    def forward_step(self, state: torch.Tensor, t: int | torch.Tensor, x0: torch.Tensor | None = None,
+                     out: torch.Tensor | None = None) -> torch.Tensor:
         """Step t. ``x0`` is the V1 activity from ``embed``; ``state`` is the previous step's state for
         t >= 1 (at t = 0 it is ignored, the runners pass the embedding there).
 
         The state is AIT_t [B, c_ait, h, w], or, with ``lateral`` / ``topdown``, all area maps packed
-        into [B, N] (see ``pack``)."""
-        if t == 0:
+        into [B, N] (see ``pack``).
+        ``t`` is the step of the whole batch (int) or of every row (long tensor [B]; slot-pool runner).
+        ``out``: tensor to copy the new state into (may be ``state`` itself)."""
+        if isinstance(t, torch.Tensor):
+            assert x0 is not None, "per-row VCNet steps need x0 = model.embed(x)"
+            prev = self.unpack(state) if self.packed else {"ait": state}
+            areas = self._step_areas_rows(prev, t, x0)
+        elif t == 0:
             areas = self.sweep(x0 if x0 is not None else state)
-            return self.pack(areas) if self.packed else areas["ait"]
-        assert x0 is not None, "VCNet steps t >= 1 need x0 = model.embed(x)"
-        prev = self.unpack(state) if self.packed else None
-        ait_prev = prev["ait"] if prev is not None else state
-        z = x0 + self.err_in(self.prediction_error(x0, ait_prev))
-        areas = self.sweep(z, prev)
-        if self.carry_gate is not None:
-            areas["ait"] = areas["ait"] + self.carry_gate * ait_prev
-        return self.pack(areas) if self.packed else areas["ait"]
+        else:
+            assert x0 is not None, "VCNet steps t >= 1 need x0 = model.embed(x)"
+            prev = self.unpack(state) if self.packed else {"ait": state}
+            areas = self._step_areas(prev, t, x0)
+        res = self.pack(areas) if self.packed else areas["ait"]
+        if out is None:
+            return res
+        return out.copy_(res)
 
-    def readout(self, state: torch.Tensor, t: int) -> torch.Tensor:
-        return self.head(self.head_norm(self.ait_of(state).mean((2, 3))) + self.step_out[t])
+    def _readout_ait(self, ait: torch.Tensor, t: int | torch.Tensor) -> torch.Tensor:
+        # steps past the trained length (evaluate.py --steps) reuse the last trained step embedding;
+        # t may be a long tensor [B] (per-row steps)
+        last = self.step_out.shape[0] - 1
+        e = self.step_out[t.clamp(max=last) if isinstance(t, torch.Tensor) else min(t, last)]
+        return self.head(self.head_norm(ait.mean((2, 3))) + e)
+
+    def readout(self, state: torch.Tensor, t: int | torch.Tensor) -> torch.Tensor:
+        return self._readout_ait(self.ait_of(state), t)
+
+    def extend_steps(self, t_max: int) -> None:
+        """Run the predictive-coding loop for ``t_max`` steps at inference, also past the length the
+        model was trained with (the weights are shared across steps; extra steps reuse the last step
+        embedding). Inference only: the stored config keeps the trained length in ``trained_t_max``."""
+        self.trained_t_max = self.step_out.shape[0]
+        self.cfg.t_max = t_max
+
+    def _features_ait(self, ait: torch.Tensor) -> dict[str, torch.Tensor]:
+        return {"cls": self.head_norm(ait.mean((2, 3))), "pool": self.head_norm(ait.amax((2, 3)))}
 
     def features(self, state: torch.Tensor) -> dict[str, torch.Tensor]:
         """Per-step features for halting research: 'cls' = what the head reads (avg-pooled AIT),
         'pool' = max-pooled AIT."""
-        ait = self.ait_of(state)
-        return {"cls": self.head_norm(ait.mean((2, 3))), "pool": self.head_norm(ait.amax((2, 3)))}
+        return self._features_ait(self.ait_of(state))
 
     # ----------------------------------------------------------- full pass
     def forward(self, x: torch.Tensor, t_max: int | None = None, return_feats: bool = False):
-        """Run all steps. Returns logits [T, B, C] (and per-step features if asked)."""
+        """Run all steps. Returns logits [T, B, C] (and per-step features if asked).
+
+        Same computation as embed + forward_step + readout, but the area maps stay unpacked
+        between steps (no pack / unpack per step; this is the training path)."""
         T = t_max or self.cfg.t_max
         assert T <= self.cfg.t_max
-        x0 = state = self.embed(x)
+        x0 = self.embed(x)
+        areas = None
         logits, feats = [], {"cls": [], "pool": []}
         for t in range(T):
-            state = self.forward_step(state, t, x0)
-            logits.append(self.readout(state, t))
+            areas = self._step_areas(areas, t, x0)
+            logits.append(self._readout_ait(areas["ait"], t))
             if return_feats:
-                for k, v in self.features(state).items():
+                for k, v in self._features_ait(areas["ait"]).items():
                     feats[k].append(v)
         out = torch.stack(logits)
         if return_feats:
             return out, {k: torch.stack(v) for k, v in feats.items()}
         return out
+
+
+def bilinear_matrix(n_in: int, n_out: int) -> torch.Tensor:
+    """[n_out, n_in] weights of 1-D linear interpolation as F.interpolate(mode="bilinear",
+    align_corners=False) computes them: source index max(0, (i + 0.5) * n_in / n_out - 0.5)."""
+    u_mat = torch.zeros(n_out, n_in)
+    for i in range(n_out):
+        u = max(0.0, (i + 0.5) * n_in / n_out - 0.5)
+        i0 = min(int(u), n_in - 1)
+        i1 = min(i0 + 1, n_in - 1)
+        w = u - i0
+        u_mat[i, i0] += 1 - w
+        u_mat[i, i1] += w
+    return u_mat
 
 
 def build_vcnet(name: str = "vcnet", **overrides) -> VCNet:

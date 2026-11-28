@@ -4,6 +4,10 @@ The cap comes from (in order): an explicit argument, the ``FSV_MAX_CPUS``
 environment variable, or ``DEFAULT_MAX_CPUS``. It is never larger than the
 cores already available to the process.
 
+``FSV_CPU_SET`` (e.g. "4,5,6,7") picks WHICH cores: runs launched side by side
+(``run_experiment.py --parallel``) each get their own disjoint set instead of all
+pinning the first N cores.
+
 ``limit_cpus`` enforces it three ways:
   1. CPU affinity (Linux ``sched_setaffinity``): the process and every child it
      starts later (DataLoader workers, subprocesses) can only run on those cores.
@@ -23,8 +27,21 @@ THREAD_ENV_VARS = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
 
 def available_cpus() -> list[int]:
     if hasattr(os, "sched_getaffinity"):
-        return sorted(os.sched_getaffinity(0))
-    return list(range(os.cpu_count() or 1))
+        cpus = sorted(os.sched_getaffinity(0))
+    else:
+        cpus = list(range(os.cpu_count() or 1))
+    wanted = os.environ.get("FSV_CPU_SET", "").strip()
+    if wanted:
+        chosen = [c for c in cpus if c in {int(v) for v in wanted.split(",") if v.strip()}]
+        cpus = chosen or cpus
+    return cpus
+
+
+def split_cpus(n_total: int, n_parts: int) -> list[list[int]]:
+    """Disjoint core sets for ``n_parts`` runs side by side within a cap of ``n_total`` cores."""
+    cpus = available_cpus()[:n_total]
+    per = max(1, len(cpus) // max(1, n_parts))
+    return [cpus[i * per:(i + 1) * per] or cpus[-per:] for i in range(n_parts)]
 
 
 def resolve_max_cpus(requested: int | None = None) -> int:

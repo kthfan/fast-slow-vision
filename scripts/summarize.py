@@ -92,7 +92,11 @@ def benchmark_lines(runs_by_exp: dict[str, list[dict]]) -> list[str]:
                            + ms([r["mean_steps"] for r in rows], 2).rjust(15)
                            + ms([r["img_per_s"] for r in rows], 0).rjust(16)
                            + ms([r["bs1_ms"] for r in rows], 3).rjust(16)
-                           + f"   {ms(ratios_b, 2)}x / {ms(ratios_1, 2)}x" + (" *" if above else ""))
+                           + f"   {ms(ratios_b, 2)}x / {ms(ratios_1, 2)}x" + (" *" if above else "")
+                           + (f"   occupancy {ms([r['occupancy'] for r in rows], 1, 100)}%"
+                              if a0.get("occupancy") is not None else "")
+                           + (f" | V1 {ms([r['embed_ms'] for r in rows], 1)} ms, tick {ms([r['tick_ms'] for r in rows], 3)} ms"
+                              f" x {ms([r['ticks'] for r in rows], 0)}" if a0.get("tick_ms") is not None else ""))
     return out
 
 

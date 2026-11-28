@@ -74,7 +74,7 @@ def test_run_experiment_writes_report(tmp_path):
                    env={**os.environ, "CUDA_VISIBLE_DEVICES": ""})  # CPU: deterministic logic check
     bench = json.loads((rep / "benchmark.json").read_text())
     assert set(bench["modes"]) == {"eager", "eager-naive", "slots", "o3k0-eager", "o3k1-eager", "cudagraph-bs1",
-                                   "o3k0-cudagraph-bs1", "o3k1-cudagraph-bs1"}
+                                   "o3k0-cudagraph-bs1", "o3k1-cudagraph-bs1", "graph-bs64"}
     assert bench["cudagraph_captured"] is False  # CPU: logic only (GPU capture: test_cudagraph_bs1_on_gpu)
     assert all(a["agree_with_eager"] == 1.0 for m in bench["modes"] if "cudagraph" in m
                for a in bench["modes"][m]["adaptive"])

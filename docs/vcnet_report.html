@@ -1,0 +1,971 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VCNet 自適應步數報告</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one report column (~860px) with numbered sections; figures and tables break out to the column width and scroll inside their own box */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --fg: #16191f;
+  --fg2: #4f5866;
+  --line: #d5dae1;
+  --grid: #e7eaef;
+  --accent: #1f5fbf;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --fb: #c2410c; --state: #1d4ed8; --td: #6250d6;
+  --hl: #eaf1fc;
+  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111418; --surface: #191d23; --fg: #e8eaee; --fg2: #a3acb9; --line: #313842; --grid: #252b33;
+    --accent: #6ea3f0; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --fb: #fb923c; --state: #7aa7ff; --td: #9085e9; --hl: #1b2638;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111418; --surface: #191d23; --fg: #e8eaee; --fg2: #a3acb9; --line: #313842; --grid: #252b33;
+  --accent: #6ea3f0; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --fb: #fb923c; --state: #7aa7ff; --td: #9085e9; --hl: #1b2638;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.75; }
+.wrap {
+  max-width: 860px; margin: 0 auto; display: grid; gap: 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 48px 80px;
+}
+h1, h2, h3 { margin: 0; line-height: 1.3; text-wrap: balance; }
+h1 { font-size: 2rem; font-weight: 700; }
+h2 { font-size: 1.4rem; font-weight: 700; display: flex; gap: 12px; align-items: baseline; }
+h2 .no { font-family: var(--font-mono); font-size: 0.95rem; color: var(--accent); font-weight: 500; }
+h3 { font-size: 1.08rem; font-weight: 700; }
+p, li { max-width: 68ch; }
+p { margin: 0; }
+ul, ol { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+section { display: grid; gap: 18px; }
+.sub { display: grid; gap: 12px; }
+.meta { font-family: var(--font-mono); font-size: 0.8rem; color: var(--fg2); letter-spacing: 0.03em; }
+header { display: grid; gap: 14px; }
+.lead { color: var(--fg2); font-size: 1.05rem; }
+.toc { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.92rem; }
+.toc a { text-decoration: none; }
+.toc a span { font-family: var(--font-mono); color: var(--fg2); margin-right: 4px; }
+.findings { display: grid; gap: 10px; padding: 0; list-style: none; }
+.findings li { display: grid; grid-template-columns: 7.5em 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); max-width: none; }
+.findings li:last-child { border-bottom: 1px solid var(--line); }
+.findings b { font-family: var(--font-mono); font-weight: 500; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.findings small { display: block; color: var(--fg2); font-size: 0.78rem; line-height: 1.4; }
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font-weight: 500; color: var(--fg2); font-size: 0.82rem; white-space: nowrap; background: var(--bg); }
+td.n, th.n { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.ref td { font-weight: 700; }
+tr.hl td { background: var(--hl); }
+td .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+figure { margin: 0; display: grid; gap: 10px; }
+figcaption { font-size: 0.86rem; color: var(--fg2); max-width: 72ch; }
+.fig { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; position: relative; }
+.fig svg { display: block; width: 100%; height: auto; }
+.fig.diagram svg { min-width: 560px; }
+.fig.diagram.unroll svg { min-width: 360px; }
+.fig.chart svg { min-width: 520px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.82rem; color: var(--fg2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { display: inline-block; width: 20px; height: 0; border-top: 2px solid; }
+.legend i.dash { border-top-style: dashed; }
+.legend i.dot { width: 9px; height: 9px; border: 2px solid; border-radius: 50%; }
+.legend i.dia { width: 9px; height: 9px; border: 0; background: var(--fg); transform: rotate(45deg); }
+.legend i.dia.hollow { background: transparent; border: 2px solid var(--fg); }
+.legend i.sq { width: 9px; height: 9px; border: 2px solid; border-radius: 1px; }
+.tip { position: absolute; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 0.78rem; line-height: 1.45; padding: 6px 9px; border-radius: 6px; white-space: nowrap; font-family: var(--font-mono); }
+.names { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 14px 16px; display: grid; gap: 10px; }
+.names dl { margin: 0; display: grid; grid-template-columns: 8.5em 1fr; gap: 6px 14px; }
+.names dt { font-family: var(--font-mono); font-size: 0.9rem; font-weight: 500; }
+.names dd { margin: 0; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button { font: 500 0.85rem var(--font-body); color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+td.noisy { color: var(--fg2); text-decoration: underline dotted; text-underline-offset: 3px; }
+#tblIdle td:first-child, #tblBench td:first-child { min-width: 12em; }
+td.grp { background: var(--bg); font-weight: 500; color: var(--fg2); font-size: 0.82rem; }
+@media (max-width: 640px) { .names dl { grid-template-columns: 1fr; } }
+.note { border-left: 3px solid var(--line); padding: 4px 0 4px 14px; color: var(--fg2); font-size: 0.92rem; }
+.eq { font-family: var(--font-mono); font-size: 0.92rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; overflow-x: auto; white-space: nowrap; }
+pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; overflow-x: auto; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.two > * { min-width: 0; }
+@media (max-width: 640px) {
+  h1 { font-size: 1.6rem; }
+  .two { grid-template-columns: 1fr; }
+  .findings li { grid-template-columns: 1fr; gap: 2px; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="meta">fast-slow-vision · VCNet 分支（dev/vcnet → main） · CIFAR-100 · H100 · 2026 年 11 月</div>
+  <h1>VCNet 自適應步數報告</h1>
+  <p class="lead">本報告說明 VCNet（仿視覺皮層 CNN）的實作、我們把它改成「步數可變」模型的方式，以及到第 3 輪為止的實驗結果。
+    研究問題是：<strong>原始 VCNet</strong> 與 <strong>VCNet + 自適應步數</strong> 在準確率、計算量、延遲、校準度上差多少。</p>
+  <nav class="toc" aria-label="目錄">
+    <a href="#summary"><span>1</span>摘要</a>
+    <a href="#background"><span>2</span>背景</a>
+    <a href="#method"><span>3</span>方法</a>
+    <a href="#setup"><span>4</span>實驗設定</a>
+    <a href="#results"><span>5</span>結果</a>
+    <a href="#discussion"><span>6</span>討論與限制</a>
+    <a href="#next"><span>7</span>下一步</a>
+    <a href="#appendix"><span>A</span>附錄</a>
+  </nav>
+</header>
+
+<!-- ================================================================ 1 -->
+<section id="summary">
+  <h2><span class="no">1</span>摘要</h2>
+  <ul class="findings">
+    <li><div><b>64.55%</b><small>原始 VCNet<br>0.275 GFLOPs</small></div>
+      <p>依論文重新實作的原始 VCNet（1.02M 參數，由下而上一次 + 預測編碼修正一次），CIFAR-100 測試準確率，3 個種子平均。</p></li>
+    <li><div><b>65.30%</b><small>adapt_carry 固定 2 步</small></div>
+      <p>第 1 輪：把預測編碼迴圈展開成最多 8 步、每步讀出。迴圈修正一次後就飽和，第 3–8 步沒有增益；停止策略贏不了固定步數。</p></li>
+    <li><div><b>67.27%</b><small>adapt_blt 固定 2 步<br>0.284 GFLOPs</small></div>
+      <p>第 2 輪：讓每個腦區保留跨步狀態，並加入 BLT 式由上而下連線。同樣計算量下比原始高 2.7 點，而且一直進步到第 4 步（68.68%）。</p></li>
+    <li><div><b>67.77%</b><small>adapt_blt + 停止策略<br>0.252 GFLOPs</small></div>
+      <p>加上停止策略後，以原始模型 91% 的計算量高 3.2 點。這是停止策略第一次在同一個模型內勝過固定步數（2 步的計算量下 68.18% vs 67.27%）。</p></li>
+    <li><div><b>1.78 ms</b><small>batch 1 延遲<br>blt + 停止策略</small></div>
+      <p>閒置 GPU 重量：batch 1（CUDA graph）下，blt + 停止策略比原始 VCNet 跑 2 步（1.91 ms）略快，準確率高 3.2 點。
+        batch 256 則相反：停止策略讓吞吐量降到固定步數的 27–42%，原始 VCNet 與 blt 固定 2 步的吞吐量相近（41,499 vs 39,804 張/秒）。</p></li>
+    <li><div><b>67.61%</b><small>blt_orig2<br>0.284 GFLOPs</small></div>
+      <p>第 3 輪：同樣的 blt 架構照原始方式訓練（固定 2 步、只在最後讀出、只用 CE），比原始 VCNet 高 3.1 點。
+        <strong>增益幾乎全部來自架構</strong>。每步讀出不拖累最終準確率（固定 4 步 68.68% vs blt_orig4 68.90%，差距在種子標準差內）。</p></li>
+    <li><div><b>1 個模型</b><small>涵蓋所有計算預算</small></div>
+      <p>自適應在 CIFAR 上的價值是：一個 adapt_blt 在每個步數都達到「只為該步數訓練的模型」的準確率，原始方式的中間讀出則不能用（blt_orig4 第 1–3 步只有 19–49%）。
+        停止策略以 blt_orig2 88% 的計算量追平它，但沒有任何 λ 追上 blt_orig4。</p></li>
+  </ul>
+</section>
+
+<!-- ================================================================ 2 -->
+<section id="background">
+  <h2><span class="no">2</span>背景</h2>
+  <div class="sub">
+    <h3>2.1 專案目標</h3>
+    <p>fast-slow-vision 研究「校準過的快慢視覺」：一個權重共用的遞迴模型，每算一步就輸出一次校準過的類別機率，
+      再由小型停止策略依目前狀態與計算價格 λ 決定停或繼續。簡單的圖早停、難的圖多想，單一模型涵蓋整條準確率–計算量曲線。
+      先前的骨幹是 bViT（單區塊遞迴 ViT）；本分支改用 VCNet。</p>
+  </div>
+  <div class="sub">
+    <h3>2.2 VCNet 論文</h3>
+    <p>Hill, Zhang &amp; Prasetio（2025），<a href="https://arxiv.org/abs/2508.02995">arXiv 2508.02995</a>，NeurIPS 2025 workshop。
+      模仿靈長類視覺皮層的巨觀結構：腹側流（V1→V2→V4→PIT→CIT→AIT）、背側流（V1→V2→MT→MST）、
+      AIT 對 V1 的預測編碼回饋。論文在 Spots-10（32×32 灰階）上報告 92.08%、光場資料上 74.42%。</p>
+    <p class="note">論文沒有程式碼，也沒有通道寬度、步長、正規化方式、分類頭與回饋迴路的接法；實驗只有單次執行，沒有消融，也沒有 CIFAR / ImageNet 結果。
+      因此本報告的「原始 VCNet」是依論文描述加上明確假設的重新實作（見 3.1）。</p>
+  </div>
+  <div class="sub">
+    <h3>2.3 研究問題</h3>
+    <ol>
+      <li>原始 VCNet 與 VCNet + 自適應步數，在相同計算量下的準確率差多少？在相同準確率下省多少計算與延遲？</li>
+      <li>VCNet 的哪個部分可以當作「可變的步數」？多跑幾步是否真的有用？</li>
+      <li>學習式停止策略能否勝過固定步數與信心門檻？</li>
+    </ol>
+  </div>
+</section>
+
+<!-- ================================================================ 3 -->
+<section id="method">
+  <h2><span class="no">3</span>方法</h2>
+
+  <div class="sub">
+    <h3>3.1 原始 VCNet 的實作</h3>
+    <figure>
+      <div class="fig diagram" id="arch"></div>
+      <figcaption>圖 1　一次由下而上的計算（一步）。灰色為同一步內的計算；虛線為 AIT 對 V1 的預測編碼回饋，作用在下一步。
+        V1 每張圖只算一次；MT、MST 內部各有一個迭代 3 次的遞迴區塊；V1、MT、V4 有 CBAM 與神經調制。</figcaption>
+    </figure>
+    <p>論文有寫的部分照做：V1 為三條平行的 depthwise-separable 卷積（3×3、5×5、7×7）後串接，接側向交互（卷積 + channel-wise self-attention + 殘差）、
+      CBAM、神經調制（逐通道可學習縮放）；MT、MST 的遞迴區塊為 z<sub>i+1</sub> = f(z<sub>i</sub>) + z<sub>0</sub>，迭代 3 次；
+      預測誤差 ε = ReLU(V1<sub>bottom-up</sub> − AIT<sub>top-down</sub>)。論文沒寫的部分以下表的假設補上。</p>
+    <div class="tbl"><table>
+      <tr><th>項目</th><th>本實作的選擇</th><th>理由</th></tr>
+      <tr><td>通道寬度</td><td>V1 48、V2 64 / 32（背側）、V4 80、PIT 80、CIT 128、AIT 160、MT 64、MST 80</td><td>參數量 1.02M（3.9 MB），接近論文的 3.52 MB</td></tr>
+      <tr><td>降採樣</td><td>V2、V4/MT、CIT/MST 各以 stride 2 降一半：32 → 16 → 8 → 4</td><td>論文未提</td></tr>
+      <tr><td>正規化、活化</td><td>GroupNorm（最多 8 組）+ ReLU</td><td>專案規定不得用每步統計的 BatchNorm</td></tr>
+      <tr><td>兩流互連</td><td>MT → V4（1×1 卷積相加）；CIT 與 MST 串接後進 AIT</td><td>論文只說「多層級互連」「匯聚進 AIT」</td></tr>
+      <tr><td>channel-wise self-attention</td><td>DANet 的 CAM，輸出係數 γ 初始為 0</td><td>論文只寫名稱</td></tr>
+      <tr><td>top-down 預測器</td><td>AIT 經 1×1 卷積，雙線性上採樣到 V1 大小</td><td>論文未寫</td></tr>
+      <tr><td>誤差 ε 的用法</td><td>修正下一步的輸入：z<sub>t</sub> = V1 + W·ε<sub>t</sub>，W 為 1×1 卷積、初始為 0</td><td>直接當輔助損失會退化（預測值一直加大，ReLU 誤差就變 0）</td></tr>
+      <tr><td>原始模型的回饋次數</td><td>1 次（共 2 步），只讀最後一步</td><td>論文說回饋用來「refine」表徵，至少修正一次</td></tr>
+      <tr><td>分類頭</td><td>AIT 全域平均池化 → LayerNorm → 加步數嵌入 → Linear</td><td>與 bViT 共用同一種讀出頭</td></tr>
+    </table></div>
+  </div>
+
+  <div class="sub">
+    <h3>3.2 把迴圈變成可變的步數</h3>
+    <p>論文唯一可以反覆執行的機制是 AIT → V1 的預測編碼回饋，所以<strong>一步 = 一次預測編碼迴圈</strong>：第 0 步只做由下而上的計算；
+      之後每一步，AIT 預測 V1、算出誤差 ε、修正 V1 的輸入，再跑一遍 V2…AIT。每一步之後都用共用讀出頭輸出一次機率 p<sub>t</sub>。
+      模型實作與 bViT 相同的介面（<code>embed</code> / <code>forward_step</code> / <code>readout</code>），所以訓練、評估、停止策略與延遲量測的程式都不用改。</p>
+    <div class="eq">z<sub>0</sub> = V1　　z<sub>t</sub> = V1 + W·ReLU(V1 − 上採樣(P(AIT<sub>t−1</sub>)))　　AIT<sub>t</sub> = Sweep(z<sub>t</sub>)　　p<sub>t</sub> = softmax(head(LN(pool(AIT<sub>t</sub>)) + e<sub>t</sub>) / T<sub>t</sub>)</div>
+  </div>
+
+  <div class="sub">
+    <h3>3.3 跨步狀態與由上而下連線（論文以外的延伸）</h3>
+    <p>第 1 輪發現迴圈修正一次就飽和。推測原因是每一步唯一的新資訊只有 V1 輸入的小修正，V2…AIT 每步從零重算、不記得上一步。
+      第 2 輪加入兩個仿皮層機制，兩者的新連線都初始為 0，所以新模型訓練剛開始時與原本的迴圈完全相同。</p>
+    <figure>
+      <div class="legend">
+        <span><i style="border-color:var(--fg2)"></i>同一步內由下而上</span>
+        <span><i class="dash" style="border-color:var(--fb)"></i>預測誤差回饋（每個變體都有）</span>
+        <span><i style="border-color:var(--state)"></i>帶著上一步的自己（carry 只有 AIT；lat、blt 每一區）</span>
+        <span><i style="border-color:var(--td)"></i>上一層在上一步的輸出（top-down）</span>
+      </div>
+      <div class="two">
+        <div class="fig diagram unroll" data-unroll="loop"></div>
+        <div class="fig diagram unroll" data-unroll="carry"></div>
+      </div>
+      <div class="two">
+        <div class="fig diagram unroll" data-unroll="lat"></div>
+        <div class="fig diagram unroll" data-unroll="blt"></div>
+      </div>
+      <figcaption>圖 2　四個自適應變體沿步數展開（每欄一步，每列一個腦區，只畫腹側流；背側 MT、MST 做法相同）。
+        四者都有橘色的預測誤差回饋；差別只在步與步之間的連線。adapt：沒有其他連線，V2…AIT 每步重算。
+        adapt_carry：只有 AIT 帶著上一步的自己。adapt_lat：每一區都帶著上一步的自己。adapt_blt：再加上上一層在上一步的輸出（紫）。
+        有跨步連線的方框以藍色外框標出。</figcaption>
+    </figure>
+    <div class="tbl"><table>
+      <tr><th>開關</th><th>做法</th><th>來源</th></tr>
+      <tr><td><code>--lateral</code></td><td>每區 A ∈ {V2, MT, V4, PIT, CIT, MST, AIT}：A<sub>t</sub> = F(這一步的輸入) + R<sub>A</sub>(A<sub>t−1</sub>)，R 為 1×1 卷積</td><td>CORnet-RT 的區內遞迴（Kubilius et al., 2019）</td></tr>
+      <tr><td><code>--topdown</code></td><td>A<sub>t</sub> += T<sub>A</sub>(上採樣(B<sub>t−1</sub>))，B 為同一流的上一層：V2←V4、V4←PIT、PIT←CIT、CIT←AIT、MT←MST、MST←AIT</td><td>BLT 網路（Spoerer et al., 2017、2020）</td></tr>
+      <tr><td><code>--ait-carry</code></td><td>只有 AIT：AIT<sub>t</sub> += g·AIT<sub>t−1</sub>，g 為逐通道係數</td><td>第 1 輪的簡化版</td></tr>
+    </table></div>
+    <p>七個腦區的狀態打包成一個張量，所以線上停止、batch compaction、CUDA graph 的程式不用改。</p>
+  </div>
+
+  <div class="sub">
+    <h3>3.4 變體一覽</h3>
+    <div class="names">
+      <p><strong>名稱怎麼讀</strong>：<code>adapt_</code> 開頭的都是「自適應步數」版本：把原始 VCNet 的預測編碼迴圈展開成最多 8 步、每一步都讀出一次答案，
+        推論時由停止策略決定每張圖跑幾步。後綴說明各區如何把上一步的結果帶到下一步：</p>
+      <dl>
+        <dt>adapt</dt><dd>只有 AIT→V1 的預測誤差回饋；V2…AIT 每步從零重算。</dd>
+        <dt>adapt_carry</dt><dd>carry = 帶著。在 adapt 之外，最高層 AIT 加上自己上一步的輸出：AIT<sub>t</sub> += g·AIT<sub>t−1</sub>。</dd>
+        <dt>adapt_lat</dt><dd>lat = lateral（側向 / 區內遞迴）。七個腦區都加上自己上一步的輸出，仿 CORnet-RT。</dd>
+        <dt>adapt_blt</dt><dd>blt = Bottom-up、Lateral、Top-down。adapt_lat 再加上「上一層在上一步的輸出」往下傳，仿 BLT 網路。</dd>
+        <dt>blt_orig2 / 4</dt><dd>第 3 輪的對照組：與 adapt_blt 架構相同，但照原始 VCNet 的方式訓練：固定 2 或 4 步、只在最後一步讀出、只用 CE。</dd>
+      </dl>
+      <p><strong>「固定 N 步」</strong>：推論時不用停止策略，每張圖都跑 N 步（第 0 步到第 N−1 步），讀取第 N 步的答案。
+        自適應模型訓練時每一步都有讀出，所以可以在任何一步截斷；「固定 N 步」就是把它當成一般的 N 步模型用，作為停止策略的對照組。
+        與之相對，「停止策略」是每張圖各自決定跑幾步，表中列的是平均步數。</p>
+    </div>
+    <div class="tbl"><table>
+      <tr><th>變體</th><th>實驗名稱</th><th class="n">步數</th><th>讀出 / 損失</th><th class="n">參數</th><th class="n">每步 GFLOPs</th></tr>
+      <tr><td>原始，無回饋</td><td><code>c100_vcnet_orig_ff</code></td><td class="n">1</td><td>最後一步 / CE</td><td class="n">1.02M</td><td class="n">0.161（含 V1）</td></tr>
+      <tr class="ref"><td>原始 VCNet</td><td><code>c100_vcnet_orig</code></td><td class="n">2</td><td>最後一步 / CE</td><td class="n">1.02M</td><td class="n">0.113</td></tr>
+      <tr><td><span class="sw" style="background:var(--s1)"></span>adapt</td><td><code>c100_vcnet_adapt</code></td><td class="n">≤ 8</td><td>每一步 / Stage A</td><td class="n">1.02M</td><td class="n">0.113</td></tr>
+      <tr><td><span class="sw" style="background:var(--s2)"></span>adapt_carry</td><td><code>c100_vcnet_adapt_carry</code></td><td class="n">≤ 8</td><td>每一步 / Stage A</td><td class="n">1.02M</td><td class="n">0.113</td></tr>
+      <tr><td><span class="sw" style="background:var(--s3)"></span>adapt_lat</td><td><code>c100_vcnet_adapt_lat</code></td><td class="n">≤ 8</td><td>每一步 / Stage A</td><td class="n">1.09M</td><td class="n">0.119</td></tr>
+      <tr><td><span class="sw" style="background:var(--s4)"></span>adapt_blt</td><td><code>c100_vcnet_adapt_blt</code></td><td class="n">≤ 8</td><td>每一步 / Stage A</td><td class="n">1.15M</td><td class="n">0.122</td></tr>
+      <tr><td>blt，原始方式訓練</td><td><code>c100_vcnet_blt_orig2</code></td><td class="n">2</td><td>最後一步 / CE</td><td class="n">1.15M</td><td class="n">0.122</td></tr>
+      <tr><td>blt，原始方式訓練</td><td><code>c100_vcnet_blt_orig4</code></td><td class="n">4</td><td>最後一步 / CE</td><td class="n">1.15M</td><td class="n">0.122</td></tr>
+    </table></div>
+    <p class="note">第 0 步的成本都是 0.161 GFLOPs（V1 0.053 + 第一次由下而上 0.108）；表中「每步」是第 1 步起每多一步的成本。FLOPs 以 <code>torch.utils.flop_counter</code> 實測，只計卷積與矩陣乘法。</p>
+  </div>
+
+  <div class="sub">
+    <h3>3.5 訓練、校準與停止策略</h3>
+    <ul>
+      <li><strong>Stage A 損失</strong>（自適應變體）：L = Σ<sub>t</sub> w<sub>t</sub>[CE(p<sub>t</sub>, y) + β·Brier(p<sub>t</sub>, y)] + γ·L<sub>Gatekeeper</sub> + δ·Σ<sub>t&lt;T</sub> KL(sg(p<sub>T</sub>) ‖ p<sub>t</sub>)，
+        β = 1、γ = 0.5、δ = 0.5，w<sub>t</sub> ∝ (t+1)<sup>2</sup>。原始模型只用最後一步的 CE。</li>
+      <li><strong>每步溫度縮放</strong>：骨幹凍結，在 5,000 張 held-out 影像上對每一步擬合一個溫度 T<sub>t</sub>。</li>
+      <li><strong>停止策略</strong>：2 層 MLP（hidden 64），輸入為機率統計（top-5、熵、top-1/top-2 差、與上一步的變化、步數）與 log λ；
+        以 held-out 上快取的每步輸出離線訓練。主要使用的版本是 S0-reward_acc（獎勵 = 是否答對 − λ·步數/T<sub>max</sub>）。
+        推論時調 λ 即得到不同的速度–準確率取捨點。停止策略本身的成本小於一步的 0.01%。</li>
+      <li><strong>基準</strong>：固定步數、max-prob 門檻、熵門檻，以及 oracle（每張圖在最早答對的步停，作為上限）。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================================================================ 4 -->
+<section id="setup">
+  <h2><span class="no">4</span>實驗設定</h2>
+  <div class="tbl"><table>
+    <tr><th>項目</th><th>設定</th></tr>
+    <tr><td>資料</td><td>CIFAR-100（32×32）；從訓練集切出固定 5,000 張 held-out，用於溫度縮放與停止策略；測試集只用於報告</td></tr>
+    <tr><td>訓練</td><td>AdamW，lr 1e-3，weight decay 0.05，batch 256，200 epochs（warmup 10），RandAugment、mixup 0.8 / CutMix 1.0、random erasing 0.25；所有變體相同</td></tr>
+    <tr><td>硬體</td><td>單張 NVIDIA H100 NVL，bf16 自動混合精度，PyTorch 2.6.0（CUDA 12.4），CPU 上限 8 核</td></tr>
+    <tr><td>種子</td><td>每個變體 3 個種子（0、1、2）；表中為平均 ± 標準差</td></tr>
+    <tr><td>延遲量測</td><td>測試集預先放上 GPU；batch 256 吞吐量（含 compaction）與 batch 1 延遲（500 張）；batch 1 另有 CUDA graph 模式，去除 kernel 發送開銷</td></tr>
+    <tr><td>程式版本</td><td>第 1 輪 0.9.0，第 2 輪 0.10.0，第 3 輪 0.15.1（<code>dev/vcnet</code>）。第 3 輪的訓練設定與第 1–2 輪相同（CPU 上的資料增強、eager），3 個執行同時跑在同一張 GPU 上</td></tr>
+  </table></div>
+</section>
+
+<!-- ================================================================ 5 -->
+<section id="results">
+  <h2><span class="no">5</span>結果</h2>
+
+  <div class="sub">
+    <h3>5.1 每一步的準確率</h3>
+    <figure>
+      <div class="legend" id="legA"></div>
+      <div class="fig chart" id="chartA"></div>
+      <figcaption>圖 3　固定步數下的測試準確率對累計 GFLOPs（每個點是一步，3 個種子平均）。
+        adapt 與 carry 在第 2 步後持平；lat 與 blt 繼續進步，blt 到第 4 步。黑色菱形為原始 VCNet，空心菱形為不含回饋的原始模型；
+        方塊為第 3 輪照原始方式訓練的 blt（2 步、4 步）。滑鼠移到點上可看數值。</figcaption>
+    </figure>
+    <div class="tbl"><table id="tblSteps"></table></div>
+    <p class="note">原始方式訓練的模型只訓練最後一步的讀出，前面各步是未訓練的讀出（原始 VCNet 第 1 步 60.99%；blt_orig2 第 1 步 41.06%；blt_orig4 第 1–3 步 19.01 / 44.57 / 48.57%），圖與表中只列最後一步。</p>
+  </div>
+
+  <div class="sub">
+    <h3>5.2 原始 vs 自適應</h3>
+    <div class="tbl"><table>
+      <tr><th>模型</th><th class="n">平均步數</th><th class="n">GFLOPs</th><th class="n">相對原始</th><th class="n">準確率 %</th><th class="n">差</th></tr>
+      <tr><td>原始，無回饋（orig_ff）</td><td class="n">1</td><td class="n">0.161</td><td class="n">59%</td><td class="n">63.72±1.22</td><td class="n">−0.83</td></tr>
+      <tr class="ref"><td>原始 VCNet（orig）</td><td class="n">2</td><td class="n">0.275</td><td class="n">100%</td><td class="n">64.55±0.96</td><td class="n">—</td></tr>
+      <tr><td>adapt，固定 2 步</td><td class="n">2</td><td class="n">0.275</td><td class="n">100%</td><td class="n">64.91±0.94</td><td class="n">+0.36</td></tr>
+      <tr><td>adapt_carry，固定 2 步</td><td class="n">2</td><td class="n">0.275</td><td class="n">100%</td><td class="n">65.30±0.41</td><td class="n">+0.75</td></tr>
+      <tr><td>adapt_carry + 停止策略（λ=0.1）</td><td class="n">1.23</td><td class="n">0.187</td><td class="n">68%</td><td class="n">64.71±0.69</td><td class="n">+0.16</td></tr>
+      <tr><td>adapt_lat，固定 1 步</td><td class="n">1</td><td class="n">0.161</td><td class="n">59%</td><td class="n">64.75±0.49</td><td class="n">+0.20</td></tr>
+      <tr><td>adapt_lat，固定 2 步</td><td class="n">2</td><td class="n">0.281</td><td class="n">102%</td><td class="n">67.39±0.48</td><td class="n">+2.84</td></tr>
+      <tr><td>adapt_blt，固定 2 步</td><td class="n">2</td><td class="n">0.284</td><td class="n">103%</td><td class="n">67.27±0.57</td><td class="n">+2.72</td></tr>
+      <tr class="hl"><td>adapt_blt + 停止策略（λ=0.1）</td><td class="n">1.74</td><td class="n">0.252</td><td class="n">91%</td><td class="n">67.77±0.42</td><td class="n">+3.22</td></tr>
+      <tr class="hl"><td>adapt_blt + 停止策略（λ=0.01）</td><td class="n">2.41</td><td class="n">0.333</td><td class="n">121%</td><td class="n">68.34±0.55</td><td class="n">+3.79</td></tr>
+      <tr><td>adapt_blt，固定 4 步（最佳固定步數）</td><td class="n">4</td><td class="n">0.528</td><td class="n">192%</td><td class="n">68.68±0.58</td><td class="n">+4.13</td></tr>
+      <tr><td>blt_orig2（第 3 輪，原始方式訓練）</td><td class="n">2</td><td class="n">0.284</td><td class="n">103%</td><td class="n">67.61±0.74</td><td class="n">+3.06</td></tr>
+      <tr><td>blt_orig4（第 3 輪，原始方式訓練）</td><td class="n">4</td><td class="n">0.528</td><td class="n">192%</td><td class="n">68.90±0.62</td><td class="n">+4.35</td></tr>
+    </table></div>
+    <p class="note"><strong>原始 VCNet 與 adapt 固定 2 步</strong>：兩者架構、權重形狀與推論計算完全相同（由下而上一次 + 預測編碼修正一次，0.275 GFLOPs），差別只在訓練：
+      原始只訓練 2 步、只在最後一步讀出、只用 CE；adapt 訓練 8 步、每一步都讀出、用 Stage A 損失（CE + Brier + Gatekeeper + 自我蒸餾）。
+      「adapt 固定 2 步」是把訓練好的 adapt 在第 2 步截斷，用來在相同計算量下與原始模型比較：64.91% vs 64.55%，差距小於種子間標準差。</p>
+    <p class="note">停止策略的 GFLOPs = 0.161 + (平均步數 − 1) × 每步成本；準確率取自 benchmark 的 eager 模式（全測試集）。
+      第 1 輪的差距（+0.16 到 +0.75）小於種子間標準差，需逐種子比較才能確定；第 2 輪的 +2.7 以上遠大於標準差。</p>
+  </div>
+
+  <div class="sub">
+    <h3>5.3 停止策略 vs 固定步數</h3>
+    <figure>
+      <div class="legend" id="legB"></div>
+      <div class="fig chart" id="chartB"></div>
+      <figcaption>圖 4　同一個模型內，固定步數（實線、實心點）與學習式停止策略（虛線、空心點，λ 從 0.3 到 0.0001）的準確率–計算量曲線。
+        blt 的停止策略曲線位於固定步數曲線上方；carry 的停止策略到不了 2 步的準確率。</figcaption>
+    </figure>
+    <div class="tbl"><table>
+      <tr><th>模型</th><th>方法</th><th class="n">AUC</th><th class="n">2 步的計算量下</th><th class="n">3 步的計算量下</th></tr>
+      <tr><td rowspan="3">adapt</td><td>固定步數</td><td class="n">64.88</td><td class="n">64.91</td><td class="n">64.97</td></tr>
+      <tr><td>max-prob 門檻</td><td class="n">64.76</td><td class="n">64.47</td><td class="n">64.75</td></tr>
+      <tr><td>停止策略 S0-reward_acc</td><td class="n">64.47</td><td class="n">64.48</td><td class="n">64.49</td></tr>
+      <tr><td rowspan="3">adapt_carry</td><td>固定步數</td><td class="n">65.32</td><td class="n">65.30</td><td class="n">65.47</td></tr>
+      <tr><td>max-prob 門檻</td><td class="n">65.17</td><td class="n">64.66</td><td class="n">65.17</td></tr>
+      <tr><td>停止策略 S0-reward_acc</td><td class="n">65.13</td><td class="n">65.16</td><td class="n">65.16</td></tr>
+      <tr><td rowspan="3">adapt_lat</td><td>固定步數</td><td class="n">67.59</td><td class="n">67.39</td><td class="n">67.83</td></tr>
+      <tr><td>max-prob 門檻</td><td class="n">67.40</td><td class="n">66.49</td><td class="n">67.54</td></tr>
+      <tr><td>停止策略 S0-reward_acc</td><td class="n">67.73</td><td class="n">67.74</td><td class="n">67.84</td></tr>
+      <tr><td rowspan="3">adapt_blt</td><td>固定步數</td><td class="n">68.12</td><td class="n">67.27</td><td class="n">68.30</td></tr>
+      <tr><td>max-prob 門檻</td><td class="n">67.87</td><td class="n">66.40</td><td class="n">67.83</td></tr>
+      <tr class="hl"><td>停止策略 S0-reward_acc</td><td class="n">68.35</td><td class="n">68.18</td><td class="n">68.59</td></tr>
+    </table></div>
+    <p class="note">AUC 為 0.161 GFLOPs 到全長計算量之間的平均準確率（%）；「2 步 / 3 步的計算量下」是在該平均計算量能達到的最佳準確率。
+      max-prob 與熵門檻在所有變體都輸給固定步數。oracle（每張圖在最早答對的步停）的上限為 blt 71.83%、lat 70.72%、carry 68.33%，平均約 1.1 步。</p>
+  </div>
+
+  <div class="sub">
+    <h3>5.4 第 3 輪：架構 vs 自適應</h3>
+    <p>自適應變體同時改了架構（跨步狀態、由上而下連線）、讀出方式（每步）、損失（Stage A）與推論（停止策略）。
+      第 3 輪把架構固定為 blt，照原始 VCNet 的方式訓練（固定 2 或 4 步、只在最後一步讀出、只用 CE），把兩者分開。</p>
+    <figure>
+      <div class="legend" id="legC"></div>
+      <div class="fig chart" id="chartC"></div>
+      <figcaption>圖 5　blt 架構的三種用法：adapt_blt 固定步數（實線）、adapt_blt + 停止策略（虛線）、照原始方式訓練的 blt_orig2 / blt_orig4（方塊），
+        以及原始 VCNet（菱形）。方塊落在 adapt_blt 固定步數的曲線上：同架構、同步數時，兩種訓練方式的準確率相同。</figcaption>
+    </figure>
+    <div class="tbl"><table>
+      <tr><th>比較</th><th>模型</th><th class="n">GFLOPs</th><th class="n">準確率 %</th><th>結論</th></tr>
+      <tr><td rowspan="2">架構的價值</td><td>原始 VCNet（orig）</td><td class="n">0.275</td><td class="n">64.55±0.96</td><td rowspan="2">同計算量 <strong>+3.06</strong>：增益來自跨步狀態與由上而下連線</td></tr>
+      <tr><td>blt_orig2</td><td class="n">0.284</td><td class="n">67.61±0.74</td></tr>
+      <tr><td rowspan="4">每步讀出是否拖累最終準確率</td><td>blt_orig2</td><td class="n">0.284</td><td class="n">67.61±0.74</td><td rowspan="4">不會：差距 −0.34 與 −0.22，都在種子標準差內</td></tr>
+      <tr><td>adapt_blt，固定 2 步</td><td class="n">0.284</td><td class="n">67.27±0.57</td></tr>
+      <tr><td>blt_orig4</td><td class="n">0.528</td><td class="n">68.90±0.62</td></tr>
+      <tr><td>adapt_blt，固定 4 步</td><td class="n">0.528</td><td class="n">68.68±0.58</td></tr>
+      <tr><td rowspan="4">停止策略的價值</td><td>blt_orig2</td><td class="n">0.284</td><td class="n">67.61±0.74</td><td rowspan="4">λ=0.1 以 88% 計算量追平 blt_orig2；λ=0.03 多 4% 計算量、高 0.6 點；沒有任何 λ 追上 blt_orig4（最佳 68.34%，−0.56 點）</td></tr>
+      <tr class="hl"><td>adapt_blt + 停止策略 λ=0.1</td><td class="n">≈0.251</td><td class="n">67.77±0.42</td></tr>
+      <tr><td>adapt_blt + 停止策略 λ=0.03</td><td class="n">≈0.295</td><td class="n">68.20±0.58</td></tr>
+      <tr><td>adapt_blt + 停止策略 λ=0.01</td><td class="n">≈0.334</td><td class="n">68.34±0.55</td></tr>
+    </table></div>
+    <div class="tbl"><table>
+      <tr><th>每一步的讀出</th><th class="n">1 步</th><th class="n">2 步</th><th class="n">3 步</th><th class="n">4 步</th></tr>
+      <tr><td>blt_orig4（只訓練第 4 步的讀出）</td><td class="n">19.01</td><td class="n">44.57</td><td class="n">48.57</td><td class="n" style="font-weight:700">68.90</td></tr>
+      <tr><td>adapt_blt（每一步都訓練讀出）</td><td class="n">63.72</td><td class="n">67.27</td><td class="n">68.30</td><td class="n" style="font-weight:700">68.68</td></tr>
+    </table></div>
+    <ul>
+      <li><strong>增益來自架構。</strong>相對原始 VCNet 的 +3 點以上，幾乎全部由跨步狀態與由上而下連線帶來；每步讀出與 Stage A 損失沒有提高最終步數的準確率。</li>
+      <li><strong>自適應的價值是「一個模型適用所有計算預算」。</strong>adapt_blt 在每個步數都達到只為該步數訓練的模型的準確率；原始方式訓練的模型中間讀出不能用，換一個計算預算就要重新訓練一個模型。</li>
+      <li><strong>停止策略在 CIFAR 上只小幅省計算。</strong>在 blt_orig2 的準確率下省 12% 計算；batch 1 延遲（CUDA graph）λ=0.1 為 1.78–1.83 ms，比 blt_orig2（計算與 adapt_blt 固定 2 步相同，1.949 ms）快 6–9%。batch 256 仍是固定步數較快。</li>
+      <li><strong>延遲不必重量：</strong>blt_orig2 / blt_orig4 的推論計算與 adapt_blt 固定 2 / 4 步完全相同，直接沿用 5.6 的閒置 GPU 數據（batch 1 CUDA graph 1.949 / 3.882 ms，batch 256 compiled 39,804 / 20,954 張/秒）。</li>
+    </ul>
+  </div>
+
+  <div class="sub">
+    <h3>5.5 校準</h3>
+    <div class="tbl"><table>
+      <tr><th>模型（最後一步）</th><th class="n">溫度</th><th class="n">ECE 未校準 %</th><th class="n">ECE 溫度縮放 %</th><th class="n">NLL 溫度縮放</th></tr>
+      <tr><td>orig_ff</td><td class="n">0.755</td><td class="n">12.35</td><td class="n">1.89</td><td class="n">1.310</td></tr>
+      <tr class="ref"><td>orig</td><td class="n">0.758</td><td class="n">12.17</td><td class="n">1.79</td><td class="n">1.266</td></tr>
+      <tr><td>adapt</td><td class="n">0.745</td><td class="n">12.66</td><td class="n">2.55</td><td class="n">1.278</td></tr>
+      <tr><td>adapt_carry</td><td class="n">0.740</td><td class="n">12.99</td><td class="n">2.47</td><td class="n">1.264</td></tr>
+      <tr><td>adapt_lat</td><td class="n">0.754</td><td class="n">12.12</td><td class="n">2.40</td><td class="n">1.176</td></tr>
+      <tr><td>adapt_blt</td><td class="n">0.763</td><td class="n">11.58</td><td class="n">2.43</td><td class="n">1.144</td></tr>
+      <tr><td>blt_orig2</td><td class="n">0.757</td><td class="n">12.17</td><td class="n">1.60</td><td class="n">1.170</td></tr>
+      <tr><td>blt_orig4</td><td class="n">0.756</td><td class="n">12.12</td><td class="n">1.46</td><td class="n">1.121</td></tr>
+    </table></div>
+    <ul>
+      <li>所有模型未校準時信心都偏低（溫度 &lt; 1），來自 mixup / CutMix；lat、blt 的第 0 步更明顯（溫度約 0.69，ECE 約 17%）。</li>
+      <li>每步溫度縮放後 ECE 都在 1.5–2.6%。原始方式訓練的模型縮放後 ECE 最低（orig 1.79%、blt_orig2 1.60%、blt_orig4 1.46%）：Stage A 的 Brier 與 Gatekeeper 損失沒有改善縮放後的校準。
+        同為 4 步時，blt_orig4 的 NLL 也略低於 adapt_blt（1.121 vs 1.144）。</li>
+      <li>NLL 隨架構改善（blt 1.144 vs 原始 1.266），反映準確率的提升。</li>
+    </ul>
+  </div>
+
+  <div class="sub">
+    <h3>5.6 延遲與吞吐量</h3>
+    <p><strong>batch 1</strong> 是一次處理一張圖，看延遲（毫秒）；<strong>batch 256</strong> 是一次送 256 張，看吞吐量（張/秒）。執行模式有三種：
+      eager（一般 PyTorch）、compiled（torch.compile）、CUDA graph（只用於 batch 1，去除 kernel 發送開銷，最接近計算量本身）。</p>
+    <ul>
+      <li><strong>閒置 GPU 重量（主要數據）</strong>：orig、adapt_carry、adapt_blt 各 3 個種子，同一個行程、GPU 上沒有其他程式。
+        執行的程式是分支 <code>claude/admiring-franklin-6zlsn0</code>：含本分支的 VCNet，另多了「-triton」模式，把停止策略的特徵計算與 MLP 融合成一個 Triton kernel。
+        原始結果存於 <code>results/vcnet_bench_idle_h100/raw.txt</code>。</li>
+      <li><strong>評估時的固定步數量測</strong>：每個模型訓練完立刻單獨量（eager，不含停止策略），涵蓋全部模型。</li>
+      <li><strong>舊 benchmark</strong>：adapt（第 1 輪）與 adapt_lat（第 2 輪，量測時有其他程式）沒有重量。</li>
+    </ul>
+
+    <h3 style="font-size:1rem">原始 vs 自適應（閒置 GPU）</h3>
+    <div class="legend" id="legLat"></div>
+    <div style="display:grid;gap:20px">
+      <figure><div class="fig chart" id="chartBs1"></div>
+        <figcaption>圖 6　batch 1（CUDA graph）：準確率對延遲，越往左上越好。停止策略的點為 3 個種子的中位數延遲。</figcaption></figure>
+      <figure><div class="fig chart" id="chartBs256"></div>
+        <figcaption>圖 7　batch 256（torch.compile）：準確率對吞吐量，越往右上越好。</figcaption></figure>
+    </div>
+    <div class="tbl"><table id="tblIdle"></table></div>
+    <p class="note">準確率、平均步數與吞吐量為 3 個種子的平均；batch 1 CUDA graph 為 3 個種子的中位數（滑鼠移到格子上可看各種子）。
+      「+Triton」為停止策略融合成單一 Triton kernel 的版本，固定步數不受影響。</p>
+    <ul>
+      <li><strong>batch 1：自適應有效。</strong>adapt_blt + 停止策略在 λ=0.1 為 1.78–1.83 ms、67.77%；原始 VCNet 跑 2 步為 1.91 ms、64.56%。
+        延遲少 4–7%，準確率高 3.2 點。λ=0.3 為 1.49–1.58 ms、66.74%（延遲少 17–22%，高 2.2 點）。
+        和 blt 自己的固定步數比，λ=0.03 以 1.99–2.13 ms 達到 68.20%，固定 3 步要 2.92 ms 才有 68.29%，快約 1.4 倍。</li>
+      <li><strong>batch 256：自適應無效，固定步數較好。</strong>compiled 模式下，adapt_blt 固定 2 步為 39,804 張/秒、67.28%，是原始 VCNet（41,499 張/秒、64.60%）的 96%，準確率高 2.7 點。
+        但加上停止策略後只剩 10,644–16,774 張/秒（固定 2 步的 27–42%），準確率也沒有超過固定 3 步（27,081 張/秒、68.34%）。
+        原因是每一步都要找出並移除已停的影像，之後的 batch 越來越小，GPU 利用率下降。</li>
+      <li><strong>eager 與 compiled：</strong>adapt_blt 在 eager 模式每步額外開銷很大（固定 2 步 11,610 張/秒，只有 compiled 的 29%）；原始 VCNet 在 eager 為 29,377 張/秒。
+        部署 blt 應使用 torch.compile。</li>
+      <li><strong>Triton 融合 kernel：</strong>batch 1 CUDA graph 下，停止策略的延遲中位數再降 3–9%（blt λ=0.1：1.825 → 1.776 ms）。</li>
+      <li><strong>量測品質：</strong>固定步數的 CUDA graph 延遲三個種子幾乎相同（差 &lt; 0.1 ms）；停止策略偶有單一種子偏慢（blt 種子 1 的 λ=0.1 為 3.10 ms，另兩個 1.81–1.83 ms），所以取中位數。
+        adapt_carry 種子 2 的停止策略在所有 λ 下都在第 0 步停。</li>
+    </ul>
+
+    <h3 style="font-size:1rem">固定步數（評估時量測，eager，全部模型）</h3>
+    <div class="tbl"><table id="tblLat"></table></div>
+    <p class="note">吞吐量 = 256 ÷ 一個 batch 的時間。原始 VCNet 與 adapt 架構相同，2 步的吞吐量也相同（29,733 vs 29,595 張/秒）。
+      adapt_blt 在 batch 256 eager 每多一步約 16.8 ms，是 adapt（約 5.2 ms）的 3.2 倍，與閒置 GPU 重量的 eager 結果一致。</p>
+
+    <h3 style="font-size:1rem">全部數據（依模型）</h3>
+    <div class="seg" role="group" aria-label="選擇模型" id="benchSel"></div>
+    <div class="tbl"><table id="tblBench"></table></div>
+    <p class="note">orig、adapt_carry、adapt_blt 為閒置 GPU 重量（3 個種子平均 ± 標準差；CUDA graph 為中位數）；adapt 為第 1 輪、adapt_lat 為第 2 輪（受干擾）。
+      標準差超過平均值 25%（或種子間差距超過中位數 25%）的格子以灰色虛線底線標出。
+      GFLOPs 為每張圖的計算量（含每步讀出）：固定 N 步為實測的累計值；停止策略列（標 ≈）是依平均步數估算：
+      0.161 + (平均步數 − 1) × 每步成本（adapt / carry / orig 0.113、lat 0.119、blt 0.122 GFLOPs），停止策略本身不到一步的 0.01%，忽略不計。
+      滑鼠移到估算值上可看式子與種子間的差異。</p>
+  </div>
+
+  <div class="sub">
+    <h3>5.7 訓練成本</h3>
+    <div class="tbl"><table>
+      <tr><th>模型</th><th class="n">每 epoch（秒）</th><th class="n">200 epochs（分鐘）</th></tr>
+      <tr><td>orig_ff（1 步）</td><td class="n">3.0</td><td class="n">約 10</td></tr>
+      <tr><td>orig（2 步）</td><td class="n">4.8</td><td class="n">約 16</td></tr>
+      <tr><td>adapt / adapt_carry（8 步）</td><td class="n">16.6 / 16.2</td><td class="n">56 / 55</td></tr>
+      <tr><td>adapt_lat（8 步）</td><td class="n">21.7±4.6</td><td class="n">73±15</td></tr>
+      <tr><td>adapt_blt（8 步）</td><td class="n">36.8±10.7</td><td class="n">124±36</td></tr>
+      <tr><td>blt_orig2 / blt_orig4（2 / 4 步）</td><td class="n">24.2 / 59.0</td><td class="n">68 / 199</td></tr>
+    </table></div>
+    <p>blt 的計算量只比 carry 多 8%，訓練卻慢 2.3 倍；一部分可能是同時段的 GPU 干擾，一部分是狀態打包與上採樣的額外開銷，可以再優化。
+      第 3 輪的 3 個執行同時跑、共用 8 個 CPU 核心（每個約 2 核），資料增強跟不上，訓練時間不能與前兩輪比較。</p>
+  </div>
+</section>
+
+<!-- ================================================================ 6 -->
+<section id="discussion">
+  <h2><span class="no">6</span>討論與限制</h2>
+  <div class="sub">
+    <h3>6.1 為什麼第 1 輪會飽和、第 2 輪不會</h3>
+    <p>原本的迴圈中，上一步留給下一步的只有 AIT 對 V1 的預測；中間各區每步從零重算。修正一次後，V1 的輸入幾乎不再改變，網路就停在同一個答案上。
+      讓每區保留自己的狀態後，每一步可以在上一步的中間結果上繼續加工；加上由上而下的連線（BLT），高層的資訊能逐層往下影響，後面的步數才有東西可以累積。
+      blt 進步到第 4 步、lat 在第 3 步左右飽和，與這個解釋一致，但尚未以消融直接驗證。</p>
+  </div>
+  <div class="sub">
+    <h3>6.2 架構與自適應各自的貢獻</h3>
+    <p>第 3 輪（5.4）把兩者分開：相對原始 VCNet 的 +3 點以上幾乎全部來自架構；每步讀出不影響最終步數的準確率；
+      停止策略在 blt 內約帶來 +0.3 到 +0.9 點（同計算量，5.3），對照只為固定步數訓練的模型則是在 2 步處省 12% 計算、在 4 步處追不上。
+      因此在 CIFAR 上，研究主張應放在<strong>架構（跨步狀態 + 由上而下）</strong>，自適應步數的主張是「一個模型適用所有計算預算」與 batch 1 的小幅節省。
+      要證明自適應步數本身重要，需要難度差異更大、需要逐步推理的任務。</p>
+  </div>
+  <div class="sub">
+    <h3>6.3 限制</h3>
+    <ul>
+      <li>原始 VCNet 是依論文描述的重新實作，寬度、降採樣、回饋接法等都是我們的假設，結果不能直接當作論文模型的表現。</li>
+      <li>只在 CIFAR-100（32×32）上實驗；論文的資料集（Spots-10、光場）與 ImageNet 都還沒做。</li>
+      <li>3 個種子，表中為平均 ± 標準差，沒有逐種子的配對比較；第 3 輪的差距（−0.34、−0.22）小於標準差，只能說「沒有可測得的差異」。</li>
+      <li>還沒有一般 CNN（例如 ResNet）在同一套訓練流程下的對照組，無法說 blt 比常見骨幹強。</li>
+      <li>自適應只在 batch 1 帶來延遲上的好處；batch 256 時停止策略讓吞吐量明顯下降。blt 的 eager 實作每步比 adapt 慢 3.2 倍，需用 torch.compile。adapt_lat 尚未在閒置 GPU 上重量。</li>
+      <li>跨步狀態與 BLT 連線是論文以外的延伸，報告時須與原始 VCNet 區分。</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ================================================================ 7 -->
+<section id="next">
+  <h2><span class="no">7</span>下一步</h2>
+  <div class="tbl"><table>
+    <tr><th>方向</th><th>內容</th><th>回答的問題</th></tr>
+    <tr><td>一般 CNN 對照組</td><td>ResNet-20 / 56、WRN-16-4 用同一套訓練流程</td><td>仿皮層架構是否真的比常見骨幹強</td></tr>
+    <tr><td>元件消融</td><td>拿掉 CBAM、側向交互、背側流、預測編碼回饋；只有側向 vs 只有由上而下</td><td>blt 的增益來自哪些連線</td></tr>
+    <tr><td>其他仿皮層遞迴網路</td><td>以同一介面實作 CORnet-RT、BLT、hGRU；閘門式（相乘）回饋</td><td>哪種皮層機制對哪種任務有效</td></tr>
+    <tr><td>難度可控的任務</td><td>路徑追蹤（Pathfinder）等需要逐步傳播的任務，含超出訓練步數的外推</td><td>難的圖是否自動多跑幾步；自適應步數本身的價值</td></tr>
+    <tr><td>更大的影像</td><td>Tiny-ImageNet 或 ImageNet-100；穩健度（CIFAR-100-C）</td><td>每步計算量夠大時，加速是否實際出現</td></tr>
+  </table></div>
+  <p>推論方面可考慮：改善 batch 推論時的移除與重組（目前讓吞吐量降到固定步數的 27–42%）、把 T<sub>max</sub> 降到 4–5（blt 在第 4 步後持平）。</p>
+</section>
+
+<!-- ================================================================ A -->
+<section id="appendix">
+  <h2><span class="no">A</span>附錄</h2>
+  <div class="sub">
+    <h3>A.1 檔案</h3>
+    <ul>
+      <li>模型：<code>fsv/models/vcnet.py</code>；實驗登記：<code>fsv/experiments.py</code>；設計與假設：<code>docs/vcnet.md</code></li>
+      <li>結果原始輸出：<code>results/vcnet_round1_h100/</code>（adaptive.md、original.md）、<code>results/vcnet_round2_h100/summary.md</code>、<code>results/vcnet_round3_h100/summary.md</code></li>
+      <li>測試：<code>tests/test_vcnet.py</code>（介面一致性、論文結構、FLOPs、線上停止與 CUDA graph 邏輯）</li>
+      <li>程式庫：<a href="https://github.com/kthfan/fast-slow-vision">github.com/kthfan/fast-slow-vision</a>（PR #2 已併入 main）</li>
+    </ul>
+  </div>
+  <div class="sub">
+    <h3>A.2 重現指令</h3>
+    <pre>python scripts/run_experiment.py c100_vcnet_orig c100_vcnet_orig_ff --seeds 0 1 2</pre>
+    <pre>python scripts/run_experiment.py c100_vcnet_adapt c100_vcnet_adapt_carry c100_vcnet_adapt_lat c100_vcnet_adapt_blt --seeds 0 1 2 --halting</pre>
+    <pre>python scripts/run_experiment.py c100_vcnet_blt_orig2 c100_vcnet_blt_orig4 --seeds 0 1 2</pre>
+    <pre>python scripts/summarize.py</pre>
+  </div>
+  <div class="sub">
+    <h3>A.3 參考文獻</h3>
+    <ul>
+      <li>Hill, Zhang &amp; Prasetio (2025). VCNet: Recreating High-Level Visual Cortex Principles for Robust Artificial Vision. <a href="https://arxiv.org/abs/2508.02995">arXiv 2508.02995</a>.</li>
+      <li>Kubilius et al. (2019). Brain-like object recognition with high-performing shallow recurrent ANNs (CORnet). NeurIPS.</li>
+      <li>Spoerer, McClure &amp; Kriegeskorte (2017). Recurrent convolutional neural networks: a better model of biological object recognition (BLT). Frontiers in Psychology.</li>
+      <li>Spoerer et al. (2020). Recurrent neural networks can explain flexible trading of speed and accuracy in biological vision. PLOS Computational Biology.</li>
+      <li>Woo et al. (2018). CBAM: Convolutional Block Attention Module. ECCV.</li>
+      <li>Fu et al. (2019). Dual Attention Network for Scene Segmentation (DANet). CVPR.</li>
+      <li>Rabanser et al. (2025). GATEKEEPER. <a href="https://arxiv.org/abs/2502.19335">arXiv 2502.19335</a>.</li>
+      <li>Guo et al. (2017). On Calibration of Modern Neural Networks. ICML.</li>
+    </ul>
+  </div>
+</section>
+
+</div>
+
+<script>
+(function () {
+  const NS = 'style="fill:var(--fg);font:500 12.5px var(--font-body)"';
+  const SUB = 'style="fill:var(--fg2);font:10.5px var(--font-mono)"';
+  function arrowDefs(uid, colors) {
+    let s = "<defs>";
+    for (const [id, c] of colors) {
+      s += `<marker id="${uid}-${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" style="fill:var(${c})"/></marker>`;
+    }
+    return s + "</defs>";
+  }
+
+  // ---------------------------------------------------------------- figure 1: one sweep
+  (function arch() {
+    const uid = "a";
+    let s = `<svg viewBox="0 0 820 300" role="img" aria-label="VCNet 一步的架構圖" xmlns="http://www.w3.org/2000/svg">`;
+    s += arrowDefs(uid, [["g", "--fg2"], ["f", "--fb"]]);
+    const W = 96, H = 40;
+    function box(x, y, name, sub, opt) {
+      const o = opt || {};
+      return `<rect x="${x}" y="${y}" width="${o.w || W}" height="${H}" rx="6" style="fill:${o.fill || "var(--surface)"};stroke:var(--line)"/>` +
+        `<text x="${x + (o.w || W) / 2}" y="${y + 17}" text-anchor="middle" ${NS}>${name}</text>` +
+        `<text x="${x + (o.w || W) / 2}" y="${y + 32}" text-anchor="middle" ${SUB}>${sub}</text>`;
+    }
+    function ar(x1, y1, x2, y2) {
+      return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" style="stroke:var(--fg2)" stroke-width="1.4" marker-end="url(#${uid}-g)"/>`;
+    }
+    s += `<text x="288" y="20" text-anchor="middle" ${SUB}>腹側流（what）</text>`;
+    s += `<text x="288" y="232" text-anchor="middle" ${SUB}>背側流（where / how）</text>`;
+    s += box(8, 100, "影像", "3×32×32", { w: 80, fill: "var(--bg)" });
+    s += box(112, 100, "V1", "3/5/7 DS · 32²");
+    s += box(240, 30, "V2", "inter+thin · 16²");
+    s += box(360, 30, "V4", "CBAM · 8²");
+    s += box(476, 30, "PIT", "殘差 · 8²");
+    s += box(592, 30, "CIT", "4²");
+    s += box(240, 170, "V2", "thick · 16²");
+    s += box(360, 170, "MT", "遞迴×3 · 8²");
+    s += box(592, 170, "MST", "遞迴×3 · 4²");
+    s += box(708, 100, "AIT", "匯聚 · 4²");
+    s += `<rect x="724" y="30" width="64" height="26" rx="13" style="fill:var(--bg);stroke:var(--line)"/><text x="756" y="47" text-anchor="middle" style="fill:var(--fg);font:12px var(--font-mono)">p_t</text>`;
+    s += ar(88, 120, 110, 120) + ar(208, 108, 238, 62) + ar(208, 132, 238, 178) + ar(336, 50, 358, 50) + ar(336, 190, 358, 190);
+    s += ar(408, 170, 408, 72) + ar(456, 50, 474, 50) + ar(572, 50, 590, 50) + ar(456, 190, 590, 190);
+    s += ar(688, 60, 722, 98) + ar(688, 180, 722, 142) + ar(756, 100, 756, 58);
+    s += `<text x="414" y="124" ${SUB}>MT→V4</text>`;
+    s += `<path d="M760 140 C 760 292, 160 292, 160 142" style="fill:none;stroke:var(--fb)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#${uid}-f)"/>`;
+    s += `<text x="460" y="294" text-anchor="middle" style="fill:var(--fb);font:500 11.5px var(--font-body)">下一步：AIT 預測 V1，誤差 ε = ReLU(V1 − 預測) 修正 V1 的輸出</text>`;
+    document.getElementById("arch").innerHTML = s + "</svg>";
+  })();
+
+  // ---------------------------------------------------------------- figure 2: unrolled steps
+  const TITLES = { loop: "adapt：只有預測誤差回饋", carry: "adapt_carry：AIT 帶著上一步", lat: "adapt_lat：每區帶著上一步",
+                  blt: "adapt_blt：每區帶著上一步 + 由上而下" };
+  // rows that carry their own previous state, and whether top-down connections exist
+  const hasState = (mode, nm) => mode === "lat" || mode === "blt" || (mode === "carry" && nm === "AIT");
+  function unroll(mode, uid) {
+    const W = 84, H = 26, cols = [92, 232, 372], rows = [["AIT", 70], ["CIT", 116], ["PIT", 162], ["V4", 208], ["V2", 254]];
+    const zY = 300, v1Y = 336, sub = ["₀", "₁", "₂"];
+    let s = `<svg viewBox="0 0 440 370" role="img" aria-label="沿步數展開的示意圖：${mode}" xmlns="http://www.w3.org/2000/svg">`;
+    s += arrowDefs(uid, [["g", "--fg2"], ["f", "--fb"], ["s", "--state"], ["t", "--td"]]);
+    const ln = (x1, y1, x2, y2, c, m, w) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" style="stroke:var(${c})" stroke-width="${w || 1.3}" marker-end="url(#${uid}-${m})"/>`;
+    s += `<rect x="40" y="${v1Y}" width="384" height="24" rx="6" style="fill:var(--bg);stroke:var(--line)"/>`;
+    s += `<text x="232" y="${v1Y + 16}" text-anchor="middle" style="fill:var(--fg2);font:500 11.5px var(--font-body)">V1：每張圖只算一次</text>`;
+    s += `<text x="232" y="14" text-anchor="middle" style="fill:var(--fg);font:700 12.5px var(--font-body)">${TITLES[mode]}</text>`;
+    cols.forEach((cx, t) => {
+      s += `<text x="${cx}" y="34" text-anchor="middle" style="fill:var(--fg2);font:11.5px var(--font-body)">第 ${t} 步</text>`;
+      rows.forEach(([nm, y], i) => {
+        s += `<rect x="${cx - W / 2}" y="${y - H / 2}" width="${W}" height="${H}" rx="5" style="fill:var(--surface);stroke:${hasState(mode, nm) && t > 0 ? "var(--state)" : "var(--line)"}"/>`;
+        s += `<text x="${cx}" y="${y + 4.5}" text-anchor="middle" style="fill:var(--fg);font:500 12px var(--font-body)">${nm}${sub[t]}</text>`;
+        const below = i + 1 < rows.length ? rows[i + 1][1] : zY;
+        s += ln(cx, below - H / 2, cx, y + H / 2 + 2, "--fg2", "g");
+      });
+      s += `<rect x="${cx - W / 2}" y="${zY - H / 2}" width="${W}" height="${H}" rx="5" style="fill:var(--surface);stroke:${t > 0 ? "var(--fb)" : "var(--line)"}"/>`;
+      s += `<text x="${cx}" y="${zY + 4.5}" text-anchor="middle" style="fill:var(--fg);font:11px var(--font-mono)">${t === 0 ? "z₀=V1" : "V1+Wε"}</text>`;
+      s += ln(cx, v1Y, cx, zY + H / 2 + 2, "--fg2", "g");
+    });
+    for (let k = 0; k + 1 < cols.length; k++) {
+      rows.forEach(([nm, y], i) => {
+        if (hasState(mode, nm)) s += ln(cols[k] + W / 2 + 1, y - 4, cols[k + 1] - W / 2 - 3, y - 4, "--state", "s", 2);
+        if (mode === "blt" && i > 0) s += ln(cols[k] + W / 2 + 1, rows[i - 1][1] + 6, cols[k + 1] - W / 2 - 3, y - 9, "--td", "t", 1.6);
+      });
+    }
+    for (let k = 0; k + 1 < cols.length; k++) {
+      const x1 = cols[k] + W / 2, y1 = rows[0][1] + 8, x2 = cols[k + 1] - W / 2 - 3, y2 = zY + 4;
+      s += `<path d="M${x1} ${y1} C ${x1 + 40} ${y1}, ${x2 - 40} ${y2}, ${x2} ${y2}" style="fill:none;stroke:var(--fb)" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#${uid}-f)"/>`;
+    }
+    return s + "</svg>";
+  }
+  document.querySelectorAll("[data-unroll]").forEach((el, i) => { el.innerHTML = unroll(el.dataset.unroll, "u" + i); });
+
+  // ---------------------------------------------------------------- data
+  const GF = {
+    base: [0.161, 0.275, 0.388, 0.502, 0.615, 0.729, 0.842, 0.955],
+    lat: [0.161, 0.281, 0.400, 0.519, 0.638, 0.758, 0.877, 0.996],
+    blt: [0.161, 0.284, 0.406, 0.528, 0.650, 0.773, 0.895, 1.017]
+  };
+  const ACC = {
+    adapt: [63.75, 64.91, 64.85, 64.87, 64.93, 64.89, 64.93, 64.88],
+    carry: [63.69, 65.30, 65.44, 65.40, 65.43, 65.40, 65.42, 65.39],
+    lat: [64.75, 67.39, 67.83, 67.90, 67.79, 67.80, 67.83, 67.80],
+    blt: [63.72, 67.27, 68.30, 68.68, 68.65, 68.60, 68.56, 68.61]
+  };
+  const SD = {
+    adapt: [1.13, 0.94, 1.11, 0.95, 1.03, 1.06, 1.00, 1.03],
+    carry: [0.61, 0.41, 0.53, 0.53, 0.54, 0.53, 0.54, 0.51],
+    lat: [0.49, 0.48, 0.47, 0.48, 0.54, 0.54, 0.55, 0.52],
+    blt: [0.77, 0.57, 0.48, 0.58, 0.39, 0.29, 0.30, 0.30]
+  };
+  const SER = [
+    { key: "adapt", name: "adapt", color: "--s1", gf: GF.base },
+    { key: "carry", name: "adapt_carry", color: "--s2", gf: GF.base },
+    { key: "lat", name: "adapt_lat", color: "--s3", gf: GF.lat },
+    { key: "blt", name: "adapt_blt", color: "--s4", gf: GF.blt }
+  ];
+  // learned halting policy S0-reward_acc: [lambda, mean steps, accuracy]; GFLOPs = 0.161 + (steps - 1) * step cost
+  const POL = {
+    carry: { step: 0.1134, pts: [[0.3, 1.09, 64.22], [0.1, 1.23, 64.71], [0.03, 1.36, 64.84], [0.01, 1.45, 64.84], [0.001, 1.66, 64.89], [0.0001, 1.92, 64.91]] },
+    lat: { step: 0.1195, pts: [[0.3, 1.18, 66.27], [0.1, 1.40, 66.90], [0.03, 1.66, 67.25], [0.01, 1.90, 67.40], [0.003, 2.23, 67.50], [0.001, 2.53, 67.58], [0.0003, 2.94, 67.63], [0.0001, 3.66, 67.72]] },
+    blt: { step: 0.1223, pts: [[0.3, 1.40, 66.74], [0.1, 1.74, 67.77], [0.03, 2.09, 68.20], [0.01, 2.41, 68.34], [0.003, 2.89, 68.46], [0.001, 3.27, 68.49], [0.0003, 4.15, 68.43], [0.0001, 4.80, 68.52]] }
+  };
+  const ORIG = { gf: 0.275, acc: 64.55, sd: 0.96 }, ORIGFF = { gf: 0.161, acc: 63.72, sd: 1.22 };
+  // round 3: the blt architecture trained like the original VCNet (last readout only, CE)
+  const BLTO = [{ k: 2, gf: 0.284, acc: 67.61, sd: 0.74 }, { k: 4, gf: 0.528, acc: 68.90, sd: 0.62 }];
+
+  // ---------------------------------------------------------------- step table
+  (function stepTable() {
+    let h = "<tr><th>模型</th>" + [...Array(8).keys()].map(t => `<th class="n">${t + 1} 步</th>`).join("") + "</tr>";
+    h += `<tr class="ref"><td>orig</td><td class="n">—</td><td class="n">64.55</td>` + "<td class='n'></td>".repeat(6) + "</tr>";
+    h += `<tr><td>orig_ff</td><td class="n">63.72</td>` + "<td class='n'></td>".repeat(7) + "</tr>";
+    for (const b of BLTO)
+      h += `<tr><td>blt_orig${b.k}</td>` + [...Array(8).keys()].map(t => `<td class="n">${t === b.k - 1 ? b.acc.toFixed(2) : t < b.k - 1 ? "—" : ""}</td>`).join("") + "</tr>";
+    for (const s of SER) {
+      const best = Math.max(...ACC[s.key]);
+      h += `<tr><td><span class="sw" style="background:var(${s.color})"></span>${s.name}</td>` +
+        ACC[s.key].map(a => `<td class="n"${a === best ? ' style="font-weight:700"' : ""}>${a.toFixed(2)}</td>`).join("") + "</tr>";
+    }
+    h += `<tr><td style="color:var(--fg2)">GFLOPs（blt）</td>` + GF.blt.map(g => `<td class="n" style="color:var(--fg2)">${g.toFixed(3)}</td>`).join("") + "</tr>";
+    document.getElementById("tblSteps").innerHTML = h;
+  })();
+
+
+  // ---------------------------------------------------------------- latency / throughput data (parsed from results/)
+  const LAT = {"bench":{"c100_vcnet_adapt":{"eager":[{"set":"t0","acc":[63.75,1.13],"steps":[1.0,0.0],"img_s":[72106.0,981.0],"bs1_ms":[3.429,0.069]},{"set":"t1","acc":[64.91,0.92],"steps":[2.0,0.0],"img_s":[29159.0,219.0],"bs1_ms":[6.065,0.151]},{"set":"t2","acc":[64.86,1.11],"steps":[3.0,0.0],"img_s":[14666.0,5591.0],"bs1_ms":[8.857,0.176]},{"set":"t3","acc":[64.87,0.97],"steps":[4.0,0.0],"img_s":[10389.0,4485.0],"bs1_ms":[11.3,0.318]},{"set":"t4","acc":[64.91,1.02],"steps":[5.0,0.0],"img_s":[10218.0,103.0],"bs1_ms":[13.895,0.791]},{"set":"t5","acc":[64.91,1.03],"steps":[6.0,0.0],"img_s":[6682.0,2919.0],"bs1_ms":[16.752,0.627]},{"set":"t6","acc":[64.92,1.02],"steps":[7.0,0.0],"img_s":[7116.0,71.0],"bs1_ms":[19.119,0.162]},{"set":"t7","acc":[64.88,1.05],"steps":[8.0,0.0],"img_s":[6175.0,57.0],"bs1_ms":[21.972,0.319]},{"set":"lam0.001","acc":[63.75,1.13],"steps":[1.0,0.0],"img_s":[57291.0,54.0],"bs1_ms":[4.203,0.074]},{"set":"lam0.01","acc":[63.75,1.13],"steps":[1.0,0.0],"img_s":[58686.0,1925.0],"bs1_ms":[4.131,0.142]},{"set":"lam0.03","acc":[63.75,1.13],"steps":[1.0,0.0],"img_s":[59480.0,1889.0],"bs1_ms":[4.349,0.239]},{"set":"lam0.1","acc":[63.75,1.13],"steps":[1.0,0.0],"img_s":[57250.0,1957.0],"bs1_ms":[4.162,0.099]},{"set":"lam0.3","acc":[63.75,1.13],"steps":[1.0,0.0],"img_s":[57682.0,1675.0],"bs1_ms":[4.151,0.064]}],"compiled":[{"set":"t0","acc":[63.73,1.12],"steps":[1.0,0.0],"img_s":[80422.0,1653.0],"bs1_ms":[3.013,0.051]},{"set":"t1","acc":[64.9,0.93],"steps":[2.0,0.0],"img_s":[45897.0,1006.0],"bs1_ms":[5.063,0.103]},{"set":"t2","acc":[64.87,1.09],"steps":[3.0,0.0],"img_s":[33156.0,640.0],"bs1_ms":[7.07,0.122]},{"set":"t3","acc":[64.91,0.98],"steps":[4.0,0.0],"img_s":[25268.0,588.0],"bs1_ms":[9.028,0.053]},{"set":"t4","acc":[64.9,1.03],"steps":[5.0,0.0],"img_s":[21542.0,586.0],"bs1_ms":[10.874,0.023]},{"set":"t5","acc":[64.88,1.04],"steps":[6.0,0.0],"img_s":[17986.0,147.0],"bs1_ms":[13.265,0.636]},{"set":"t6","acc":[64.9,1.01],"steps":[7.0,0.0],"img_s":[15880.0,341.0],"bs1_ms":[15.127,0.36]},{"set":"t7","acc":[64.89,1.01],"steps":[8.0,0.0],"img_s":[13873.0,141.0],"bs1_ms":[17.05,0.166]},{"set":"lam0.001","acc":[63.73,1.12],"steps":[1.0,0.0],"img_s":[56032.0,20728.0],"bs1_ms":[4.251,1.218]},{"set":"lam0.01","acc":[63.73,1.12],"steps":[1.0,0.0],"img_s":[54701.0,19460.0],"bs1_ms":[4.241,1.185]},{"set":"lam0.03","acc":[63.73,1.12],"steps":[1.0,0.0],"img_s":[46176.0,18341.0],"bs1_ms":[4.211,1.23]},{"set":"lam0.1","acc":[63.73,1.12],"steps":[1.0,0.0],"img_s":[54912.0,19644.0],"bs1_ms":[4.224,1.216]},{"set":"lam0.3","acc":[63.73,1.12],"steps":[1.0,0.0],"img_s":[55345.0,19994.0],"bs1_ms":[4.258,1.313]}],"cudagraph-bs1":[{"set":"t0","acc":[63.75,1.13],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.433,0.647]},{"set":"t1","acc":[64.91,0.92],"steps":[2.0,0.0],"img_s":null,"bs1_ms":[2.537,1.212]},{"set":"t2","acc":[64.86,1.11],"steps":[3.0,0.0],"img_s":null,"bs1_ms":[3.595,1.802]},{"set":"t3","acc":[64.87,0.97],"steps":[4.0,0.0],"img_s":null,"bs1_ms":[3.768,0.741]},{"set":"t4","acc":[64.91,1.02],"steps":[5.0,0.0],"img_s":null,"bs1_ms":[4.13,0.0]},{"set":"t5","acc":[64.91,1.03],"steps":[6.0,0.0],"img_s":null,"bs1_ms":[4.913,0.002]},{"set":"t6","acc":[64.92,1.02],"steps":[7.0,0.0],"img_s":null,"bs1_ms":[5.697,0.006]},{"set":"t7","acc":[64.88,1.05],"steps":[8.0,0.0],"img_s":null,"bs1_ms":[6.607,0.212]},{"set":"lam0.001","acc":[63.75,1.13],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.085,0.002]},{"set":"lam0.01","acc":[63.75,1.13],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.086,0.001]},{"set":"lam0.03","acc":[63.75,1.13],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.099,0.016]},{"set":"lam0.1","acc":[63.75,1.13],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.614,0.914]},{"set":"lam0.3","acc":[63.75,1.13],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.291,0.351]}]},"c100_vcnet_adapt_carry":{"eager":[{"set":"t0","acc":[63.69,0.61],"steps":[1.0,0.0],"img_s":[69973.0,1301.0],"bs1_ms":[3.474,0.144]},{"set":"t1","acc":[65.33,0.41],"steps":[2.0,0.0],"img_s":[29217.0,113.0],"bs1_ms":[6.129,0.313]},{"set":"t2","acc":[65.43,0.52],"steps":[3.0,0.0],"img_s":[15347.0,2588.0],"bs1_ms":[9.125,0.412]},{"set":"t3","acc":[65.37,0.55],"steps":[4.0,0.0],"img_s":[9179.0,3977.0],"bs1_ms":[11.748,0.422]},{"set":"t4","acc":[65.43,0.56],"steps":[5.0,0.0],"img_s":[7234.0,3089.0],"bs1_ms":[14.779,0.952]},{"set":"t5","acc":[65.38,0.55],"steps":[6.0,0.0],"img_s":[5014.0,2939.0],"bs1_ms":[17.13,0.905]},{"set":"t6","acc":[65.44,0.51],"steps":[7.0,0.0],"img_s":[4247.0,2493.0],"bs1_ms":[20.367,1.401]},{"set":"t7","acc":[65.4,0.53],"steps":[8.0,0.0],"img_s":[4939.0,2161.0],"bs1_ms":[22.888,0.652]},{"set":"lam0.001","acc":[64.89,0.92],"steps":[1.66,0.72],"img_s":[28365.0,24937.0],"bs1_ms":[6.469,2.422]},{"set":"lam0.01","acc":[64.84,0.85],"steps":[1.45,0.48],"img_s":[33990.0,21123.0],"bs1_ms":[5.818,1.681]},{"set":"lam0.03","acc":[64.84,0.85],"steps":[1.36,0.37],"img_s":[32983.0,19952.0],"bs1_ms":[5.438,1.258]},{"set":"lam0.1","acc":[64.71,0.69],"steps":[1.23,0.22],"img_s":[34901.0,20748.0],"bs1_ms":[5.026,0.833]},{"set":"lam0.3","acc":[64.22,0.55],"steps":[1.09,0.08],"img_s":[35514.0,18905.0],"bs1_ms":[4.425,0.334]}],"compiled":[{"set":"t0","acc":[63.7,0.57],"steps":[1.0,0.0],"img_s":[80049.0,1215.0],"bs1_ms":[3.018,0.066]},{"set":"t1","acc":[65.28,0.42],"steps":[2.0,0.0],"img_s":[46574.0,1586.0],"bs1_ms":[5.054,0.124]},{"set":"t2","acc":[65.46,0.53],"steps":[3.0,0.0],"img_s":[33067.0,1193.0],"bs1_ms":[6.967,0.143]},{"set":"t3","acc":[65.42,0.54],"steps":[4.0,0.0],"img_s":[25860.0,546.0],"bs1_ms":[8.901,0.129]},{"set":"t4","acc":[65.41,0.55],"steps":[5.0,0.0],"img_s":[21216.0,436.0],"bs1_ms":[11.326,0.29]},{"set":"t5","acc":[65.45,0.55],"steps":[6.0,0.0],"img_s":[15728.0,4319.0],"bs1_ms":[13.512,0.885]},{"set":"t6","acc":[65.41,0.52],"steps":[7.0,0.0],"img_s":[11620.0,3878.0],"bs1_ms":[15.466,0.51]},{"set":"t7","acc":[65.4,0.51],"steps":[8.0,0.0],"img_s":[8305.0,3.0],"bs1_ms":[18.053,0.759]},{"set":"lam0.001","acc":[64.86,0.9],"steps":[1.66,0.72],"img_s":[19153.0,11836.0],"bs1_ms":[8.096,2.371]},{"set":"lam0.01","acc":[64.83,0.85],"steps":[1.45,0.48],"img_s":[25548.0,7861.0],"bs1_ms":[6.444,0.828]},{"set":"lam0.03","acc":[64.83,0.87],"steps":[1.36,0.37],"img_s":[25492.0,7564.0],"bs1_ms":[5.909,1.099]},{"set":"lam0.1","acc":[64.69,0.7],"steps":[1.23,0.22],"img_s":[37615.0,26434.0],"bs1_ms":[4.955,1.624]},{"set":"lam0.3","acc":[64.24,0.57],"steps":[1.09,0.08],"img_s":[38457.0,25017.0],"bs1_ms":[4.635,1.563]}],"cudagraph-bs1":[{"set":"t0","acc":[63.69,0.61],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.049,0.019]},{"set":"t1","acc":[65.33,0.41],"steps":[2.0,0.0],"img_s":null,"bs1_ms":[1.818,0.083]},{"set":"t2","acc":[65.43,0.52],"steps":[3.0,0.0],"img_s":null,"bs1_ms":[2.561,0.001]},{"set":"t3","acc":[65.37,0.55],"steps":[4.0,0.0],"img_s":null,"bs1_ms":[3.351,0.001]},{"set":"t4","acc":[65.43,0.56],"steps":[5.0,0.0],"img_s":null,"bs1_ms":[4.141,0.001]},{"set":"t5","acc":[65.38,0.55],"steps":[6.0,0.0],"img_s":null,"bs1_ms":[4.933,0.001]},{"set":"t6","acc":[65.44,0.51],"steps":[7.0,0.0],"img_s":null,"bs1_ms":[5.722,0.001]},{"set":"t7","acc":[65.4,0.53],"steps":[8.0,0.0],"img_s":null,"bs1_ms":[6.511,0.001]},{"set":"lam0.001","acc":[64.89,0.92],"steps":[1.66,0.72],"img_s":null,"bs1_ms":[1.665,0.625]},{"set":"lam0.01","acc":[64.84,0.85],"steps":[1.45,0.48],"img_s":null,"bs1_ms":[1.487,0.432]},{"set":"lam0.03","acc":[64.84,0.85],"steps":[1.36,0.37],"img_s":null,"bs1_ms":[1.405,0.324]},{"set":"lam0.1","acc":[64.71,0.69],"steps":[1.23,0.22],"img_s":null,"bs1_ms":[1.294,0.206]},{"set":"lam0.3","acc":[64.22,0.55],"steps":[1.09,0.08],"img_s":null,"bs1_ms":[1.159,0.063]}]},"c100_vcnet_adapt_blt":{"eager":[{"set":"t0","acc":[63.71,0.78],"steps":[1.0,0.0],"img_s":[56896.0,19427.0],"bs1_ms":[3.639,0.256]},{"set":"t1","acc":[67.27,0.56],"steps":[2.0,0.0],"img_s":[6933.0,4903.0],"bs1_ms":[7.165,0.198]},{"set":"t2","acc":[68.29,0.47],"steps":[3.0,0.0],"img_s":[5296.0,2702.0],"bs1_ms":[10.868,0.199]},{"set":"t3","acc":[68.68,0.55],"steps":[4.0,0.0],"img_s":[4708.0,3.0],"bs1_ms":[14.117,0.586]},{"set":"t4","acc":[68.64,0.41],"steps":[5.0,0.0],"img_s":[2882.0,1217.0],"bs1_ms":[18.082,0.223]},{"set":"t5","acc":[68.65,0.31],"steps":[6.0,0.0],"img_s":[2893.0,2.0],"bs1_ms":[20.98,0.203]},{"set":"t6","acc":[68.56,0.28],"steps":[7.0,0.0],"img_s":[2429.0,3.0],"bs1_ms":[24.748,0.296]},{"set":"t7","acc":[68.58,0.28],"steps":[8.0,0.0],"img_s":[1885.0,362.0],"bs1_ms":[28.285,0.263]},{"set":"lam0.0001","acc":[68.52,0.36],"steps":[4.8,1.63],"img_s":[2935.0,2009.0],"bs1_ms":[20.51,6.171]},{"set":"lam0.0003","acc":[68.43,0.44],"steps":[4.15,1.33],"img_s":[2976.0,676.0],"bs1_ms":[18.911,2.941]},{"set":"lam0.001","acc":[68.49,0.61],"steps":[3.27,0.77],"img_s":[3925.0,331.0],"bs1_ms":[14.338,2.786]},{"set":"lam0.003","acc":[68.46,0.65],"steps":[2.89,0.62],"img_s":[4975.0,793.0],"bs1_ms":[13.222,1.037]},{"set":"lam0.01","acc":[68.34,0.55],"steps":[2.41,0.4],"img_s":[5407.0,1112.0],"bs1_ms":[11.61,2.005]},{"set":"lam0.03","acc":[68.2,0.58],"steps":[2.09,0.26],"img_s":[6443.0,1313.0],"bs1_ms":[9.174,1.705]},{"set":"lam0.1","acc":[67.77,0.42],"steps":[1.74,0.05],"img_s":[7454.0,2866.0],"bs1_ms":[7.503,0.603]},{"set":"lam0.3","acc":[66.74,0.45],"steps":[1.4,0.08],"img_s":[12471.0,1131.0],"bs1_ms":[5.92,0.371]}],"compiled":[{"set":"t0","acc":[63.71,0.75],"steps":[1.0,0.0],"img_s":[74853.0,2343.0],"bs1_ms":[3.176,0.098]},{"set":"t1","acc":[67.28,0.55],"steps":[2.0,0.0],"img_s":[34270.0,8568.0],"bs1_ms":[5.844,0.193]},{"set":"t2","acc":[68.34,0.44],"steps":[3.0,0.0],"img_s":[24550.0,6214.0],"bs1_ms":[8.449,0.23]},{"set":"t3","acc":[68.7,0.55],"steps":[4.0,0.0],"img_s":[20652.0,705.0],"bs1_ms":[11.111,0.29]},{"set":"t4","acc":[68.68,0.38],"steps":[5.0,0.0],"img_s":[15114.0,3597.0],"bs1_ms":[13.664,0.254]},{"set":"t5","acc":[68.62,0.25],"steps":[6.0,0.0],"img_s":[14145.0,206.0],"bs1_ms":[16.401,0.37]},{"set":"t6","acc":[68.56,0.28],"steps":[7.0,0.0],"img_s":[12017.0,309.0],"bs1_ms":[19.031,0.587]},{"set":"t7","acc":[68.57,0.27],"steps":[8.0,0.0],"img_s":[10635.0,476.0],"bs1_ms":[21.96,0.885]},{"set":"lam0.0001","acc":[68.5,0.38],"steps":[4.79,1.63],"img_s":[8667.0,331.0],"bs1_ms":[15.456,4.703]},{"set":"lam0.0003","acc":[68.45,0.42],"steps":[4.15,1.33],"img_s":[8360.0,781.0],"bs1_ms":[14.353,3.315]},{"set":"lam0.001","acc":[68.51,0.59],"steps":[3.27,0.77],"img_s":[8218.0,1201.0],"bs1_ms":[13.941,4.055]},{"set":"lam0.003","acc":[68.49,0.62],"steps":[2.9,0.62],"img_s":[7725.0,1053.0],"bs1_ms":[11.902,4.576]},{"set":"lam0.01","acc":[68.4,0.57],"steps":[2.41,0.4],"img_s":[8474.0,1988.0],"bs1_ms":[10.712,3.618]},{"set":"lam0.03","acc":[68.22,0.61],"steps":[2.08,0.26],"img_s":[9193.0,1322.0],"bs1_ms":[8.122,2.675]},{"set":"lam0.1","acc":[67.78,0.43],"steps":[1.74,0.05],"img_s":[10470.0,3863.0],"bs1_ms":[7.841,1.92]},{"set":"lam0.3","acc":[66.74,0.48],"steps":[1.4,0.08],"img_s":[12339.0,4842.0],"bs1_ms":[5.804,1.902]}],"cudagraph-bs1":[{"set":"t0","acc":[63.71,0.78],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.056,0.128]},{"set":"t1","acc":[67.27,0.56],"steps":[2.0,0.0],"img_s":null,"bs1_ms":[2.098,0.257]},{"set":"t2","acc":[68.29,0.47],"steps":[3.0,0.0],"img_s":null,"bs1_ms":[3.124,0.365]},{"set":"t3","acc":[68.68,0.55],"steps":[4.0,0.0],"img_s":null,"bs1_ms":[4.167,0.496]},{"set":"t4","acc":[68.64,0.41],"steps":[5.0,0.0],"img_s":null,"bs1_ms":[5.206,0.62]},{"set":"t5","acc":[68.65,0.31],"steps":[6.0,0.0],"img_s":null,"bs1_ms":[6.249,0.743]},{"set":"t6","acc":[68.56,0.28],"steps":[7.0,0.0],"img_s":null,"bs1_ms":[7.056,0.482]},{"set":"t7","acc":[68.58,0.28],"steps":[8.0,0.0],"img_s":null,"bs1_ms":[8.612,1.501]},{"set":"lam0.0001","acc":[68.52,0.36],"steps":[4.8,1.63],"img_s":null,"bs1_ms":[5.116,1.724]},{"set":"lam0.0003","acc":[68.43,0.44],"steps":[4.15,1.33],"img_s":null,"bs1_ms":[4.444,1.399]},{"set":"lam0.001","acc":[68.49,0.61],"steps":[3.27,0.77],"img_s":null,"bs1_ms":[5.404,2.44]},{"set":"lam0.003","acc":[68.46,0.65],"steps":[2.89,0.62],"img_s":null,"bs1_ms":[3.101,0.692]},{"set":"lam0.01","acc":[68.34,0.55],"steps":[2.41,0.4],"img_s":null,"bs1_ms":[2.609,0.433]},{"set":"lam0.03","acc":[68.2,0.58],"steps":[2.09,0.26],"img_s":null,"bs1_ms":[2.217,0.265]},{"set":"lam0.1","acc":[67.77,0.42],"steps":[1.74,0.05],"img_s":null,"bs1_ms":[1.841,0.042]},{"set":"lam0.3","acc":[66.74,0.45],"steps":[1.4,0.08],"img_s":null,"bs1_ms":[1.485,0.106]}]},"c100_vcnet_adapt_lat":{"eager":[{"set":"t0","acc":[64.74,0.49],"steps":[1.0,0.0],"img_s":[68591.0,1100.0],"bs1_ms":[3.604,0.016]},{"set":"t1","acc":[67.38,0.47],"steps":[2.0,0.0],"img_s":[28335.0,129.0],"bs1_ms":[6.813,0.219]},{"set":"t2","acc":[67.82,0.52],"steps":[3.0,0.0],"img_s":[13925.0,6021.0],"bs1_ms":[9.887,0.448]},{"set":"t3","acc":[67.88,0.51],"steps":[4.0,0.0],"img_s":[12542.0,77.0],"bs1_ms":[13.23,0.279]},{"set":"t4","acc":[67.77,0.52],"steps":[5.0,0.0],"img_s":[5895.0,3403.0],"bs1_ms":[16.896,0.297]},{"set":"t5","acc":[67.79,0.53],"steps":[6.0,0.0],"img_s":[4826.0,2781.0],"bs1_ms":[19.644,0.674]},{"set":"t6","acc":[67.83,0.5],"steps":[7.0,0.0],"img_s":[4106.0,2407.0],"bs1_ms":[22.815,1.057]},{"set":"t7","acc":[67.82,0.54],"steps":[8.0,0.0],"img_s":[3532.0,2030.0],"bs1_ms":[26.099,0.541]},{"set":"lam0.0001","acc":[67.72,0.66],"steps":[3.66,2.09],"img_s":[5891.0,2662.0],"bs1_ms":[18.517,13.496]},{"set":"lam0.0003","acc":[67.63,0.74],"steps":[2.94,1.36],"img_s":[7279.0,713.0],"bs1_ms":[15.452,6.916]},{"set":"lam0.001","acc":[67.58,0.83],"steps":[2.53,1.07],"img_s":[7398.0,1869.0],"bs1_ms":[10.592,3.968]},{"set":"lam0.003","acc":[67.5,0.94],"steps":[2.23,1.0],"img_s":[12485.0,5152.0],"bs1_ms":[12.464,7.267]},{"set":"lam0.01","acc":[67.4,1.08],"steps":[1.9,0.71],"img_s":[8764.0,2582.0],"bs1_ms":[10.675,5.498]},{"set":"lam0.03","acc":[67.25,1.38],"steps":[1.66,0.49],"img_s":[16577.0,3878.0],"bs1_ms":[7.17,1.522]},{"set":"lam0.1","acc":[66.9,1.68],"steps":[1.4,0.27],"img_s":[17920.0,5470.0],"bs1_ms":[7.096,2.863]},{"set":"lam0.3","acc":[66.27,1.5],"steps":[1.18,0.13],"img_s":[22357.0,8832.0],"bs1_ms":[5.072,0.632]}],"compiled":[{"set":"t0","acc":[64.73,0.47],"steps":[1.0,0.0],"img_s":[63201.0,19459.0],"bs1_ms":[3.265,0.161]},{"set":"t1","acc":[67.39,0.47],"steps":[2.0,0.0],"img_s":[30074.0,8587.0],"bs1_ms":[5.992,0.359]},{"set":"t2","acc":[67.85,0.5],"steps":[3.0,0.0],"img_s":[23508.0,5379.0],"bs1_ms":[8.84,0.876]},{"set":"t3","acc":[67.86,0.52],"steps":[4.0,0.0],"img_s":[18075.0,3795.0],"bs1_ms":[11.38,0.635]},{"set":"t4","acc":[67.78,0.54],"steps":[5.0,0.0],"img_s":[15654.0,3569.0],"bs1_ms":[13.93,1.329]},{"set":"t5","acc":[67.8,0.5],"steps":[6.0,0.0],"img_s":[11601.0,3127.0],"bs1_ms":[16.298,1.176]},{"set":"t6","acc":[67.83,0.51],"steps":[7.0,0.0],"img_s":[9948.0,2506.0],"bs1_ms":[18.891,1.554]},{"set":"t7","acc":[67.85,0.5],"steps":[8.0,0.0],"img_s":[7524.0,17.0],"bs1_ms":[21.306,1.142]},{"set":"lam0.0001","acc":[67.72,0.66],"steps":[3.66,2.09],"img_s":[8022.0,1443.0],"bs1_ms":[14.2,6.791]},{"set":"lam0.0003","acc":[67.64,0.69],"steps":[2.95,1.36],"img_s":[7565.0,806.0],"bs1_ms":[11.814,4.258]},{"set":"lam0.001","acc":[67.57,0.82],"steps":[2.53,1.08],"img_s":[9234.0,1868.0],"bs1_ms":[9.684,3.218]},{"set":"lam0.003","acc":[67.48,0.94],"steps":[2.23,1.0],"img_s":[14168.0,7081.0],"bs1_ms":[9.193,3.92]},{"set":"lam0.01","acc":[67.4,1.09],"steps":[1.9,0.71],"img_s":[14547.0,7924.0],"bs1_ms":[8.154,2.92]},{"set":"lam0.03","acc":[67.23,1.38],"steps":[1.66,0.49],"img_s":[16054.0,6884.0],"bs1_ms":[7.496,2.186]},{"set":"lam0.1","acc":[66.91,1.73],"steps":[1.4,0.27],"img_s":[20235.0,8543.0],"bs1_ms":[5.791,2.15]},{"set":"lam0.3","acc":[66.26,1.52],"steps":[1.18,0.13],"img_s":[23897.0,11916.0],"bs1_ms":[5.085,1.525]}],"cudagraph-bs1":[{"set":"t0","acc":[64.74,0.49],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.433,0.645]},{"set":"t1","acc":[67.38,0.47],"steps":[2.0,0.0],"img_s":null,"bs1_ms":[2.856,1.137]},{"set":"t2","acc":[67.82,0.52],"steps":[3.0,0.0],"img_s":null,"bs1_ms":[4.892,1.901]},{"set":"t3","acc":[67.88,0.51],"steps":[4.0,0.0],"img_s":null,"bs1_ms":[6.447,2.502]},{"set":"t4","acc":[67.77,0.52],"steps":[5.0,0.0],"img_s":null,"bs1_ms":[7.998,3.1]},{"set":"t5","acc":[67.79,0.53],"steps":[6.0,0.0],"img_s":null,"bs1_ms":[9.559,3.705]},{"set":"t6","acc":[67.83,0.5],"steps":[7.0,0.0],"img_s":null,"bs1_ms":[9.803,3.687]},{"set":"t7","acc":[67.82,0.54],"steps":[8.0,0.0],"img_s":null,"bs1_ms":[6.998,0.0]},{"set":"lam0.0001","acc":[67.72,0.66],"steps":[3.66,2.09],"img_s":null,"bs1_ms":[5.078,2.051]},{"set":"lam0.0003","acc":[67.63,0.74],"steps":[2.94,1.36],"img_s":null,"bs1_ms":[4.502,2.085]},{"set":"lam0.001","acc":[67.58,0.83],"steps":[2.53,1.07],"img_s":null,"bs1_ms":[3.215,0.893]},{"set":"lam0.003","acc":[67.5,0.94],"steps":[2.23,1.0],"img_s":null,"bs1_ms":[2.256,0.921]},{"set":"lam0.01","acc":[67.4,1.08],"steps":[1.9,0.71],"img_s":null,"bs1_ms":[2.606,0.841]},{"set":"lam0.03","acc":[67.25,1.38],"steps":[1.66,0.49],"img_s":null,"bs1_ms":[2.785,1.341]},{"set":"lam0.1","acc":[66.9,1.68],"steps":[1.4,0.27],"img_s":null,"bs1_ms":[1.458,0.258]},{"set":"lam0.3","acc":[66.27,1.5],"steps":[1.18,0.13],"img_s":null,"bs1_ms":[2.251,1.801]}]},"c100_vcnet_orig":{"eager":[{"set":"t0","acc":[61.0,0.94],"steps":[1.0,0.0],"img_s":[37825.0,5161.0],"bs1_ms":[3.589,0.085]},{"set":"t1","acc":[64.56,0.93],"steps":[2.0,0.0],"img_s":[17658.0,9993.0],"bs1_ms":[6.63,0.453]}],"compiled":[{"set":"t0","acc":[61.01,0.92],"steps":[1.0,0.0],"img_s":[53935.0,21401.0],"bs1_ms":[3.112,0.075]},{"set":"t1","acc":[64.6,0.97],"steps":[2.0,0.0],"img_s":[26479.0,42.0],"bs1_ms":[5.281,0.03]}],"cudagraph-bs1":[{"set":"t0","acc":[61.0,0.94],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.781,0.694]},{"set":"t1","acc":[64.56,0.93],"steps":[2.0,0.0],"img_s":null,"bs1_ms":[3.204,1.247]}]}},"lat":{"c100_vcnet_adapt":{"bs1":[[3.25,0.1],[5.71,0.11],[7.98,0.24],[10.22,0.18],[12.6,0.16],[14.97,0.21],[17.15,0.13],[19.4,0.16]],"bs256":[[3.46,0.07],[8.65,0.01],[14.01,0.0],[19.38,0.01],[24.73,0.01],[30.09,0.0],[35.42,0.0],[40.79,0.01]]},"c100_vcnet_adapt_carry":{"bs1":[[3.41,0.03],[5.79,0.09],[8.23,0.18],[10.46,0.32],[12.89,0.18],[15.35,0.29],[17.87,0.3],[21.37,2.14]],"bs256":[[4.76,2.18],[12.81,7.18],[21.11,12.24],[29.17,16.91],[37.45,21.94],[45.57,26.75],[53.63,31.42],[61.77,36.14]]},"c100_vcnet_adapt_blt":{"bs1":[[3.21,0.06],[6.15,0.11],[9.09,0.16],[11.75,0.14],[14.62,0.24],[17.42,0.32],[19.85,1.13],[22.36,1.22]],"bs256":[[3.29,0.03],[20.07,0.01],[36.81,0.0],[53.55,0.01],[70.3,0.02],[87.03,0.02],[103.72,0.07],[120.39,0.08]]},"c100_vcnet_adapt_lat":{"bs1":[[3.4,0.25],[6.23,0.42],[8.95,0.57],[11.68,0.56],[14.34,0.21],[16.87,0.3],[19.08,0.85],[21.82,1.33]],"bs256":[[4.24,0.78],[10.85,1.91],[17.98,3.53],[24.79,4.82],[31.33,5.52],[39.21,8.46],[45.92,9.26],[52.26,9.8]]},"c100_vcnet_orig":{"bs1":[[3.48,0.14],[5.81,0.08]],"bs256":[[3.51,0.07],[8.61,0.0]]}}};
+  const MODELS = [["c100_vcnet_orig", "原始 VCNet（orig）"], ["c100_vcnet_adapt", "adapt"], ["c100_vcnet_adapt_carry", "adapt_carry"],
+                  ["c100_vcnet_adapt_lat", "adapt_lat"], ["c100_vcnet_adapt_blt", "adapt_blt"]];
+  const SRC = { c100_vcnet_orig: "第 2 輪", c100_vcnet_adapt: "第 1 輪", c100_vcnet_adapt_carry: "第 1 輪", c100_vcnet_adapt_lat: "第 2 輪", c100_vcnet_adapt_blt: "第 2 輪" };
+  const fmt = (v, d) => v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+  const cell = (ms, d, extra, plain) => {
+    if (!ms) return `<td class="n">—</td>`;
+    const [m, sd] = ms, noisy = !plain && m > 0 && sd / m > 0.25;
+    return `<td class="n${noisy ? " noisy" : ""}"${noisy ? ' title="標準差超過平均值的 25%"' : ""}>${fmt(m, d)}${sd ? "±" + fmt(sd, d) : ""}${extra || ""}</td>`;
+  };
+  (function latTable() {
+    const steps = [1, 2, 3, 4, 8];
+    let h = `<tr><th>模型</th><th class="n">步數</th><th class="n">batch 1 延遲 ms</th><th class="n">batch 256 每 batch ms</th><th class="n">batch 256 吞吐量 張/秒</th></tr>`;
+    for (const [k, nm] of MODELS) {
+      const L = LAT.lat[k], avail = steps.filter(t => t <= L.bs1.length);
+      avail.forEach((t, i) => {
+        const b1 = L.bs1[t - 1], b256 = L.bs256[t - 1];
+        const thr = [256000 / b256[0], b256[1] ? 256000 / b256[0] * b256[1] / b256[0] : 0];
+        h += `<tr${k === "c100_vcnet_orig" && t === 2 ? ' class="ref"' : ""}>${i === 0 ? `<td rowspan="${avail.length}">${nm}</td>` : ""}<td class="n">${t}</td>` +
+          cell(b1, 2) + cell(b256, 2) + cell([Math.round(thr[0]), Math.round(thr[1])], 0) + "</tr>";
+      });
+    }
+    document.getElementById("tblLat").innerHTML = h;
+  })();
+  const IDLE = {"c100_vcnet_orig":{"eager":[{"set":"t0","acc":[61.00333333333334,0.9429916931412156],"steps":[1.0,0.0],"img_s":[60678.666666666664,6411.221750441435],"bs1_ms":[3.9396666666666667,0.1797813486803716],"bs1_med":3.959,"bs1_seeds":[4.109,3.959,3.751]},{"set":"t1","acc":[64.56,0.9331130692472389],"steps":[2.0,0.0],"img_s":[29377.0,24.020824298928627],"bs1_ms":[6.851333333333333,0.39558732706361227],"bs1_med":6.632,"bs1_seeds":[6.614,7.308,6.632]}],"compiled":[{"set":"t0","acc":[61.00666666666667,0.9231648462400072],"steps":[1.0,0.0],"img_s":[76681.33333333333,1209.39337410676],"bs1_ms":[3.4623333333333335,0.13191411347287046],"bs1_med":3.523,"bs1_seeds":[3.553,3.523,3.311]},{"set":"t1","acc":[64.60000000000001,0.9699484522385723],"steps":[2.0,0.0],"img_s":[41499.333333333336,2510.884771018641],"bs1_ms":[5.632,0.33349062955351505],"bs1_med":5.496,"bs1_seeds":[5.496,6.012,5.388]}],"cudagraph-bs1":[{"set":"t0","acc":[61.00333333333334,0.9429916931412156],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.0586666666666666,0.0005773502691895622],"bs1_med":1.059,"bs1_seeds":[1.058,1.059,1.059]},{"set":"t1","acc":[64.56,0.9331130692472389],"steps":[2.0,0.0],"img_s":null,"bs1_ms":[1.8679999999999999,0.0890168523370715],"bs1_med":1.908,"bs1_seeds":[1.93,1.908,1.766]}]},"c100_vcnet_adapt_carry":{"eager":[{"set":"t0","acc":[63.693333333333335,0.6107645481962204],"steps":[1.0,0.0],"img_s":[64700.666666666664,8345.896856140347],"bs1_ms":[3.7133333333333334,0.319633123022839],"bs1_med":3.812,"bs1_seeds":[3.972,3.812,3.356]},{"set":"t1","acc":[65.33,0.40951190458886566],"steps":[2.0,0.0],"img_s":[29212.0,89.11228871485683],"bs1_ms":[6.917,0.8705469545061889],"bs1_med":6.761,"bs1_seeds":[6.761,7.855,6.135]},{"set":"t2","acc":[65.43333333333334,0.5181055233572963],"steps":[3.0,0.0],"img_s":[17970.666666666668,57.49202843293436],"bs1_ms":[9.752666666666666,0.8678279399358686],"bs1_med":10.074,"bs1_seeds":[10.074,10.414,8.77]},{"set":"t3","acc":[65.37333333333333,0.5464735431229315],"steps":[4.0,0.0],"img_s":[13051.666666666666,149.85771028990578],"bs1_ms":[12.859,0.7186577766920773],"bs1_med":13.087,"bs1_seeds":[13.087,13.436,12.054]},{"set":"t4","acc":[65.42666666666666,0.5643875736879149],"steps":[5.0,0.0],"img_s":[10183.333333333334,33.126021996812916],"bs1_ms":[15.661,1.5588293684685308],"bs1_med":15.624,"bs1_seeds":[15.624,17.238,14.121]},{"set":"t5","acc":[65.38,0.5480875842417846],"steps":[6.0,0.0],"img_s":[8367.666666666666,59.19740985324724],"bs1_ms":[18.903,1.7424313472845925],"bs1_med":19.301,"bs1_seeds":[19.301,20.412,16.996]},{"set":"t6","acc":[65.44333333333333,0.5064911976859314],"steps":[7.0,0.0],"img_s":[7109.666666666667,92.93187468965282],"bs1_ms":[22.147,1.9783950566052266],"bs1_med":23.008,"bs1_seeds":[23.008,23.549,19.884]},{"set":"t7","acc":[65.39999999999999,0.5291502622129176],"steps":[8.0,0.0],"img_s":[6163.666666666667,55.77036249956901],"bs1_ms":[26.058666666666667,2.657329549253034],"bs1_med":26.914,"bs1_seeds":[28.183,26.914,23.079]},{"set":"lam0.003","acc":[64.89,0.9214662229295241],"steps":[1.5466666666666666,0.5828664798505172],"img_s":[29186.666666666668,24595.430923920267],"bs1_ms":[7.064,2.814763933263321],"bs1_med":6.92,"bs1_seeds":[6.92,9.948,4.324]},{"set":"lam0.01","acc":[64.84333333333333,0.8450049309520812],"steps":[1.4533333333333334,0.4764801499887832],"img_s":[31097.0,22066.368369081487],"bs1_ms":[6.503,2.147498079160957],"bs1_med":6.861,"bs1_seeds":[6.861,8.449,4.199]},{"set":"lam0.03","acc":[64.84,0.8501764522732929],"steps":[1.36,0.37040518354904267],"img_s":[30442.666666666668,22487.32786111621],"bs1_ms":[6.328333333333333,2.0861894289189884],"bs1_med":6.247,"bs1_seeds":[6.247,8.454,4.284]},{"set":"lam0.1","acc":[64.71333333333334,0.686755657663871],"steps":[1.2266666666666666,0.22501851775650225],"img_s":[31615.333333333332,20563.610051091062],"bs1_ms":[5.413,1.2066577808144279],"bs1_med":5.367,"bs1_seeds":[5.367,6.642,4.23]},{"set":"lam0.3","acc":[64.21666666666667,0.548117992163489],"steps":[1.09,0.0793725393319377],"img_s":[33249.0,20469.424320190345],"bs1_ms":[5.252,0.7732832598731205],"bs1_med":5.361,"bs1_seeds":[5.361,5.965,4.43]}],"eager-triton":[{"set":"t0","acc":[63.693333333333335,0.6107645481962204],"steps":[1.0,0.0],"img_s":[64700.666666666664,8345.896856140347],"bs1_ms":[3.7133333333333334,0.319633123022839],"bs1_med":3.812,"bs1_seeds":[3.972,3.812,3.356]},{"set":"t1","acc":[65.33,0.40951190458886566],"steps":[2.0,0.0],"img_s":[29212.0,89.11228871485683],"bs1_ms":[6.917,0.8705469545061889],"bs1_med":6.761,"bs1_seeds":[6.761,7.855,6.135]},{"set":"t2","acc":[65.43333333333334,0.5181055233572963],"steps":[3.0,0.0],"img_s":[17970.666666666668,57.49202843293436],"bs1_ms":[9.752666666666666,0.8678279399358686],"bs1_med":10.074,"bs1_seeds":[10.074,10.414,8.77]},{"set":"t3","acc":[65.37333333333333,0.5464735431229315],"steps":[4.0,0.0],"img_s":[13051.666666666666,149.85771028990578],"bs1_ms":[12.859,0.7186577766920773],"bs1_med":13.087,"bs1_seeds":[13.087,13.436,12.054]},{"set":"t4","acc":[65.42666666666666,0.5643875736879149],"steps":[5.0,0.0],"img_s":[10183.333333333334,33.126021996812916],"bs1_ms":[15.661,1.5588293684685308],"bs1_med":15.624,"bs1_seeds":[15.624,17.238,14.121]},{"set":"t5","acc":[65.38,0.5480875842417846],"steps":[6.0,0.0],"img_s":[8367.666666666666,59.19740985324724],"bs1_ms":[18.903,1.7424313472845925],"bs1_med":19.301,"bs1_seeds":[19.301,20.412,16.996]},{"set":"t6","acc":[65.44333333333333,0.5064911976859314],"steps":[7.0,0.0],"img_s":[7109.666666666667,92.93187468965282],"bs1_ms":[22.147,1.9783950566052266],"bs1_med":23.008,"bs1_seeds":[23.008,23.549,19.884]},{"set":"t7","acc":[65.39999999999999,0.5291502622129176],"steps":[8.0,0.0],"img_s":[6163.666666666667,55.77036249956901],"bs1_ms":[26.058666666666667,2.657329549253034],"bs1_med":26.914,"bs1_seeds":[28.183,26.914,23.079]},{"set":"lam0.003","acc":[64.89,0.9214662229295241],"steps":[1.5466666666666666,0.5828664798505172],"img_s":[31009.0,26344.134546422283],"bs1_ms":[6.324333333333333,2.184120036383837],"bs1_med":6.513,"bs1_seeds":[6.513,8.408,4.052]},{"set":"lam0.01","acc":[64.84333333333333,0.8450049309520812],"steps":[1.4533333333333334,0.4764801499887832],"img_s":[33840.0,21432.398185924038],"bs1_ms":[5.986,2.212453615332986],"bs1_med":5.627,"bs1_seeds":[5.627,8.356,3.975]},{"set":"lam0.03","acc":[64.84,0.8501764522732929],"steps":[1.36,0.37040518354904267],"img_s":[33561.0,22573.31125466532],"bs1_ms":[5.915666666666667,1.9007262647033982],"bs1_med":5.855,"bs1_seeds":[5.855,7.846,4.046]},{"set":"lam0.1","acc":[64.71333333333334,0.686755657663871],"steps":[1.2266666666666666,0.22501851775650225],"img_s":[33896.333333333336,22502.068045700453],"bs1_ms":[5.307,1.2057777573002415],"bs1_med":5.357,"bs1_seeds":[5.357,6.487,4.077]},{"set":"lam0.3","acc":[64.21666666666667,0.548117992163489],"steps":[1.09,0.0793725393319377],"img_s":[37500.666666666664,20771.372422960725],"bs1_ms":[4.7043333333333335,0.6660828276823636],"bs1_med":4.772,"bs1_seeds":[4.772,5.334,4.007]}],"compiled":[{"set":"t0","acc":[63.7,0.5747173218200419],"steps":[1.0,0.0],"img_s":[72888.66666666667,8528.115637896413],"bs1_ms":[3.361666666666667,0.3208135491735555],"bs1_med":3.401,"bs1_seeds":[3.401,3.661,3.023]},{"set":"t1","acc":[65.28,0.4150903516103444],"steps":[2.0,0.0],"img_s":[42181.666666666664,4317.650093897528],"bs1_ms":[5.611,0.48200933600916934],"bs1_med":5.575,"bs1_seeds":[5.575,6.11,5.148]},{"set":"t2","acc":[65.45666666666666,0.5253887449625569],"steps":[3.0,0.0],"img_s":[29755.0,3393.2802713598535],"bs1_ms":[7.762666666666667,0.9173725161205419],"bs1_med":7.303,"bs1_seeds":[7.303,8.819,7.166]},{"set":"t3","acc":[65.42333333333333,0.5387330817142468],"steps":[4.0,0.0],"img_s":[23127.333333333332,2523.559060797534],"bs1_ms":[9.559000000000001,0.38101312313357427],"bs1_med":9.64,"bs1_seeds":[9.64,9.893,9.144]},{"set":"t4","acc":[65.41,0.5480875842417846],"steps":[5.0,0.0],"img_s":[19650.333333333332,887.1923880046161],"bs1_ms":[12.52,1.3529482621297835],"bs1_med":13.092,"bs1_seeds":[13.092,13.493,10.975]},{"set":"t5","acc":[65.44666666666666,0.5518453889753331],"steps":[6.0,0.0],"img_s":[15522.666666666666,2559.7316916687446],"bs1_ms":[14.401,1.6843562568530457],"bs1_med":14.441,"bs1_seeds":[14.441,16.065,12.697]},{"set":"t6","acc":[65.40666666666667,0.517815926110172],"steps":[7.0,0.0],"img_s":[14192.333333333334,1420.704872003096],"bs1_ms":[15.471333333333332,2.2910734019959573],"bs1_med":14.548,"bs1_seeds":[18.08,13.786,14.548]},{"set":"t7","acc":[65.40333333333334,0.5107184482014888],"steps":[8.0,0.0],"img_s":[14192.666666666666,983.5701974609302],"bs1_ms":[17.550666666666668,1.9964794848265628],"bs1_med":16.401,"bs1_seeds":[19.856,16.395,16.401]},{"set":"lam0.003","acc":[64.86666666666666,0.9155508360180399],"steps":[1.55,0.5881326381013045],"img_s":[35219.666666666664,28633.78085990974],"bs1_ms":[5.185333333333333,1.636691276121839],"bs1_med":5.492,"bs1_seeds":[5.492,6.647,3.417]},{"set":"lam0.01","acc":[64.83,0.8501764522732926],"steps":[1.4533333333333334,0.4764801499887832],"img_s":[39640.333333333336,24918.84773285742],"bs1_ms":[4.882333333333333,1.3297271649978928],"bs1_med":5.165,"bs1_seeds":[5.165,6.048,3.434]},{"set":"lam0.03","acc":[64.82666666666667,0.8651204155106599],"steps":[1.36,0.37040518354904267],"img_s":[40642.0,26171.156126545116],"bs1_ms":[4.748,1.134245123419096],"bs1_med":5.344,"bs1_seeds":[5.46,5.344,3.44]},{"set":"lam0.1","acc":[64.69,0.6963476143421475],"steps":[1.2266666666666666,0.22501851775650225],"img_s":[39590.0,25600.404117904076],"bs1_ms":[4.373,0.728928665920061],"bs1_med":4.685,"bs1_seeds":[4.894,4.685,3.54]},{"set":"lam0.3","acc":[64.24000000000001,0.5747173218200435],"steps":[1.09,0.0793725393319377],"img_s":[40141.0,23716.503768473125],"bs1_ms":[4.015333333333333,0.6475587489435484],"bs1_med":3.824,"bs1_seeds":[4.737,3.824,3.485]}],"cudagraph-bs1":[{"set":"t0","acc":[63.693333333333335,0.6107645481962204],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.0586666666666666,0.0011547005383792525],"bs1_med":1.058,"bs1_seeds":[1.06,1.058,1.058]},{"set":"t1","acc":[65.33,0.40951190458886566],"steps":[2.0,0.0],"img_s":null,"bs1_ms":[1.8313333333333333,0.07310494739300026],"bs1_med":1.809,"bs1_seeds":[1.809,1.772,1.913]},{"set":"t2","acc":[65.43333333333334,0.5181055233572963],"steps":[3.0,0.0],"img_s":null,"bs1_ms":[2.562333333333333,0.0005773502691898186],"bs1_med":2.562,"bs1_seeds":[2.563,2.562,2.562]},{"set":"t3","acc":[65.37333333333333,0.5464735431229315],"steps":[4.0,0.0],"img_s":null,"bs1_ms":[3.36,0.018193405398660042],"bs1_med":3.35,"bs1_seeds":[3.35,3.349,3.381]},{"set":"t4","acc":[65.42666666666666,0.5643875736879149],"steps":[5.0,0.0],"img_s":null,"bs1_ms":[4.137666666666666,0.0005773502691898186],"bs1_med":4.138,"bs1_seeds":[4.138,4.138,4.137]},{"set":"t5","acc":[65.38,0.5480875842417846],"steps":[6.0,0.0],"img_s":null,"bs1_ms":[4.927666666666666,0.0005773502691898186],"bs1_med":4.928,"bs1_seeds":[4.928,4.928,4.927]},{"set":"t6","acc":[65.44333333333333,0.5064911976859314],"steps":[7.0,0.0],"img_s":null,"bs1_ms":[5.722,0.0],"bs1_med":5.722,"bs1_seeds":[5.722,5.722,5.722]},{"set":"t7","acc":[65.39999999999999,0.5291502622129176],"steps":[8.0,0.0],"img_s":null,"bs1_ms":[6.508333333333334,0.0005773502691898186],"bs1_med":6.508,"bs1_seeds":[6.509,6.508,6.508]},{"set":"lam0.003","acc":[64.89,0.9214662229295241],"steps":[1.5466666666666666,0.5828664798505172],"img_s":null,"bs1_ms":[1.579,0.5179613885223492],"bs1_med":1.527,"bs1_seeds":[1.527,2.121,1.089]},{"set":"lam0.01","acc":[64.84333333333333,0.8450049309520812],"steps":[1.4533333333333334,0.4764801499887832],"img_s":null,"bs1_ms":[1.4933333333333334,0.42937900895750986],"bs1_med":1.447,"bs1_seeds":[1.447,1.944,1.089]},{"set":"lam0.03","acc":[64.84,0.8501764522732929],"steps":[1.36,0.37040518354904267],"img_s":null,"bs1_ms":[1.4083333333333334,0.3261477170444909],"bs1_med":1.397,"bs1_seeds":[1.397,1.74,1.088]},{"set":"lam0.1","acc":[64.71333333333334,0.686755657663871],"steps":[1.2266666666666666,0.22501851775650225],"img_s":null,"bs1_ms":[1.2996666666666667,0.20378011024958578],"bs1_med":1.312,"bs1_seeds":[1.312,1.497,1.09]},{"set":"lam0.3","acc":[64.21666666666667,0.548117992163489],"steps":[1.09,0.0793725393319377],"img_s":null,"bs1_ms":[1.1646666666666667,0.06554642120919597],"bs1_med":1.201,"bs1_seeds":[1.201,1.204,1.089]}],"cudagraph-bs1-triton":[{"set":"t0","acc":[63.693333333333335,0.6107645481962204],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.0586666666666666,0.0011547005383792525],"bs1_med":1.058,"bs1_seeds":[1.06,1.058,1.058]},{"set":"t1","acc":[65.33,0.40951190458886566],"steps":[2.0,0.0],"img_s":null,"bs1_ms":[1.8313333333333333,0.07310494739300026],"bs1_med":1.809,"bs1_seeds":[1.809,1.772,1.913]},{"set":"t2","acc":[65.43333333333334,0.5181055233572963],"steps":[3.0,0.0],"img_s":null,"bs1_ms":[2.562333333333333,0.0005773502691898186],"bs1_med":2.562,"bs1_seeds":[2.563,2.562,2.562]},{"set":"t3","acc":[65.37333333333333,0.5464735431229315],"steps":[4.0,0.0],"img_s":null,"bs1_ms":[3.36,0.018193405398660042],"bs1_med":3.35,"bs1_seeds":[3.35,3.349,3.381]},{"set":"t4","acc":[65.42666666666666,0.5643875736879149],"steps":[5.0,0.0],"img_s":null,"bs1_ms":[4.137666666666666,0.0005773502691898186],"bs1_med":4.138,"bs1_seeds":[4.138,4.138,4.137]},{"set":"t5","acc":[65.38,0.5480875842417846],"steps":[6.0,0.0],"img_s":null,"bs1_ms":[4.927666666666666,0.0005773502691898186],"bs1_med":4.928,"bs1_seeds":[4.928,4.928,4.927]},{"set":"t6","acc":[65.44333333333333,0.5064911976859314],"steps":[7.0,0.0],"img_s":null,"bs1_ms":[5.722,0.0],"bs1_med":5.722,"bs1_seeds":[5.722,5.722,5.722]},{"set":"t7","acc":[65.39999999999999,0.5291502622129176],"steps":[8.0,0.0],"img_s":null,"bs1_ms":[6.508333333333334,0.0005773502691898186],"bs1_med":6.508,"bs1_seeds":[6.509,6.508,6.508]},{"set":"lam0.003","acc":[64.89,0.9214662229295241],"steps":[1.5466666666666666,0.5828664798505172],"img_s":null,"bs1_ms":[1.538,0.5374718597284885],"bs1_med":1.422,"bs1_seeds":[1.422,2.124,1.068]},{"set":"lam0.01","acc":[64.84333333333333,0.8450049309520812],"steps":[1.4533333333333334,0.4764801499887832],"img_s":null,"bs1_ms":[1.3916666666666666,0.3954824058454856],"bs1_med":1.346,"bs1_seeds":[1.346,1.808,1.021]},{"set":"lam0.03","acc":[64.84,0.8501764522732929],"steps":[1.36,0.37040518354904267],"img_s":null,"bs1_ms":[1.317,0.2995613459710716],"bs1_med":1.31,"bs1_seeds":[1.31,1.62,1.021]},{"set":"lam0.1","acc":[64.71333333333334,0.686755657663871],"steps":[1.2266666666666666,0.22501851775650225],"img_s":null,"bs1_ms":[1.2129999999999999,0.18954946583939508],"bs1_med":1.218,"bs1_seeds":[1.218,1.4,1.021]},{"set":"lam0.3","acc":[64.21666666666667,0.548117992163489],"steps":[1.09,0.0793725393319377],"img_s":null,"bs1_ms":[1.0876666666666666,0.05795112883571241],"bs1_med":1.116,"bs1_seeds":[1.116,1.126,1.021]}]},"c100_vcnet_adapt_blt":{"eager":[{"set":"t0","acc":[63.71333333333333,0.7769384359994934],"steps":[1.0,0.0],"img_s":[65990.33333333333,2834.660885067795],"bs1_ms":[3.628,0.03223352292257246],"bs1_med":3.613,"bs1_seeds":[3.606,3.665,3.613]},{"set":"t1","acc":[67.26666666666667,0.555907666194066],"steps":[2.0,0.0],"img_s":[11609.666666666666,1740.4230328668182],"bs1_ms":[7.415333333333333,0.09013508380943218],"bs1_med":7.403,"bs1_seeds":[7.511,7.332,7.403]},{"set":"t2","acc":[68.29,0.468721665810318],"steps":[3.0,0.0],"img_s":[5784.333333333333,951.4685141050824],"bs1_ms":[10.955333333333334,0.5875136877838116],"bs1_med":11.1,"bs1_seeds":[11.1,10.309,11.457]},{"set":"t3","acc":[68.68,0.5452522352086282],"steps":[4.0,0.0],"img_s":[4369.333333333333,603.9216284695667],"bs1_ms":[14.299,0.34022933442018144],"bs1_med":14.453,"bs1_seeds":[14.535,13.909,14.453]},{"set":"t4","acc":[68.64,0.40632499307819925],"steps":[5.0,0.0],"img_s":[3318.6666666666665,479.489659255894],"bs1_ms":[17.610333333333333,0.5790831834316497],"bs1_med":17.805,"bs1_seeds":[18.067,16.959,17.805]},{"set":"t5","acc":[68.65,0.3117691453624015],"steps":[6.0,0.0],"img_s":[2908.6666666666665,2.309401076758503],"bs1_ms":[21.114,0.47442491502871076],"bs1_med":20.987,"bs1_seeds":[20.987,20.716,21.639]},{"set":"t6","acc":[68.56333333333333,0.2830783166074963],"steps":[7.0,0.0],"img_s":[2253.0,319.5637651549374],"bs1_ms":[24.898,0.34831164206784637],"bs1_med":24.847,"bs1_seeds":[25.269,24.847,24.578]},{"set":"t7","acc":[68.57666666666667,0.28219378684396246],"steps":[8.0,0.0],"img_s":[2097.6666666666665,2.0816659994661326],"bs1_ms":[28.108999999999998,0.8124426133580136],"bs1_med":27.798,"bs1_seeds":[27.798,29.031,27.498]},{"set":"lam0.003","acc":[68.46333333333334,0.6545481902299712],"steps":[2.8933333333333335,0.6261256529909419],"img_s":[4713.0,1128.8985782611296],"bs1_ms":[13.034,4.040451831169381],"bs1_med":13.4,"bs1_seeds":[13.4,16.879,8.823]},{"set":"lam0.01","acc":[68.33666666666667,0.5500303021955519],"steps":[2.413333333333333,0.40004166449675393],"img_s":[5982.666666666667,475.6651483274062],"bs1_ms":[10.384333333333334,1.8571505952219736],"bs1_med":10.166,"bs1_seeds":[10.166,12.341,8.646]},{"set":"lam0.03","acc":[68.19666666666667,0.5757024694521766],"steps":[2.086666666666667,0.2532455988429676],"img_s":[6898.0,724.7951434715881],"bs1_ms":[8.774000000000001,1.2623490008709957],"bs1_med":8.349,"bs1_seeds":[8.349,10.194,7.779]},{"set":"lam0.1","acc":[67.77333333333333,0.4200396806652138],"steps":[1.7333333333333334,0.05131601439446889],"img_s":[9198.333333333334,877.9574780895333],"bs1_ms":[7.244666666666666,0.17686812413019268],"bs1_med":7.303,"bs1_seeds":[7.303,7.385,7.046]},{"set":"lam0.3","acc":[66.74333333333333,0.44523402086243646],"steps":[1.4,0.07999999999999996],"img_s":[12718.0,1389.5779934929885],"bs1_ms":[5.8453333333333335,0.3704137326467976],"bs1_med":6.011,"bs1_seeds":[6.011,5.421,6.104]}],"eager-triton":[{"set":"t0","acc":[63.71333333333333,0.7769384359994934],"steps":[1.0,0.0],"img_s":[65990.33333333333,2834.660885067795],"bs1_ms":[3.628,0.03223352292257246],"bs1_med":3.613,"bs1_seeds":[3.606,3.665,3.613]},{"set":"t1","acc":[67.26666666666667,0.555907666194066],"steps":[2.0,0.0],"img_s":[11609.666666666666,1740.4230328668182],"bs1_ms":[7.415333333333333,0.09013508380943218],"bs1_med":7.403,"bs1_seeds":[7.511,7.332,7.403]},{"set":"t2","acc":[68.29,0.468721665810318],"steps":[3.0,0.0],"img_s":[5784.333333333333,951.4685141050824],"bs1_ms":[10.955333333333334,0.5875136877838116],"bs1_med":11.1,"bs1_seeds":[11.1,10.309,11.457]},{"set":"t3","acc":[68.68,0.5452522352086282],"steps":[4.0,0.0],"img_s":[4369.333333333333,603.9216284695667],"bs1_ms":[14.299,0.34022933442018144],"bs1_med":14.453,"bs1_seeds":[14.535,13.909,14.453]},{"set":"t4","acc":[68.64,0.40632499307819925],"steps":[5.0,0.0],"img_s":[3318.6666666666665,479.489659255894],"bs1_ms":[17.610333333333333,0.5790831834316497],"bs1_med":17.805,"bs1_seeds":[18.067,16.959,17.805]},{"set":"t5","acc":[68.65,0.3117691453624015],"steps":[6.0,0.0],"img_s":[2908.6666666666665,2.309401076758503],"bs1_ms":[21.114,0.47442491502871076],"bs1_med":20.987,"bs1_seeds":[20.987,20.716,21.639]},{"set":"t6","acc":[68.56333333333333,0.2830783166074963],"steps":[7.0,0.0],"img_s":[2253.0,319.5637651549374],"bs1_ms":[24.898,0.34831164206784637],"bs1_med":24.847,"bs1_seeds":[25.269,24.847,24.578]},{"set":"t7","acc":[68.57666666666667,0.28219378684396246],"steps":[8.0,0.0],"img_s":[2097.6666666666665,2.0816659994661326],"bs1_ms":[28.108999999999998,0.8124426133580136],"bs1_med":27.798,"bs1_seeds":[27.798,29.031,27.498]},{"set":"lam0.003","acc":[68.46666666666667,0.6504101270224256],"steps":[2.8933333333333335,0.6261256529909419],"img_s":[5050.0,696.9053020317754],"bs1_ms":[11.643666666666666,3.2184973719630925],"bs1_med":11.709,"bs1_seeds":[11.709,14.829,8.393]},{"set":"lam0.01","acc":[68.33666666666667,0.5500303021955519],"steps":[2.413333333333333,0.40004166449675393],"img_s":[5846.333333333333,632.0896560879108],"bs1_ms":[10.217666666666666,2.8587277473263057],"bs1_med":9.506,"bs1_seeds":[9.506,13.365,7.782]},{"set":"lam0.03","acc":[68.19666666666667,0.5757024694521766],"steps":[2.086666666666667,0.2532455988429676],"img_s":[6881.333333333333,358.4694315186908],"bs1_ms":[9.224666666666666,3.3196181005250187],"bs1_med":7.772,"bs1_seeds":[7.772,13.023,6.879]},{"set":"lam0.1","acc":[67.77333333333333,0.4200396806652138],"steps":[1.7333333333333334,0.05131601439446889],"img_s":[8890.666666666666,1380.77019569997],"bs1_ms":[7.605666666666667,1.9866165541778145],"bs1_med":6.635,"bs1_seeds":[6.635,9.891,6.291]},{"set":"lam0.3","acc":[66.74,0.4467661580737734],"steps":[1.4,0.07999999999999996],"img_s":[12258.0,887.36182022893],"bs1_ms":[5.986666666666666,0.3098940679221424],"bs1_med":6.156,"bs1_seeds":[5.629,6.175,6.156]}],"compiled":[{"set":"t0","acc":[63.70666666666667,0.7454081655934135],"steps":[1.0,0.0],"img_s":[73840.33333333333,2402.851292388552],"bs1_ms":[3.3076666666666665,0.2143462930244732],"bs1_med":3.36,"bs1_seeds":[3.36,3.491,3.072]},{"set":"t1","acc":[67.27666666666667,0.5530220007678996],"steps":[2.0,0.0],"img_s":[39804.333333333336,776.8077840324036],"bs1_ms":[5.946,0.060099916805266926],"bs1_med":5.942,"bs1_seeds":[6.008,5.942,5.888]},{"set":"t2","acc":[68.33666666666666,0.43684474740270207],"steps":[3.0,0.0],"img_s":[27080.666666666668,631.8523034169721],"bs1_ms":[8.703333333333333,0.17621672262680738],"bs1_med":8.685,"bs1_seeds":[8.888,8.537,8.685]},{"set":"t3","acc":[68.69666666666667,0.5468394036034101],"steps":[4.0,0.0],"img_s":[20954.333333333332,105.39607835841585],"bs1_ms":[11.126,0.14908051515875614],"bs1_med":11.086,"bs1_seeds":[11.086,11.291,11.001]},{"set":"t4","acc":[68.67666666666666,0.38004385711827016],"steps":[5.0,0.0],"img_s":[16978.333333333332,124.85725182516767],"bs1_ms":[13.962666666666667,0.5263082113489518],"bs1_med":14.259,"bs1_seeds":[14.274,14.259,13.355]},{"set":"t5","acc":[68.61666666666666,0.25423086620891017],"steps":[6.0,0.0],"img_s":[14129.333333333334,511.7209526034021],"bs1_ms":[16.603,0.19559907975243654],"bs1_med":16.636,"bs1_seeds":[16.636,16.78,16.393]},{"set":"t6","acc":[68.55666666666667,0.2821937868439543],"steps":[7.0,0.0],"img_s":[12101.0,121.86467905016613],"bs1_ms":[18.845333333333333,0.6630990373491223],"bs1_med":18.925,"bs1_seeds":[18.925,18.146,19.465]},{"set":"t7","acc":[68.57333333333334,0.26727015047201114],"steps":[8.0,0.0],"img_s":[10650.0,312.99840255183415],"bs1_ms":[21.772666666666666,0.7071494420087835],"bs1_med":22.079,"bs1_seeds":[20.964,22.079,22.275]},{"set":"lam0.003","acc":[68.49,0.6153860576906145],"steps":[2.896666666666667,0.6205105424836336],"img_s":[8998.0,373.51439061969216],"bs1_ms":[10.455,2.6338464268062407],"bs1_med":10.772,"bs1_seeds":[10.772,12.916,7.677]},{"set":"lam0.01","acc":[68.39666666666666,0.5653612414495168],"steps":[2.413333333333333,0.40004166449675393],"img_s":[10224.333333333334,2954.092979805025],"bs1_ms":[8.712333333333333,1.439463210135408],"bs1_med":8.963,"bs1_seeds":[8.963,10.01,7.164]},{"set":"lam0.03","acc":[68.22333333333333,0.6099453527434519],"steps":[2.086666666666667,0.2532455988429676],"img_s":[10643.666666666666,2731.737603309171],"bs1_ms":[7.015333333333333,0.8228641038065359],"bs1_med":6.696,"bs1_seeds":[6.696,7.95,6.4]},{"set":"lam0.1","acc":[67.78,0.43034869582699986],"steps":[1.74,0.04582575694955844],"img_s":[13567.0,1613.359538354672],"bs1_ms":[5.944,0.15776247969653648],"bs1_med":5.967,"bs1_seeds":[5.967,6.089,5.776]},{"set":"lam0.3","acc":[66.74333333333333,0.4812830075260678],"steps":[1.4033333333333333,0.0850490054811538],"img_s":[16774.0,1308.7578079996313],"bs1_ms":[4.872,0.33161574148402573],"bs1_med":4.939,"bs1_seeds":[4.939,4.512,5.165]}],"cudagraph-bs1":[{"set":"t0","acc":[63.71333333333333,0.7769384359994934],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.0166666666666666,0.03971565602295065],"bs1_med":1.008,"bs1_seeds":[0.982,1.06,1.008]},{"set":"t1","acc":[67.26666666666667,0.555907666194066],"steps":[2.0,0.0],"img_s":null,"bs1_ms":[1.9706666666666666,0.03752776749732552],"bs1_med":1.949,"bs1_seeds":[1.949,2.014,1.949]},{"set":"t2","acc":[68.29,0.468721665810318],"steps":[3.0,0.0],"img_s":null,"bs1_ms":[2.9146666666666667,0.0005773502691895622],"bs1_med":2.915,"bs1_seeds":[2.915,2.914,2.915]},{"set":"t3","acc":[68.68,0.5452522352086282],"steps":[4.0,0.0],"img_s":null,"bs1_ms":[3.881666666666667,0.0005773502691898186],"bs1_med":3.882,"bs1_seeds":[3.882,3.881,3.882]},{"set":"t4","acc":[68.64,0.40632499307819925],"steps":[5.0,0.0],"img_s":null,"bs1_ms":[4.844,0.0009999999999998899],"bs1_med":4.844,"bs1_seeds":[4.845,4.843,4.844]},{"set":"t5","acc":[68.65,0.3117691453624015],"steps":[6.0,0.0],"img_s":null,"bs1_ms":[5.814333333333334,0.0011547005383796371],"bs1_med":5.815,"bs1_seeds":[5.815,5.813,5.815]},{"set":"t6","acc":[68.56333333333333,0.2830783166074963],"steps":[7.0,0.0],"img_s":null,"bs1_ms":[6.775,0.0009999999999998899],"bs1_med":6.775,"bs1_seeds":[6.776,6.774,6.775]},{"set":"t7","acc":[68.57666666666667,0.28219378684396246],"steps":[8.0,0.0],"img_s":null,"bs1_ms":[8.498333333333333,1.306543659176123],"bs1_med":7.744,"bs1_seeds":[7.744,10.007,7.744]},{"set":"lam0.003","acc":[68.46333333333334,0.6545481902299712],"steps":[2.8933333333333335,0.6261256529909419],"img_s":null,"bs1_ms":[3.9236666666666666,1.9801202825417787],"bs1_med":3.306,"bs1_seeds":[3.306,6.139,2.326]},{"set":"lam0.01","acc":[68.33666666666667,0.5500303021955519],"steps":[2.413333333333333,0.40004166449675393],"img_s":null,"bs1_ms":[3.284666666666667,1.5672055810688443],"bs1_med":2.598,"bs1_seeds":[2.598,5.078,2.178]},{"set":"lam0.03","acc":[68.19666666666667,0.5757024694521766],"steps":[2.086666666666667,0.2532455988429676],"img_s":null,"bs1_ms":[2.755333333333333,1.1927490655344626],"bs1_med":2.125,"bs1_seeds":[2.125,4.131,2.01]},{"set":"lam0.1","acc":[67.77333333333333,0.4200396806652138],"steps":[1.7333333333333334,0.05131601439446889],"img_s":null,"bs1_ms":[2.243666666666667,0.7373095234250902],"bs1_med":1.825,"bs1_seeds":[1.825,3.095,1.811]},{"set":"lam0.3","acc":[66.74333333333333,0.44523402086243646],"steps":[1.4,0.07999999999999996],"img_s":null,"bs1_ms":[1.7723333333333333,0.3974032376986043],"bs1_med":1.583,"bs1_seeds":[1.505,2.229,1.583]}],"cudagraph-bs1-triton":[{"set":"t0","acc":[63.71333333333333,0.7769384359994934],"steps":[1.0,0.0],"img_s":null,"bs1_ms":[1.0166666666666666,0.03971565602295065],"bs1_med":1.008,"bs1_seeds":[0.982,1.06,1.008]},{"set":"t1","acc":[67.26666666666667,0.555907666194066],"steps":[2.0,0.0],"img_s":null,"bs1_ms":[1.9706666666666666,0.03752776749732552],"bs1_med":1.949,"bs1_seeds":[1.949,2.014,1.949]},{"set":"t2","acc":[68.29,0.468721665810318],"steps":[3.0,0.0],"img_s":null,"bs1_ms":[2.9146666666666667,0.0005773502691895622],"bs1_med":2.915,"bs1_seeds":[2.915,2.914,2.915]},{"set":"t3","acc":[68.68,0.5452522352086282],"steps":[4.0,0.0],"img_s":null,"bs1_ms":[3.881666666666667,0.0005773502691898186],"bs1_med":3.882,"bs1_seeds":[3.882,3.881,3.882]},{"set":"t4","acc":[68.64,0.40632499307819925],"steps":[5.0,0.0],"img_s":null,"bs1_ms":[4.844,0.0009999999999998899],"bs1_med":4.844,"bs1_seeds":[4.845,4.843,4.844]},{"set":"t5","acc":[68.65,0.3117691453624015],"steps":[6.0,0.0],"img_s":null,"bs1_ms":[5.814333333333334,0.0011547005383796371],"bs1_med":5.815,"bs1_seeds":[5.815,5.813,5.815]},{"set":"t6","acc":[68.56333333333333,0.2830783166074963],"steps":[7.0,0.0],"img_s":null,"bs1_ms":[6.775,0.0009999999999998899],"bs1_med":6.775,"bs1_seeds":[6.776,6.774,6.775]},{"set":"t7","acc":[68.57666666666667,0.28219378684396246],"steps":[8.0,0.0],"img_s":null,"bs1_ms":[8.498333333333333,1.306543659176123],"bs1_med":7.744,"bs1_seeds":[7.744,10.007,7.744]},{"set":"lam0.003","acc":[68.46333333333334,0.6545481902299712],"steps":[2.8933333333333335,0.6261256529909419],"img_s":null,"bs1_ms":[3.0636666666666668,0.6793940928013236],"bs1_med":3.136,"bs1_seeds":[3.136,3.704,2.351]},{"set":"lam0.01","acc":[68.33666666666667,0.5500303021955519],"steps":[2.413333333333333,0.40004166449675393],"img_s":null,"bs1_ms":[2.4476666666666667,0.4117236127954447],"bs1_med":2.432,"bs1_seeds":[2.432,2.867,2.044]},{"set":"lam0.03","acc":[68.19666666666667,0.5757024694521766],"steps":[2.086666666666667,0.2532455988429676],"img_s":null,"bs1_ms":[2.078666666666667,0.2498726342225843],"bs1_med":1.989,"bs1_seeds":[1.989,2.361,1.886]},{"set":"lam0.1","acc":[67.77333333333333,0.4200396806652138],"steps":[1.7333333333333334,0.05131601439446889],"img_s":null,"bs1_ms":[1.9296666666666666,0.33597966208289054],"bs1_med":1.776,"bs1_seeds":[2.315,1.776,1.698]},{"set":"lam0.3","acc":[66.74333333333333,0.44523402086243646],"steps":[1.4,0.07999999999999996],"img_s":null,"bs1_ms":[1.5623333333333334,0.31452556864797704],"bs1_med":1.486,"bs1_seeds":[1.908,1.293,1.486]}]}};
+  const medCell = r => {
+    if (!r) return `<td class="n">—</td>`;
+    if (r.bs1_med == null) return cell(r.bs1_ms, 3);
+    const sd = r.bs1_seeds, noisy = (Math.max(...sd) - Math.min(...sd)) / r.bs1_med > 0.25;
+    return `<td class="n${noisy ? " noisy" : ""}" title="三個種子：${sd.map(x => x.toFixed(3)).join(" / ")}">${fmt(r.bs1_med, 3)}</td>`;
+  };
+  (function benchTable() {
+    const sel = document.getElementById("benchSel"), tbl = document.getElementById("tblBench");
+    const SRCS = {
+      c100_vcnet_orig: ["閒置 GPU", IDLE.c100_vcnet_orig], c100_vcnet_adapt: ["第 1 輪", LAT.bench.c100_vcnet_adapt],
+      c100_vcnet_adapt_carry: ["閒置 GPU", IDLE.c100_vcnet_adapt_carry], c100_vcnet_adapt_lat: ["第 2 輪，受干擾", LAT.bench.c100_vcnet_adapt_lat],
+      c100_vcnet_adapt_blt: ["閒置 GPU", IDLE.c100_vcnet_adapt_blt]
+    };
+    // GFLOPs per image: fixed N steps = cumulative FLOPs of the model (readout included);
+    // halting rows = interpolated at the mean step count: 0.161 + (mean steps - 1) x per-step cost
+    const gfArr = k => k === "c100_vcnet_adapt_lat" ? GF.lat : k === "c100_vcnet_adapt_blt" ? GF.blt : GF.base;
+    const gfAt = (arr, s) => {
+      const i = Math.min(Math.floor(s), arr.length) - 1, f = s - Math.floor(s);
+      return i >= arr.length - 1 ? arr[arr.length - 1] : arr[i] + (arr[i + 1] - arr[i]) * f;
+    };
+    const gfCell = (arr, r, kind) => {
+      const [s, sd] = r.steps, g = gfAt(arr, s);
+      if (kind === "fixed") return `<td class="n">${g.toFixed(3)}</td>`;
+      const step = arr[2] - arr[1], spread = sd * step;
+      return `<td class="n" title="估計：0.161 + (平均步數 − 1) × 每步 ${step.toFixed(3)} GFLOPs；種子間 ±${spread.toFixed(3)}">≈${g.toFixed(3)}</td>`;
+    };
+    function render(k) {
+      const [src, B] = SRCS[k], E = B.eager, C = B.compiled, G = B["cudagraph-bs1"], GT = B["cudagraph-bs1-triton"] || [];
+      const byset = (rows, set) => rows.find(r => r.set === set);
+      let h = `<tr><th>設定（${src}）</th><th class="n">準確率 %</th><th class="n">平均步數</th><th class="n">GFLOPs<br>每張圖</th><th class="n">batch 256 eager<br>張/秒</th><th class="n">batch 256 compiled<br>張/秒</th>` +
+        `<th class="n">batch 1 eager<br>ms</th><th class="n">batch 1 compiled<br>ms</th><th class="n">batch 1 CUDA graph<br>ms</th><th class="n">CUDA graph<br>+Triton ms</th></tr>`;
+      let lastKind = "";
+      for (const r of E) {
+        const kind = r.set.startsWith("t") ? "fixed" : "lam";
+        if (kind !== lastKind) { h += `<tr><td class="grp" colspan="10">${kind === "fixed" ? "固定步數" : "停止策略 S0-reward_acc（λ 越小，跑越多步）"}</td></tr>`; lastKind = kind; }
+        const c = byset(C, r.set), g = byset(G, r.set), gt = byset(GT, r.set);
+        const label = kind === "fixed" ? `固定 ${+r.set.slice(1) + 1} 步` : `λ = ${r.set.slice(3)}`;
+        h += `<tr><td>${label}</td>` + cell(r.acc, 2, "", true) + cell(r.steps, 2, "", true) + gfCell(gfArr(k), r, kind) + cell(r.img_s, 0) + cell(c && c.img_s, 0) +
+          cell(r.bs1_ms, 3) + cell(c && c.bs1_ms, 3) + medCell(g) + medCell(kind === "lam" ? gt : null) + "</tr>";
+      }
+      tbl.innerHTML = h;
+      sel.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.k === k)));
+    }
+    sel.innerHTML = MODELS.map(([k, nm]) => `<button type="button" id="sel-${k}" data-k="${k}" aria-pressed="false">${nm}</button>`).join("");
+    sel.addEventListener("click", e => { const b = e.target.closest("button"); if (b) render(b.dataset.k); });
+    render("c100_vcnet_orig");
+  })();
+  (function idleTable() {
+    const row = (exp, set) => {
+      const M = IDLE[exp], f = m => M[m] && M[m].find(r => r.set === set);
+      return { e: f("eager"), c: f("compiled"), g: f("cudagraph-bs1"), gt: f("cudagraph-bs1-triton") };
+    };
+    const spec = [
+      ["c100_vcnet_orig", "t0", "原始 VCNet，1 步（未訓練的讀出）", ""], ["c100_vcnet_orig", "t1", "原始 VCNet，2 步", "ref"],
+      ["c100_vcnet_adapt_carry", "t1", "adapt_carry 固定 2 步（與原始同架構）", ""],
+      ["c100_vcnet_adapt_blt", "t0", "adapt_blt 固定 1 步", ""], ["c100_vcnet_adapt_blt", "t1", "adapt_blt 固定 2 步", ""],
+      ["c100_vcnet_adapt_blt", "t2", "adapt_blt 固定 3 步", ""], ["c100_vcnet_adapt_blt", "t3", "adapt_blt 固定 4 步", ""],
+      ["c100_vcnet_adapt_blt", "lam0.3", "adapt_blt + 停止策略 λ=0.3", "hl"], ["c100_vcnet_adapt_blt", "lam0.1", "adapt_blt + 停止策略 λ=0.1", "hl"],
+      ["c100_vcnet_adapt_blt", "lam0.03", "adapt_blt + 停止策略 λ=0.03", "hl"], ["c100_vcnet_adapt_blt", "lam0.01", "adapt_blt + 停止策略 λ=0.01", "hl"]
+    ];
+    let h = `<tr><th>模型、設定</th><th class="n">準確率 %</th><th class="n">平均步數</th><th class="n">batch 256 eager<br>張/秒</th><th class="n">batch 256 compiled<br>張/秒</th><th class="n">batch 1 CUDA graph<br>ms</th><th class="n">CUDA graph<br>+Triton ms</th></tr>`;
+    for (const [exp, set, label, cls] of spec) {
+      const r = row(exp, set);
+      h += `<tr${cls ? ` class="${cls}"` : ""}><td>${label}</td>` + cell(r.e.acc, 2, "", true) + cell(r.e.steps, 2, "", true) +
+        cell(r.e.img_s, 0) + cell(r.c.img_s, 0) + medCell(r.g) + medCell(set.startsWith("lam") ? r.gt : null) + "</tr>";
+    }
+    document.getElementById("tblIdle").innerHTML = h;
+  })();
+
+  // ---------------------------------------------------------------- charts
+  function chart(el, cfg) {
+    const Wd = 720, Ht = 380, m = { l: 48, r: 96, t: 22, b: 46 };
+    const X = v => m.l + (v - cfg.x0) / (cfg.x1 - cfg.x0) * (Wd - m.l - m.r);
+    const Y = v => Ht - m.b - (v - cfg.y0) / (cfg.y1 - cfg.y0) * (Ht - m.t - m.b);
+    let s = `<svg viewBox="0 0 ${Wd} ${Ht}" role="img" aria-label="${cfg.label}" xmlns="http://www.w3.org/2000/svg">`;
+    for (const v of cfg.yt) {
+      s += `<line x1="${m.l}" x2="${Wd - m.r}" y1="${Y(v)}" y2="${Y(v)}" style="stroke:var(--grid)" stroke-width="1"/>`;
+      s += `<text x="${m.l - 8}" y="${Y(v) + 4}" text-anchor="end" style="fill:var(--fg2);font:11px var(--font-mono)">${v}</text>`;
+    }
+    for (const v of cfg.xt) {
+      s += `<line x1="${X(v)}" x2="${X(v)}" y1="${Ht - m.b}" y2="${Ht - m.b + 5}" style="stroke:var(--line)"/>`;
+      s += `<text x="${X(v)}" y="${Ht - m.b + 18}" text-anchor="middle" style="fill:var(--fg2);font:11px var(--font-mono)">${cfg.xfmt ? cfg.xfmt(v) : v.toFixed(1)}</text>`;
+    }
+    s += `<line x1="${m.l}" x2="${Wd - m.r}" y1="${Ht - m.b}" y2="${Ht - m.b}" style="stroke:var(--line)"/>`;
+    s += `<text x="${(m.l + Wd - m.r) / 2}" y="${Ht - 8}" text-anchor="middle" style="fill:var(--fg2);font:11.5px var(--font-body)">${cfg.xlabel || "每張圖 GFLOPs"}</text>`;
+    s += `<text x="${m.l}" y="12" style="fill:var(--fg2);font:11.5px var(--font-body)">測試準確率 %</text>`;
+    const pts = [];
+    for (const ln of cfg.lines) {
+      const d = ln.pts.map((p, i) => `${i ? "L" : "M"}${X(p.x).toFixed(1)} ${Y(p.y).toFixed(1)}`).join(" ");
+      s += `<path d="${d}" style="fill:none;stroke:var(${ln.color})" stroke-width="2" stroke-linejoin="round"${ln.dash ? ' stroke-dasharray="6 4"' : ""}/>`;
+      for (const p of ln.pts) {
+        s += ln.hollow
+          ? `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="3.6" style="fill:var(--surface);stroke:var(${ln.color})" stroke-width="2"/>`
+          : `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="4" style="fill:var(${ln.color});stroke:var(--surface)" stroke-width="2"/>`;
+        pts.push({ x: X(p.x), y: Y(p.y), tip: p.tip });
+      }
+      if (ln.label) {
+        const last = ln.pts[ln.pts.length - 1], end = ln.labelAnchor === "end";
+        s += `<text x="${X(last.x) + (end ? -9 : 9)}" y="${Y(last.y) + 4 + (ln.labelDy || 0)}" text-anchor="${end ? "end" : "start"}" style="fill:var(--fg);font:500 11.5px var(--font-body)">${ln.label}</text>`;
+      }
+    }
+    for (const r of cfg.refs) {
+      const x = X(r.x), y = Y(r.y), k = 6;
+      if (r.sq) s += `<rect x="${x - 5}" y="${y - 5}" width="10" height="10" style="fill:var(--surface);stroke:var(${r.sq})" stroke-width="2.4"/>`;
+      else s += `<path d="M${x} ${y - k} L${x + k} ${y} L${x} ${y + k} L${x - k} ${y} Z" style="fill:${r.hollow ? "var(--surface)" : "var(--fg)"};stroke:var(--fg)" stroke-width="${r.hollow ? 2 : 1}"/>`;
+      s += `<text x="${x + (r.dx || 10)}" y="${y + (r.dy || 4)}" text-anchor="${r.anchor || "start"}" style="fill:var(--fg);font:500 11.5px var(--font-body)">${r.label}</text>`;
+      pts.push({ x, y, tip: r.tip });
+    }
+    el.innerHTML = s + "</svg>";
+    const svg = el.querySelector("svg"), tip = document.createElement("div");
+    tip.className = "tip"; tip.hidden = true; el.appendChild(tip);
+    svg.addEventListener("pointermove", ev => {
+      const r = svg.getBoundingClientRect(), sx = (ev.clientX - r.left) * Wd / r.width, sy = (ev.clientY - r.top) * Ht / r.height;
+      let best = null, bd = 18 * 18;
+      for (const p of pts) { const d = (p.x - sx) ** 2 + (p.y - sy) ** 2; if (d < bd) { bd = d; best = p; } }
+      if (!best) { tip.hidden = true; return; }
+      tip.innerHTML = best.tip; tip.hidden = false;
+      const er = el.getBoundingClientRect();
+      let left = best.x * r.width / Wd + (r.left - er.left) + el.scrollLeft + 12, top = best.y * r.height / Ht + (r.top - er.top) - 12;
+      if (left + tip.offsetWidth > el.scrollWidth - 4) left -= tip.offsetWidth + 24;
+      tip.style.left = left + "px"; tip.style.top = Math.max(4, top - tip.offsetHeight) + "px";
+    });
+    svg.addEventListener("pointerleave", () => { tip.hidden = true; });
+  }
+  const fixedPts = s => ACC[s.key].map((a, t) => ({ x: s.gf[t], y: a, tip: `${s.name} · 固定 ${t + 1} 步<br>${s.gf[t].toFixed(3)} GFLOPs · ${a.toFixed(2)}±${SD[s.key][t].toFixed(2)}%` }));
+  const polPts = (key, name) => POL[key].pts.map(([lam, st, a]) => {
+    const g = 0.161 + (st - 1) * POL[key].step;
+    return { x: g, y: a, tip: `${name} · 停止策略 λ=${lam}<br>平均 ${st.toFixed(2)} 步 · ${g.toFixed(3)} GFLOPs · ${a.toFixed(2)}%` };
+  });
+  const origRef = { x: ORIG.gf, y: ORIG.acc, label: "原始 VCNet", dx: 0, dy: 20, anchor: "middle", tip: `原始 VCNet · 2 步<br>0.275 GFLOPs · 64.55±0.96%` };
+  const ffRef = { x: ORIGFF.gf, y: ORIGFF.acc, hollow: true, label: "原始，無回饋", dx: 0, dy: 22, anchor: "start", tip: `原始，無回饋 · 1 步<br>0.161 GFLOPs · 63.72±1.22%` };
+  const bltoRefs = (dy) => BLTO.map(b => ({ x: b.gf, y: b.acc, sq: "--s4", label: `blt_orig${b.k}`, dx: b.k === 2 ? -12 : 10, dy: b.k === 2 ? dy : -8, anchor: b.k === 2 ? "end" : "start",
+    tip: `blt_orig${b.k} · 原始方式訓練 · ${b.k} 步<br>${b.gf.toFixed(3)} GFLOPs · ${b.acc.toFixed(2)}±${b.sd.toFixed(2)}%` }));
+
+  const legend = (id, items) => {
+    document.getElementById(id).innerHTML = items.map(([html, txt]) => `<span>${html}${txt}</span>`).join("");
+  };
+  legend("legA", [...SER.map(s => [`<i style="border-color:var(${s.color})"></i>`, s.name]),
+    [`<i class="dia"></i>`, "原始 VCNet"], [`<i class="dia hollow"></i>`, "原始，無回饋"],
+    [`<i class="sq" style="border-color:var(--s4)"></i>`, "blt_orig（原始方式訓練）"]]);
+  chart(document.getElementById("chartA"), {
+    label: "各變體固定步數的準確率對 GFLOPs", x0: 0.1, x1: 1.05, y0: 63, y1: 69.5,
+    xt: [0.2, 0.4, 0.6, 0.8, 1.0], yt: [63, 64, 65, 66, 67, 68, 69],
+    lines: SER.map(s => ({ color: s.color, pts: fixedPts(s), label: s.name.replace("adapt_", ""), labelDy: s.key === "adapt" ? 4 : s.key === "carry" ? -2 : 0 })),
+    refs: [origRef, ffRef, ...bltoRefs(-8)]
+  });
+
+  legend("legC", [[`<i style="border-color:var(--s4)"></i>`, "adapt_blt 固定步數"], [`<i class="dash" style="border-color:var(--s4)"></i>`, "adapt_blt + 停止策略"],
+    [`<i class="sq" style="border-color:var(--s4)"></i>`, "blt_orig2 / 4（原始方式訓練）"], [`<i class="dia"></i>`, "原始 VCNet"]]);
+  {
+    const sb = SER.find(x => x.key === "blt");
+    chart(document.getElementById("chartC"), {
+      label: "blt 架構：固定步數、停止策略與原始方式訓練的準確率對 GFLOPs", x0: 0.14, x1: 0.58, y0: 63.5, y1: 69.5,
+      xt: [0.2, 0.3, 0.4, 0.5], yt: [64, 65, 66, 67, 68, 69], xfmt: v => v.toFixed(1),
+      lines: [{ color: "--s4", pts: fixedPts(sb).filter(p => p.x <= 0.55) },
+              { color: "--s4", pts: polPts("blt", "adapt_blt").filter(p => p.x <= 0.55), dash: true, hollow: true }],
+      refs: [origRef, ...bltoRefs(16)]
+    });
+  }
+
+  const SB = SER.slice(1);
+  legend("legB", [...SB.map(s => [`<i style="border-color:var(${s.color})"></i>`, s.name]),
+    [`<i style="border-color:var(--fg2)"></i>`, "固定步數"], [`<i class="dash" style="border-color:var(--fg2)"></i>`, "停止策略"],
+    [`<i class="dia"></i>`, "原始 VCNet"]]);
+  const lines = [];
+  for (const s of SB) {
+    lines.push({ color: s.color, pts: fixedPts(s).filter(p => p.x <= 0.66), label: s.name.replace("adapt_", "") });
+    lines.push({ color: s.color, pts: polPts(s.key, s.name), dash: true, hollow: true });
+  }
+  chart(document.getElementById("chartB"), {
+    label: "固定步數與停止策略的準確率對 GFLOPs", x0: 0.14, x1: 0.68, y0: 63.5, y1: 69,
+    xt: [0.2, 0.3, 0.4, 0.5, 0.6], yt: [64, 65, 66, 67, 68, 69],
+    lines, refs: [origRef]
+  });
+
+  // ---------------------------------------------------------------- deployment charts (idle GPU)
+  (function deployCharts() {
+    const get = (exp, mode, set) => IDLE[exp][mode].find(r => r.set === set);
+    const LAMS = ["lam0.3", "lam0.1", "lam0.03", "lam0.01", "lam0.003"];
+    const MODELS2 = [["c100_vcnet_adapt_carry", "adapt_carry", "--s2", "carry", ["t0", "t1", "t2", "t3"]],
+                     ["c100_vcnet_adapt_blt", "adapt_blt", "--s4", "blt", ["t0", "t1", "t2", "t3"]]];
+    legend("legLat", [...MODELS2.map(m => [`<i style="border-color:var(${m[2]})"></i>`, m[1]]),
+      [`<i style="border-color:var(--fg2)"></i>`, "固定步數"], [`<i class="dash" style="border-color:var(--fg2)"></i>`, "停止策略"],
+      [`<i class="dia"></i>`, "原始 VCNet 2 步"], [`<i class="dia hollow"></i>`, "原始 1 步"]]);
+    function lines(xOf, mode, tipX) {
+      const out = [];
+      for (const [exp, name, color, short, fixed] of MODELS2) {
+        const fx = fixed.map(t => { const r = get(exp, mode, t), e = get(exp, "eager", t);
+          return { x: xOf(r), y: e.acc[0], tip: `${name} · 固定 ${+t.slice(1) + 1} 步<br>${tipX(r)} · ${e.acc[0].toFixed(2)}%` }; });
+        const pl = LAMS.map(l => { const r = get(exp, mode, l), e = get(exp, "eager", l);
+          return { x: xOf(r), y: e.acc[0], tip: `${name} · 停止策略 λ=${l.slice(3)}<br>平均 ${e.steps[0].toFixed(2)} 步 · ${tipX(r)} · ${e.acc[0].toFixed(2)}%` }; })
+          .sort((p, q) => p.x - q.x);
+        out.push({ color, pts: fx, label: short, labelAnchor: mode === "compiled" ? "end" : "start" });
+        out.push({ color, pts: pl, dash: true, hollow: true });
+      }
+      return out;
+    }
+    const o1 = get("c100_vcnet_orig", "cudagraph-bs1", "t0"), o2 = get("c100_vcnet_orig", "cudagraph-bs1", "t1");
+    chart(document.getElementById("chartBs1"), {
+      label: "batch 1 延遲與準確率", x0: 0.9, x1: 4.1, y0: 60.5, y1: 69.5, xt: [1, 1.5, 2, 2.5, 3, 3.5, 4], yt: [61, 63, 65, 67, 69],
+      xlabel: "batch 1 延遲 ms（CUDA graph，越左越好）", xfmt: v => v.toFixed(1),
+      lines: lines(r => r.bs1_med, "cudagraph-bs1", r => `${r.bs1_med.toFixed(3)} ms`),
+      refs: [{ x: o2.bs1_med, y: o2.acc[0], label: "原始 VCNet", dx: 0, dy: 20, anchor: "middle", tip: `原始 VCNet · 2 步<br>${o2.bs1_med.toFixed(3)} ms · ${o2.acc[0].toFixed(2)}%` },
+             { x: o1.bs1_med, y: o1.acc[0], hollow: true, label: "原始 1 步", dx: 10, dy: 4, tip: `原始 VCNet · 1 步（未訓練的讀出）<br>${o1.bs1_med.toFixed(3)} ms · ${o1.acc[0].toFixed(2)}%` }]
+    });
+    const c1 = get("c100_vcnet_orig", "compiled", "t0"), c2 = get("c100_vcnet_orig", "compiled", "t1");
+    chart(document.getElementById("chartBs256"), {
+      label: "batch 256 吞吐量與準確率", x0: 5000, x1: 82000, y0: 60.5, y1: 69.5, xt: [10000, 20000, 40000, 60000, 80000], yt: [61, 63, 65, 67, 69],
+      xlabel: "batch 256 吞吐量 千張/秒（compiled，越右越好）", xfmt: v => String(v / 1000),
+      lines: lines(r => r.img_s[0], "compiled", r => `${Math.round(r.img_s[0]).toLocaleString("en-US")} 張/秒`),
+      refs: [{ x: c2.img_s[0], y: get("c100_vcnet_orig", "eager", "t1").acc[0], label: "原始 VCNet", dx: 0, dy: 20, anchor: "middle",
+               tip: `原始 VCNet · 2 步<br>${Math.round(c2.img_s[0]).toLocaleString("en-US")} 張/秒 · 64.56%` },
+             { x: c1.img_s[0], y: get("c100_vcnet_orig", "eager", "t0").acc[0], hollow: true, label: "原始 1 步", dx: -10, dy: 4, anchor: "end",
+               tip: `原始 VCNet · 1 步（未訓練的讀出）<br>${Math.round(c1.img_s[0]).toLocaleString("en-US")} 張/秒 · 61.00%` }]
+    });
+  })();
+
+})();
+</script>
+</html>

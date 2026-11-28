@@ -29,12 +29,14 @@ from torch.utils.data import DataLoader, DistributedSampler
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fsv.cpu import default_workers, limit_cpus  # noqa: E402
-from fsv.data import NUM_CLASSES, build_splits  # noqa: E402
-from fsv.engine import auto_amp, autocast_ctx, collect_outputs  # noqa: E402
-from fsv.losses import StageALossConfig, stage_a_loss  # noqa: E402
+from fsv.data import NUM_CLASSES, STATS, build_splits  # noqa: E402
+from fsv.engine import auto_amp, collect_outputs  # noqa: E402
+from fsv.gpu_aug import GPULoader  # noqa: E402
+from fsv.losses import StageALossConfig  # noqa: E402
 from fsv.metrics import per_step_metrics  # noqa: E402
 from fsv.mixup import Mixup  # noqa: E402
 from fsv.models import build_model, config_dict  # noqa: E402
+from fsv.train_step import COMPILE_MODES, TrainStep, make_optimizer  # noqa: E402
 
 
 def parse_args(argv=None):
@@ -48,6 +50,9 @@ def parse_args(argv=None):
     p.add_argument("--max-cpus", type=int, default=None, help="hard CPU-core cap (default: $FSV_MAX_CPUS or 8)")
     p.add_argument("--no-randaug", action="store_true")
     p.add_argument("--erase", type=float, default=0.25)
+    p.add_argument("--gpu-aug", action="store_true",
+                   help="keep the training set on the GPU and augment there (fsv/gpu_aug.py) instead of the "
+                        "CPU DataLoader; same recipe, re-implemented")
     # model
     p.add_argument("--model", default="bvit_s")
     p.add_argument("--t-max", type=int, default=8)
@@ -61,6 +66,8 @@ def parse_args(argv=None):
     p.add_argument("--ait-carry", action="store_true", help="VCNet: carry AIT_{t-1} into AIT_t (zero-init gate)")
     p.add_argument("--lateral", action="store_true", help="VCNet: every area keeps a state across steps")
     p.add_argument("--topdown", action="store_true", help="VCNet: BLT-style top-down from the area above")
+    p.add_argument("--resnet-norm", default="bn", choices=["bn", "gn"], help="ResNet: BatchNorm or GroupNorm")
+    p.add_argument("--ws", action="store_true", help="VCNet / ResNet: weight standardisation in the convs before a norm")
     # optimisation
     p.add_argument("--epochs", type=int, default=200)
     p.add_argument("--batch-size", type=int, default=256, help="global batch size")
@@ -71,7 +78,13 @@ def parse_args(argv=None):
     p.add_argument("--clip", type=float, default=1.0)
     p.add_argument("--ema", type=float, default=0.0, help="EMA decay; 0 disables")
     p.add_argument("--amp", default="auto", choices=["auto", "fp16", "bf16", "none"])
-    p.add_argument("--compile", action="store_true")
+    p.add_argument("--compile", action="store_true", help="shorthand for --compile-mode default")
+    p.add_argument("--compile-mode", default="none", choices=COMPILE_MODES,
+                   help="torch.compile the forward + loss; reduce-overhead also captures CUDA graphs")
+    p.add_argument("--opt", default="adamw", choices=["adamw", "sgd"], help="optimizer (sgd: momentum, Nesterov)")
+    p.add_argument("--momentum", type=float, default=0.9, help="SGD momentum")
+    p.add_argument("--opt-impl", default="foreach", choices=["foreach", "fused"], help="optimizer implementation")
+    p.add_argument("--channels-last", action="store_true", help="NHWC memory format for weights and activations")
     # augmentation
     p.add_argument("--mixup", type=float, default=0.8)
     p.add_argument("--cutmix", type=float, default=1.0)
@@ -155,6 +168,37 @@ def summarize_steps(rows):
     return " ".join(f"{r['acc'] * 100:.1f}" for r in rows)
 
 
+def model_from_args(args, num_classes: int):
+    if args.model.startswith("resnet"):
+        return build_model(args.model, num_classes=num_classes, t_max=args.t_max, norm=args.resnet_norm, ws=args.ws)
+    if args.model.startswith("vcnet"):
+        return build_model(args.model, num_classes=num_classes, t_max=args.t_max,
+                           ait_carry=args.ait_carry, lateral=args.lateral, topdown=args.topdown, ws=args.ws)
+    return build_model(args.model, num_classes=num_classes, t_max=args.t_max, n_blocks=args.n_blocks,
+                       patch_size=args.patch_size,
+                       norm=args.norm, step_embed_in=args.step_embed_in, input_inject=args.input_inject,
+                       layerscale_init=args.layerscale_init)
+
+
+def loss_config(args) -> StageALossConfig:
+    return StageALossConfig(beta=args.beta, gamma=args.gamma, delta=args.delta, gk_alpha=args.gk_alpha,
+                            step_weights=args.step_weights, label_smoothing=args.label_smoothing)
+
+
+def compile_mode(args) -> str | None:
+    mode = args.compile_mode
+    if args.compile and mode == "none":
+        mode = "default"
+    return None if mode == "none" else mode
+
+
+def gpu_loader(args, train_ds, per_gpu_bs: int, device, rank: int = 0, world: int = 1,
+               prefetch: bool = True) -> GPULoader:
+    mean, std = STATS[args.dataset]
+    return GPULoader(train_ds, per_gpu_bs, device, mean, std, seed=args.seed, rank=rank, world=world,
+                     prefetch=prefetch, randaug=not args.no_randaug, erase=args.erase)
+
+
 # --------------------------------------------------------------------------- main
 def main(argv=None):
     args = parse_args(argv)
@@ -183,28 +227,26 @@ def main(argv=None):
         splits = build_splits(args.dataset, args.data_dir, args.holdout, seed=0, download=False,
                               fake=args.fake_data, randaug=not args.no_randaug, erase=args.erase)
     per_gpu_bs = args.batch_size // world
-    sampler = DistributedSampler(splits["train"], shuffle=True, seed=args.seed) if world > 1 else None
-    train_loader = DataLoader(splits["train"], batch_size=per_gpu_bs, shuffle=sampler is None, sampler=sampler,
-                              num_workers=args.workers, pin_memory=device.type == "cuda", drop_last=True,
-                              persistent_workers=args.workers > 0)
+    sampler = None
+    if args.gpu_aug:
+        train_loader = gpu_loader(args, splits["train"], per_gpu_bs, device, rank, world)
+    else:
+        sampler = DistributedSampler(splits["train"], shuffle=True, seed=args.seed) if world > 1 else None
+        train_loader = DataLoader(splits["train"], batch_size=per_gpu_bs, shuffle=sampler is None, sampler=sampler,
+                                  num_workers=args.workers, pin_memory=device.type == "cuda", drop_last=True,
+                                  persistent_workers=args.workers > 0)
     holdout_loader = DataLoader(splits["holdout"], batch_size=512, shuffle=False, num_workers=args.workers,
                                 persistent_workers=args.workers > 0)
 
     num_classes = NUM_CLASSES[args.dataset]
-    if args.model.startswith("vcnet"):
-        model = build_model(args.model, num_classes=num_classes, t_max=args.t_max,
-                            ait_carry=args.ait_carry, lateral=args.lateral, topdown=args.topdown).to(device)
-    else:
-        model = build_model(args.model, num_classes=num_classes, t_max=args.t_max, n_blocks=args.n_blocks,
-                            patch_size=args.patch_size,
-                            norm=args.norm, step_embed_in=args.step_embed_in, input_inject=args.input_inject,
-                            layerscale_init=args.layerscale_init).to(device)
+    model = model_from_args(args, num_classes).to(device)
+    if args.channels_last:
+        model = model.to(memory_format=torch.channels_last)
     n_params = sum(p.numel() for p in model.parameters())
-    opt = torch.optim.AdamW(param_groups(model, args.wd), lr=args.lr, betas=(0.9, 0.999))
+    opt = make_optimizer(param_groups(model, args.wd), args.lr, device, args.opt_impl, args.opt, args.momentum)
     scaler = torch.amp.GradScaler("cuda", enabled=amp == "fp16")
     ema = EMA(model, args.ema) if args.ema > 0 else None
-    loss_cfg = StageALossConfig(beta=args.beta, gamma=args.gamma, delta=args.delta, gk_alpha=args.gk_alpha,
-                                step_weights=args.step_weights, label_smoothing=args.label_smoothing)
+    loss_cfg = loss_config(args)
     mixup = Mixup(num_classes, args.mixup, args.cutmix, args.mix_prob, groups=args.mix_groups)
 
     start_epoch = 0
@@ -217,9 +259,11 @@ def main(argv=None):
             ema.model.load_state_dict(ck["ema"])
         start_epoch = ck["epoch"] + 1
 
-    train_model = torch.compile(model) if args.compile else model
+    train_model = model
     if world > 1:
-        train_model = DDP(train_model, device_ids=[local] if device.type == "cuda" else None)
+        train_model = DDP(model, device_ids=[local] if device.type == "cuda" else None)
+    step = TrainStep(train_model, model.parameters(), opt, scaler, loss_cfg, device, amp, args.clip,
+                     args.loss_steps, compile_mode(args), args.channels_last)
 
     iters_per_epoch = len(train_loader)
     total_iters = args.epochs * iters_per_epoch
@@ -230,7 +274,8 @@ def main(argv=None):
                 "torch": torch.__version__}
         (out / "config.json").write_text(json.dumps(meta, indent=2))
         print(f"[train] params={n_params / 1e6:.2f}M world={world} amp={amp} iters/epoch={iters_per_epoch} "
-              f"cpus/rank={n_cpus} workers/rank={args.workers}",
+              f"cpus/rank={n_cpus} workers/rank={args.workers} data={'gpu' if args.gpu_aug else 'cpu'} "
+              f"compile={compile_mode(args)} opt={args.opt}/{args.opt_impl} channels_last={args.channels_last}",
               flush=True)
 
     t_start = time.time()
@@ -246,20 +291,8 @@ def main(argv=None):
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
             x, target = mixup(x, y)
             lr = lr_at(it, total_iters, warmup_iters, args.lr, args.min_lr)
-            for g in opt.param_groups:
-                g["lr"] = lr
-            with autocast_ctx(device, amp):
-                logits = train_model(x)
-            if args.loss_steps == "last":
-                logits = logits[-1:]
-            loss, parts = stage_a_loss(logits, target, loss_cfg)
-            opt.zero_grad(set_to_none=True)
-            scaler.scale(loss).backward()
-            if args.clip > 0:
-                scaler.unscale_(opt)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-            scaler.step(opt)
-            scaler.update()
+            step.set_lr(lr)
+            parts = step(x, target)
             if ema:
                 ema.update(model)
             for k, v in parts.items():

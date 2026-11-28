@@ -218,3 +218,156 @@ def test_benchmark_fixed_depth_only_without_policy(tmp_path):
     summary = subprocess.run([sys.executable, str(ROOT / "scripts/summarize.py"), "smoke", "--reports",
                               str(tmp_path / "reports")], check=True, capture_output=True, text=True, cwd=ROOT).stdout
     assert "[benchmark smoke]" in summary and "fixed t=1" in summary
+
+
+def test_extend_steps_past_trained_length(tmp_path):
+    m = _model(T=2)
+    x = torch.randn(3, 3, 32, 32)
+    with torch.no_grad():
+        base = m(x)
+        m.extend_steps(5)
+        ext = m(x)
+    assert ext.shape == (5, 3, 10) and m.trained_t_max == 2
+    torch.testing.assert_close(ext[:2], base)  # the trained steps are unchanged
+    # CLI: evaluate an original-style checkpoint (2 steps, last readout) for 4 steps
+    out = tmp_path / "run"
+    subprocess.run([sys.executable, str(ROOT / "scripts/train.py"), "--fake-data", "--model", "vcnet_mini",
+                    "--t-max", "2", "--loss-steps", "last", "--epochs", "1", "--max-steps", "2",
+                    "--batch-size", "16", "--workers", "0", "--holdout", "64", "--out", str(out)], check=True, cwd=ROOT)
+    subprocess.run([sys.executable, str(ROOT / "scripts/evaluate.py"), "--ckpt", str(out / "model.pt"),
+                    "--fake-data", "--workers", "0", "--steps", "4"], check=True, cwd=ROOT)
+    res = json.loads((out / "steps4" / "results.json").read_text())
+    assert res["steps_run"] == 4 and len(res["test_ts"]) == 4 and len(res["flops"]["cumulative"]) == 4
+    assert not (out / "results.json").exists()  # the normal evaluation output is not overwritten
+
+
+def test_training_upsample_matches_interpolate():
+    # training replaces F.interpolate by two matmuls (fast backward under Inductor); same values,
+    # nothing new in the checkpoint
+    import torch.nn.functional as F
+
+    from fsv.models.vcnet import bilinear_matrix
+
+    for n_in, n_out in [(4, 32), (4, 8), (8, 16), (3, 7)]:
+        x = torch.randn(2, 3, n_in, n_in)
+        u = bilinear_matrix(n_in, n_out)
+        ref = F.interpolate(x, size=(n_out, n_out), mode="bilinear", align_corners=False)
+        assert torch.allclose(u @ x @ u.T, ref, atol=1e-6)
+    m = _model(T=3, lateral=True, topdown=True)
+    with torch.no_grad():
+        for p in m.parameters():
+            if p.ndim > 1:
+                p.normal_(0, 0.05)
+    x = torch.randn(2, 3, 32, 32)
+    with torch.no_grad():
+        ev = m.eval()(x)
+        tr = m.train()(x)
+    assert torch.allclose(ev, tr, atol=1e-4)
+    assert not [k for k in m.state_dict() if k.startswith("up_")]
+
+
+def test_per_row_steps_match_batch_steps():
+    # rows at different steps (slot pool): same state as the batched step; step-0 rows ignore a stale state
+    for kw in ({}, dict(ait_carry=True), dict(lateral=True, topdown=True)):
+        m = _model(T=4, **kw)
+        with torch.no_grad():
+            for p in m.parameters():
+                if p.ndim > 1:
+                    p.normal_(0, 0.1)
+            x = torch.randn(6, 3, 32, 32)
+            x0 = s = m.embed(x)
+            st = []
+            for t in range(4):
+                s = m.forward_step(s, t, x0)
+                st.append(s)
+            tt = torch.tensor([0, 1, 2, 3, 0, 2])
+            prev = torch.stack([st[t - 1][i] if t > 0 else torch.full_like(st[0][i], 7.0)
+                                for i, t in enumerate(tt.tolist())])
+            buf = prev.clone()
+            out = m.forward_step(buf, tt, x0, out=buf)
+            assert out.data_ptr() == buf.data_ptr()
+            assert torch.equal(out, torch.stack([st[t][i] for i, t in enumerate(tt.tolist())]))
+            z = m.readout(out, tt)
+            for i, t in enumerate(tt.tolist()):
+                assert torch.allclose(z[i], m.readout(st[t][i:i + 1], t)[0], atol=1e-5)
+
+
+@pytest.mark.parametrize("kw", [{}, dict(lateral=True, topdown=True)])
+def test_slot_pool_with_vcnet_matches_adaptive_runner(kw):
+    from fsv.halting.online import AdaptiveRunner
+    from fsv.halting.slots import SlotPoolRunner, supports_slots
+    from tests.test_core import _varied_policy
+
+    T = 4
+    m = _model(T=T, **kw)
+    with torch.no_grad():
+        for p in m.parameters():
+            if p.ndim > 1:
+                p.normal_(0, 0.1)
+    assert supports_slots(m)
+    x = torch.randn(60, 3, 32, 32)
+    temps = torch.linspace(1.2, 0.9, T)
+    pol = _varied_policy(m, x, temps)
+    pr, sr = AdaptiveRunner(m, pol, temps, torch.device("cpu")).run(x)
+    assert len(set(sr.tolist())) >= 2
+    for S, R in ((8, None), (16, 5), (100, None)):
+        sp = SlotPoolRunner(m, pol, temps, torch.device("cpu"), slots=S, refill=R)
+        for n in (60, 23):
+            pp, ss = sp.run(x[:n])
+            # batch shapes differ from the compaction runner: allow a rare flip at a decision boundary
+            assert (ss == sr[:n]).float().mean() >= 0.95 and (pp == pr[:n]).float().mean() >= 0.95, (S, R, n)
+            assert 0 < sp.occupancy(ss) <= 1
+
+
+def test_batch_graph_modes_compiled_on_cpu():
+    # FixedDepthGraph and SlotPoolRunner with the model step compiled (Inductor on the CPU; no capture)
+    from fsv.halting.online import AdaptiveRunner, FixedDepthGraph
+    from fsv.halting.slots import SlotPoolRunner
+    from tests.test_core import _varied_policy
+
+    T = 3
+    m = _model(T=T, lateral=True, topdown=True)
+    x = torch.randn(40, 3, 32, 32)
+    with torch.no_grad():
+        ref = m(x)
+    fg = FixedDepthGraph(m, torch.device("cpu"), batch=16, compile=True)
+    for t in range(T):
+        assert torch.equal(fg.run_fixed(x, t), ref[t].argmax(-1))
+    temps = torch.linspace(1.2, 0.9, T)
+    pol = _varied_policy(m, x, temps)
+    pr, sr = AdaptiveRunner(m, pol, temps, torch.device("cpu")).run(x)
+    pp, ss = SlotPoolRunner(m, pol, temps, torch.device("cpu"), slots=12, compile=True).run(x)
+    assert (ss == sr).float().mean() >= 0.95 and (pp == pr).float().mean() >= 0.95
+
+
+def test_benchmark_batch_graph_modes_with_vcnet(tmp_path):
+    import os
+
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": ""}
+    subprocess.run([sys.executable, str(ROOT / "scripts/run_experiment.py"), "smoke", "--fake-data", "--halting",
+                    "--max-cpus", "2", "--out-root", str(tmp_path), "--gpu", "",
+                    "--extra", "--model vcnet_mini --t-max 3 --lateral --topdown --max-steps 2 --batch-size 16 "
+                               "--holdout 64"], check=True, cwd=ROOT, env=env)
+    subprocess.run([sys.executable, str(ROOT / "scripts/benchmark_adaptive.py"), "smoke", "--fake-data",
+                    "--out-root", str(tmp_path), "--repeats", "1", "--bs1-images", "2", "--batch-size", "32",
+                    "--slots", "16", "--lams", "0.01", "0.3", "--max-cpus", "2", "--no-compile", "--no-cudagraph",
+                    "--o3-policies"], check=True, cwd=ROOT, env=env)
+    bench = json.loads((tmp_path / "reports" / "smoke" / "benchmark.json").read_text())
+    for mode in ("slots", "graph-bs32"):
+        m = bench["modes"][mode]
+        assert len(m["adaptive"]) == 2 and m["refill"] == 16  # VCNet: refill cap = all slots
+        assert all(0 < r["occupancy"] <= 1 for r in m["adaptive"])
+    assert len(bench["modes"]["graph-bs32"]["fixed"]) == 3
+    # the batch-graph fixed depth and the eager fixed depth predict the same
+    for a, b in zip(bench["modes"]["graph-bs32"]["fixed"], bench["modes"]["eager"]["fixed"]):
+        assert abs(a["acc"] - b["acc"]) < 1e-9
+    summary = subprocess.run([sys.executable, str(ROOT / "scripts/summarize.py"), "smoke", "--reports",
+                              str(tmp_path / "reports")], check=True, capture_output=True, text=True, cwd=ROOT).stdout
+    assert "[graph-bs32]" in summary and "occupancy" in summary
+    subprocess.run([sys.executable, str(ROOT / "scripts/benchmark_adaptive.py"), "smoke", "--fake-data",
+                    "--out-root", str(tmp_path), "--repeats", "1", "--batch-size", "32", "--slots", "16",
+                    "--lams", "0.1", "--max-cpus", "2", "--graph-only"], check=True, cwd=ROOT, env=env)
+    bench = json.loads((tmp_path / "reports" / "smoke" / "benchmark.json").read_text())
+    assert set(bench["modes"]) == {"graph-compiled-bs32"}
+    row = bench["modes"]["graph-compiled-bs32"]["adaptive"][0]
+    assert row["ticks"] > 0 and row["tick_ms"] > 0 and row["embed_ms"] > 0

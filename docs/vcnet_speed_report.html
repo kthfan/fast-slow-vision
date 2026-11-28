@@ -1,0 +1,726 @@
+<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VCNet 速度優化報告</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one report column (~860px) with numbered sections; figures and tables break out to the column width and scroll inside their own box */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --fg: #16191f;
+  --fg2: #4f5866;
+  --line: #d5dae1;
+  --grid: #e7eaef;
+  --accent: #1f5fbf;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --fb: #c2410c; --state: #1d4ed8; --td: #6250d6;
+  --hl: #eaf1fc;
+  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111418; --surface: #191d23; --fg: #e8eaee; --fg2: #a3acb9; --line: #313842; --grid: #252b33;
+    --accent: #6ea3f0; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --fb: #fb923c; --state: #7aa7ff; --td: #9085e9; --hl: #1b2638;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111418; --surface: #191d23; --fg: #e8eaee; --fg2: #a3acb9; --line: #313842; --grid: #252b33;
+  --accent: #6ea3f0; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --fb: #fb923c; --state: #7aa7ff; --td: #9085e9; --hl: #1b2638;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.75; }
+.wrap {
+  max-width: 860px; margin: 0 auto; display: grid; gap: 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 48px 80px;
+}
+h1, h2, h3 { margin: 0; line-height: 1.3; text-wrap: balance; }
+h1 { font-size: 2rem; font-weight: 700; }
+h2 { font-size: 1.4rem; font-weight: 700; display: flex; gap: 12px; align-items: baseline; }
+h2 .no { font-family: var(--font-mono); font-size: 0.95rem; color: var(--accent); font-weight: 500; }
+h3 { font-size: 1.08rem; font-weight: 700; }
+p, li { max-width: 68ch; }
+p { margin: 0; }
+ul, ol { margin: 0; padding-left: 1.3em; display: grid; gap: 6px; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code { font-family: var(--font-mono); font-size: 0.86em; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+section { display: grid; gap: 18px; }
+.sub { display: grid; gap: 12px; }
+.meta { font-family: var(--font-mono); font-size: 0.8rem; color: var(--fg2); letter-spacing: 0.03em; }
+header { display: grid; gap: 14px; }
+.lead { color: var(--fg2); font-size: 1.05rem; }
+.toc { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.92rem; }
+.toc a { text-decoration: none; }
+.toc a span { font-family: var(--font-mono); color: var(--fg2); margin-right: 4px; }
+.findings { display: grid; gap: 10px; padding: 0; list-style: none; }
+.findings li { display: grid; grid-template-columns: 7.5em 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); max-width: none; }
+.findings li:last-child { border-bottom: 1px solid var(--line); }
+.findings b { font-family: var(--font-mono); font-weight: 500; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.findings small { display: block; color: var(--fg2); font-size: 0.78rem; line-height: 1.4; }
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font-weight: 500; color: var(--fg2); font-size: 0.82rem; white-space: nowrap; background: var(--bg); }
+td.n, th.n { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.ref td { font-weight: 700; }
+tr.hl td { background: var(--hl); }
+td .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+figure { margin: 0; display: grid; gap: 10px; }
+figcaption { font-size: 0.86rem; color: var(--fg2); max-width: 72ch; }
+.fig { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 12px; position: relative; }
+.fig svg { display: block; width: 100%; height: auto; }
+.fig.diagram svg { min-width: 560px; }
+.fig.diagram.unroll svg { min-width: 360px; }
+.fig.chart svg { min-width: 520px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.82rem; color: var(--fg2); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { display: inline-block; width: 20px; height: 0; border-top: 2px solid; }
+.legend i.dash { border-top-style: dashed; }
+.legend i.dot { width: 9px; height: 9px; border: 2px solid; border-radius: 50%; }
+.legend i.dia { width: 9px; height: 9px; border: 0; background: var(--fg); transform: rotate(45deg); }
+.legend i.dia.hollow { background: transparent; border: 2px solid var(--fg); }
+.legend i.sq { width: 9px; height: 9px; border: 2px solid; border-radius: 1px; }
+.tip { position: absolute; pointer-events: none; background: var(--fg); color: var(--bg); font-size: 0.78rem; line-height: 1.45; padding: 6px 9px; border-radius: 6px; white-space: nowrap; font-family: var(--font-mono); }
+.names { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 14px 16px; display: grid; gap: 10px; }
+.names dl { margin: 0; display: grid; grid-template-columns: 8.5em 1fr; gap: 6px 14px; }
+.names dt { font-family: var(--font-mono); font-size: 0.9rem; font-weight: 500; }
+.names dd { margin: 0; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+.seg button { font: 500 0.85rem var(--font-body); color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+td.noisy { color: var(--fg2); text-decoration: underline dotted; text-underline-offset: 3px; }
+#tblIdle td:first-child, #tblBench td:first-child { min-width: 12em; }
+td.grp { background: var(--bg); font-weight: 500; color: var(--fg2); font-size: 0.82rem; }
+@media (max-width: 640px) { .names dl { grid-template-columns: 1fr; } }
+.note { border-left: 3px solid var(--line); padding: 4px 0 4px 14px; color: var(--fg2); font-size: 0.92rem; }
+.eq { font-family: var(--font-mono); font-size: 0.92rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; overflow-x: auto; white-space: nowrap; }
+pre { margin: 0; font-family: var(--font-mono); font-size: 0.84rem; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 10px 14px; overflow-x: auto; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.two > * { min-width: 0; }
+@media (max-width: 640px) {
+  h1 { font-size: 1.6rem; }
+  .two { grid-template-columns: 1fr; }
+  .findings li { grid-template-columns: 1fr; gap: 2px; }
+}
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+.lg2 { display:flex; flex-wrap:wrap; gap:6px 18px; font-size:0.82rem; color:var(--fg2); }
+.lg2 span { display:inline-flex; align-items:center; gap:6px; }
+.lg2 i { display:inline-block; width:12px; height:12px; border-radius:2px; }
+.tag { font-family: var(--font-mono); font-size: 0.74rem; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; color: var(--fg2); white-space: nowrap; }
+.tag.same { border-color: var(--s3); color: var(--s3); }
+.tag.new { border-color: var(--s2); color: var(--s2); }
+.tag.no { border-color: var(--fg2); }
+#dataBody td:first-child { white-space: nowrap; }
+#dataBody th { white-space: nowrap; }
+</style>
+</head><body><div class="wrap">
+<header>
+  <div class="meta">fast-slow-vision · dev/vcnet · 階段 0（訓練加速，0.15.0–0.15.2）與階段 2（推論加速，0.16.0–0.16.1） · CIFAR-100 · H100 NVL · 2026 年 11 月</div>
+  <h1>VCNet 速度優化報告</h1>
+  <p class="lead">本報告整理 VCNet 在訓練與推論兩方面的加速：各用了哪些技術、在 H100 上量到多少、哪些試過但不採用。
+    與 bViT 共用的推論技術只簡述，細節見 README 的「實際延遲與吞吐量」到「H100 三個種子」各節。</p>
+  <nav class="toc" aria-label="目錄">
+    <a href="#summary"><span>1</span>摘要</a>
+    <a href="#why"><span>2</span>時間花在哪裡</a>
+    <a href="#train-tech"><span>3</span>訓練加速：技術</a>
+    <a href="#train-exp"><span>4</span>訓練加速：實驗</a>
+    <a href="#infer-tech"><span>5</span>推論加速：技術</a>
+    <a href="#infer-exp"><span>6</span>推論加速：實驗</a>
+    <a href="#end"><span>7</span>結論與未完成項目</a>
+    <a href="#data"><span>A</span>全部數據</a>
+    <a href="#repro"><span>B</span>重現指令</a>
+  </nav>
+</header>
+
+<section id="summary">
+  <h2><span class="no">1</span>摘要</h2>
+  <ul class="findings">
+    <li><b>4.6×</b><div>adapt_blt（8 步）的訓練速度：每秒 1,484 → 6,858 張。3 個種子從約 300 分鐘降到約 65 分鐘（依序跑）。
+      <small>bench_train.py，batch 256，閒置 H100</small></div></li>
+    <li><b>2.9×</b><div>原始 VCNet（2 步）的訓練速度：每秒 8,382 → 24,387 張，每次訓練約 6 分鐘。
+      <small>主要來自 CUDA graph 與 GPU 上的資料增強</small></div></li>
+    <li><b>±0.35</b><div>快速管線重現第 1–2 輪的準確率：blt 每步差 +0.1～+0.35 點，orig 差 +0.9 點，都在種子差異之內。
+      <small>3 個種子；校準（溫度縮放後的 ECE、NLL）相同</small></div></li>
+    <li><b>8.4×</b><div>batch 256 的推論：blt 固定 2 步從 eager 每秒 12,572 張到「編譯 + 一張 CUDA graph」105,289 張，
+      是原始 VCNet（115,122）的 91%，準確率高 2.8 點。<small>graph-compiled-bs256 模式</small></div></li>
+    <li><b>1.05×</b><div>自適應的槽位池在 λ=0.1 對同準確率的固定 3 步快 5%，但只有固定步數前緣的 0.89 倍；即使沒有任何額外開銷，上限也只有約 1.10 倍。
+      <small>batch 256，3 個種子</small></div></li>
+    <li><b>batch 1</b><div>自適應在 batch 1 有效：blt + 停止策略 1.78–1.83 ms、67.77%，原始 VCNet 2 步 1.91 ms、64.56%；
+      對 blt 自己的固定 3 步約快 1.4 倍。<small>CUDA graph，閒置 GPU</small></div></li>
+  </ul>
+  <p>結論：新實驗預設用快速訓練管線（GPU 增強 + 編譯 + CUDA graph + fused AdamW，batch 256，依序執行）；
+    CIFAR 上的 batch 推論用「固定步數 + 編譯 + CUDA graph」，自適應步數留給 batch 1 與之後較大的影像。</p>
+</section>
+
+<section id="why">
+  <h2><span class="no">2</span>時間花在哪裡</h2>
+  <p>第 1–2 輪的訓練幾乎沒用到 H100 的算力。adapt 每個 epoch 16.6 秒（約每秒 2,700 張），換算約 8 TFLOPs，不到 bf16 峰值的 1%。
+    VCNet 每步只有約 0.12 GFLOPs，卻由幾十個小模組組成；8 步的訓練一次 iteration 有約 360 個前向卷積與 360 個反向卷積，每個 20–50 µs。
+    時間主要花在三個地方：</p>
+  <div class="tbl"><table>
+    <thead><tr><th>瓶頸</th><th>現象</th><th>對策</th></tr></thead>
+    <tbody>
+      <tr><td>CPU 發送 kernel</td><td>每次 iteration 數千個小 kernel，GPU 在等 CPU；orig 只編譯不錄 graph 反而慢（0.92×）</td><td>CUDA graph：每步只發送一次</td></tr>
+      <tr><td>CPU 資料增強</td><td>PIL + RandAugment 用 7 個 worker 上限約每秒 11,500 張；orig 錄成 graph 後卡在這裡（11,895）</td><td>資料放 GPU，在 GPU 上逐張增強</td></tr>
+      <tr><td>主機同步</td><td>GPU 增強每批把幾個常數從 CPU 複製到 GPU，每次複製都會阻塞，CPU 要等上一個訓練步做完才能排下一批</td><td>常數只建一次並留在 GPU；下一批在副串流上增強</td></tr>
+    </tbody>
+  </table></div>
+  <p>推論也一樣：batch 256 時 eager 的 blt 2 步每秒只有 12,572 張，編譯但不錄 graph 是 40,590，兩者都受發送開銷限制。
+    自適應的壓縮式 runner 每步要同步一次並把已停的影像移出，後段 batch 越來越小，吞吐量只有固定步數的 27–42%。</p>
+</section>
+
+<section id="train-tech">
+  <h2><span class="no">3</span>訓練加速：技術</h2>
+  <p>四項改動都是開關，預設仍是第 1–3 輪的做法，所以舊實驗的結果可以照原樣重現。新實驗的設定集中在 <code>fsv/experiments.py</code> 的 <code>_FAST</code>：
+    <code>--gpu-aug --compile-mode reduce-overhead --opt-impl fused</code>。這些都與模型無關，bViT 也能直接使用；它們是為 VCNet 寫的，bViT 沒有對應的舊做法。</p>
+  <div class="sub">
+    <h3>3.1　GPU 上的資料增強（<code>fsv/gpu_aug.py</code>）</h3>
+    <ul>
+      <li>訓練集以 uint8 整份放在 GPU 上；<code>GPULoader</code> 每個 epoch 在 GPU 上產生排列，取一批後逐張增強，取代 DataLoader。</li>
+      <li>同一套增強：RandomCrop(32, padding 4) → 水平翻轉 → RandAugment(2, 9) → Normalize → RandomErasing。
+        每張圖、每一輪各自抽操作；同一輪的 5 種幾何操作（剪切、平移、旋轉）合成一次 <code>grid_sample</code>。</li>
+      <li>正確性：14 種 RandAugment 操作逐一與 torchvision 的 uint8 實作比對。幾何、亮度、對比、色調分離、曝光、自動對比、直方圖等化完全相同；
+        Color 與 Sharpness 因捨入最多差 1 個灰階；RandomErasing 的觸發比例與平均面積相符。亂數序列不同，所以另外用準確率驗證（第 4.2 節）。</li>
+      <li>沒有主機同步（0.15.1）：所有常數（平均、標準差、旋轉中心、銳化核、索引）在第一次使用時建在 GPU 上並快取。
+        第一版每批都從 Python 值建這些 tensor，每次都是阻塞的 CPU → GPU 複製，CPU 因此等 GPU 做完上一個訓練步，增強與訓練完全沒有重疊。</li>
+      <li>副串流預取：第 k 步訓練在主串流上執行時，第 k+1 批在副 CUDA 串流上增強；用 <code>wait_stream</code> 與 <code>record_stream</code> 保證順序與記憶體生命週期。</li>
+    </ul>
+  </div>
+  <div class="sub">
+    <h3>3.2　編譯 + CUDA graph 的訓練步（<code>fsv/train_step.py</code>）</h3>
+    <ul>
+      <li><code>torch.compile</code> 編譯「所有步的前向 + Stage A 損失」這一整個函式，反向由 AOTAutograd 一起編譯；Inductor 把 GroupNorm、CBAM、通道注意力等小運算融合。</li>
+      <li><code>reduce-overhead</code> 再把前向與反向錄成 CUDA graph（cudagraph trees）：每步 CPU 只重播 graph。每步開頭呼叫 <code>cudagraph_mark_step_begin()</code>，
+        回傳的損失分量先 clone，因為下一次重播會覆寫 graph 的輸出。形狀必須固定，兩種 loader 都 drop_last。</li>
+      <li>Mixup / CutMix 留在編譯函式之外：它們每步抽一個新的 Python 浮點數 λ，放進去每步都會重新編譯。</li>
+      <li>編譯一次約 25–145 秒（每次訓練只付一次）。</li>
+    </ul>
+  </div>
+  <div class="sub">
+    <h3>3.3　fused AdamW</h3>
+    <p><code>--opt-impl fused</code>：AdamW 用單一 kernel 的 CUDA 實作。單獨使用時影響很小（orig 1.04×），但在 CUDA graph 之後，每步剩下的發送次數主要來自最佳化器，這時就有用。</p>
+  </div>
+  <div class="sub">
+    <h3>3.4　訓練時的雙線性上採樣改成矩陣乘法（0.15.2）</h3>
+    <p>剖析 blt 的訓練步（編譯、不錄 graph，每次 iteration 約 40 ms 的 GPU 時間）發現，最貴的單一 kernel 是 AIT → V1 雙線性上採樣（4×4 → 32×32）的反向：
+      Inductor 把 <code>upsample_bilinear2d</code> 的反向變成帶 atomic add 的 <code>index_put</code>，每次 526 µs、每次 iteration 7 次，約佔 9%。
+      訓練時改成 <code>U_h @ x @ U_wᵀ</code>（<code>bilinear_matrix</code> 算出與 <code>align_corners=False</code> 相同的權重），反向也是矩陣乘法。
+      推論時仍用 <code>F.interpolate</code>，所以評估結果、延遲與量到的 FLOPs 都不變。實測 blt 快 4%（6,577 → 6,858 張/秒），batch 1024 快 9%。</p>
+  </div>
+  <div class="sub">
+    <h3>3.5　訓練路徑不打包狀態</h3>
+    <p>有 lat / blt 時，每一步的狀態是 7 個腦區的特徵圖。推論介面把它們打包成一個 [B, N] tensor，讓 runner 能統一索引；
+      訓練用的 <code>forward()</code> 改成步與步之間直接傳各腦區的 dict，不再每步打包、拆包。輸出與逐步介面完全相同（測試確認）。</p>
+  </div>
+  <div class="sub">
+    <h3>3.6　試過、不採用</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>做法</th><th>結果</th><th>原因</th></tr></thead>
+      <tbody>
+        <tr><td>並行多個種子（<code>run_experiment.py --parallel 3</code>）</td><td class="n">5,776 vs 6,105 張/秒</td><td>開了 CUDA graph 後，沒有 MPS 時 GPU 在行程間分時，kernel 不會同時執行；只在沒有 graph 時能互相填補發送空檔（3,664 → 5,095）</td></tr>
+        <tr><td>channels_last（NHWC）</td><td class="n">−35～−41%</td><td>cuDNN 在卷積前後的 NCHW ↔ NHWC 轉換約佔 20% GPU 時間，但改成 NHWC 讓其他運算更慢</td></tr>
+        <tr><td>batch 512 / 1024（學習率 × √2 / × 2）</td><td class="n">−1.0 / −3.4 點</td><td>速度 1.2× / 1.6×，但更新次數少 2 / 4 倍、欠訓練；要補回得加學習率或 epoch，吃掉大部分加速</td></tr>
+        <tr><td>MPS（多行程共用 GPU）</td><td>未測</td><td>可選項目；依序執行已經足夠</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section id="train-exp">
+  <h2><span class="no">4</span>訓練加速：實驗</h2>
+  <div class="sub">
+    <h3>4.1　速度（<code>scripts/bench_train.py</code>）</h3>
+    <p>完整訓練步（資料 + 前向 + 損失 + 反向 + 最佳化器）的每秒張數，batch 256，每種設定先暖機 15 次（含編譯），再量 3 × 50 次取中位數。
+      三次量測分別在 0.15.0、0.15.1、0.15.2，每次修正後重量。</p>
+    <figure>
+      <div class="fig chart"><svg viewBox="0 0 640 184" role="img" aria-label="原始 VCNet（2 步）">
+<text x="0" y="16" style="fill:var(--fg);font-weight:700;font-size:14px">原始 VCNet（2 步）</text>
+<line x1="250.0" y1="28" x2="250.0" y2="154" style="stroke:var(--grid)"/>
+<text x="250.0" y="172" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">0k</text>
+<line x1="296.7" y1="28" x2="296.7" y2="154" style="stroke:var(--grid)"/>
+<text x="296.7" y="172" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">5k</text>
+<line x1="343.3" y1="28" x2="343.3" y2="154" style="stroke:var(--grid)"/>
+<text x="343.3" y="172" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">10k</text>
+<line x1="390.0" y1="28" x2="390.0" y2="154" style="stroke:var(--grid)"/>
+<text x="390.0" y="172" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">15k</text>
+<line x1="436.7" y1="28" x2="436.7" y2="154" style="stroke:var(--grid)"/>
+<text x="436.7" y="172" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">20k</text>
+<line x1="483.3" y1="28" x2="483.3" y2="154" style="stroke:var(--grid)"/>
+<text x="483.3" y="172" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">25k</text>
+<line x1="530.0" y1="28" x2="530.0" y2="154" style="stroke:var(--grid)"/>
+<text x="530.0" y="172" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">30k</text>
+<text x="240" y="52" text-anchor="end" style="fill:var(--fg);font-size:12.5px">CPU 增強、eager（第 1–3 輪）</text>
+<rect x="250" y="39" width="78.2" height="18" rx="2" style="fill:var(--s1)"/>
+<text x="334.2" y="52" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">8,382<tspan style="fill:var(--fg2)"> 1.00×</tspan></text>
+<text x="240" y="82" text-anchor="end" style="fill:var(--fg);font-size:12.5px">CPU 增強 + 編譯 + CUDA graph</text>
+<rect x="250" y="69" width="121.3" height="18" rx="2" style="fill:var(--s1)"/>
+<text x="377.3" y="82" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">12,994<tspan style="fill:var(--fg2)"> 1.55×</tspan></text>
+<text x="240" y="112" text-anchor="end" style="fill:var(--fg);font-size:12.5px">GPU 增強（無同步）+ 編譯 + graph</text>
+<rect x="250" y="99" width="204.3" height="18" rx="2" style="fill:var(--s1)"/>
+<text x="460.3" y="112" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">21,884<tspan style="fill:var(--fg2)"> 2.61×</tspan></text>
+<text x="240" y="142" text-anchor="end" style="fill:var(--fg);font-size:12.5px">＋ 副串流預取</text>
+<rect x="250" y="129" width="227.6" height="18" rx="2" style="fill:var(--s1)"/>
+<text x="483.6" y="142" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">24,387<tspan style="fill:var(--fg2)"> 2.91×</tspan></text>
+</svg></div>
+      <div class="fig chart"><svg viewBox="0 0 640 214" role="img" aria-label="adapt_blt（8 步）">
+<text x="0" y="16" style="fill:var(--fg);font-weight:700;font-size:14px">adapt_blt（8 步）</text>
+<line x1="250.0" y1="28" x2="250.0" y2="184" style="stroke:var(--grid)"/>
+<text x="250.0" y="202" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">0k</text>
+<line x1="320.0" y1="28" x2="320.0" y2="184" style="stroke:var(--grid)"/>
+<text x="320.0" y="202" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">2k</text>
+<line x1="390.0" y1="28" x2="390.0" y2="184" style="stroke:var(--grid)"/>
+<text x="390.0" y="202" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">4k</text>
+<line x1="460.0" y1="28" x2="460.0" y2="184" style="stroke:var(--grid)"/>
+<text x="460.0" y="202" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">6k</text>
+<line x1="530.0" y1="28" x2="530.0" y2="184" style="stroke:var(--grid)"/>
+<text x="530.0" y="202" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">8k</text>
+<text x="240" y="52" text-anchor="end" style="fill:var(--fg);font-size:12.5px">CPU 增強、eager（第 1–3 輪）</text>
+<rect x="250" y="39" width="51.9" height="18" rx="2" style="fill:var(--td)"/>
+<text x="307.9" y="52" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">1,484<tspan style="fill:var(--fg2)"> 1.00×</tspan></text>
+<text x="240" y="82" text-anchor="end" style="fill:var(--fg);font-size:12.5px">編譯，不錄 graph</text>
+<rect x="250" y="69" width="128.2" height="18" rx="2" style="fill:var(--td)"/>
+<text x="384.2" y="82" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">3,664<tspan style="fill:var(--fg2)"> 2.47×</tspan></text>
+<text x="240" y="112" text-anchor="end" style="fill:var(--fg);font-size:12.5px">CPU 增強 + 編譯 + CUDA graph</text>
+<rect x="250" y="99" width="240.6" height="18" rx="2" style="fill:var(--td)"/>
+<text x="496.6" y="112" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">6,874<tspan style="fill:var(--fg2)"> 4.63×</tspan></text>
+<text x="240" y="142" text-anchor="end" style="fill:var(--fg);font-size:12.5px">GPU 增強 + 編譯 + graph</text>
+<rect x="250" y="129" width="230.2" height="18" rx="2" style="fill:var(--td)"/>
+<text x="486.2" y="142" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">6,577<tspan style="fill:var(--fg2)"> 4.43×</tspan></text>
+<text x="240" y="172" text-anchor="end" style="fill:var(--fg);font-size:12.5px">＋ 上採樣改矩陣乘法（0.15.2）</text>
+<rect x="250" y="159" width="240.0" height="18" rx="2" style="fill:var(--td)"/>
+<text x="496.0" y="172" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">6,858<tspan style="fill:var(--fg2)"> 4.62×</tspan></text>
+</svg></div>
+      <figcaption>圖 1　訓練吞吐量，倍數相對於第 1–3 輪的做法（CPU 增強、eager）。orig 用 0.15.1 的量測；blt 的「編譯，不錄 graph」來自 0.15.0，最後一列來自 0.15.2，其餘來自 0.15.1。
+        blt 每步是 GPU 計算受限，GPU 增強本身的 GPU 工作（單獨約每秒 43,000 張）不再被藏住，所以比 CPU 增強略慢 4%；orig 是 CPU 受限，GPU 增強才是關鍵。</figcaption>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>設定（0.15.1）</th><th class="n">orig 張/秒</th><th class="n">×</th><th class="n">blt 張/秒</th><th class="n">×</th></tr></thead>
+      <tbody>
+        <tr><td>cpu-eager（第 1–3 輪）</td><td class="n">8,382</td><td class="n">1.00</td><td class="n">1,484</td><td class="n">1.00</td></tr>
+        <tr><td>cpu-cg（CPU 增強 + 編譯 + graph）</td><td class="n">12,994</td><td class="n">1.55</td><td class="n">6,874</td><td class="n">4.63</td></tr>
+        <tr><td>gpu-cg-noprefetch（無同步）</td><td class="n">21,884</td><td class="n">2.61</td><td class="n">6,616</td><td class="n">4.46</td></tr>
+        <tr class="hl"><td>gpu-cg（＋ 副串流）</td><td class="n">24,387</td><td class="n">2.91</td><td class="n">6,577</td><td class="n">4.43</td></tr>
+        <tr><td>gpu-cg，channels_last</td><td class="n">14,451</td><td class="n">1.72</td><td class="n">4,363</td><td class="n">2.94</td></tr>
+        <tr><td>gpu-cg，batch 512</td><td class="n">31,024</td><td class="n">3.70</td><td class="n">8,280</td><td class="n">5.58</td></tr>
+        <tr><td>gpu-cg，batch 1024</td><td class="n">37,641</td><td class="n">4.49</td><td class="n">10,219</td><td class="n">6.89</td></tr>
+        <tr><td>0.15.2（上採樣改矩陣乘法）gpu-cg / cpu-cg</td><td class="n"></td><td class="n"></td><td class="n">6,858 / 6,986</td><td class="n">4.62 / 4.71</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note">第一次量測（0.15.0）的 gpu-cg 只有 orig 15,494、blt 6,105 張/秒，比 cpu-cg 還慢，循線找到 GPU 增強裡的主機同步（第 3.1 節）。
+      第一次與第二次量測的 cpu-eager 也不同（orig 9,034 vs 8,382），表示不同次量測之間約有 ±7% 的差異；表中倍數都以同一次量測的 cpu-eager 為準。</p>
+  </div>
+  <div class="sub">
+    <h3>4.2　快速管線不影響準確率</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>步數</th><th class="n">1</th><th class="n">2</th><th class="n">3</th><th class="n">4</th><th class="n">8</th></tr></thead>
+      <tbody>
+        <tr><td>adapt_blt（第 2 輪）</td><td class="n">63.72±0.77</td><td class="n">67.27±0.57</td><td class="n">68.30±0.48</td><td class="n">68.68±0.58</td><td class="n">68.61±0.30</td></tr>
+        <tr class="hl"><td>adapt_blt_fast</td><td class="n">63.84±0.53</td><td class="n">67.62±0.44</td><td class="n">68.51±0.31</td><td class="n">68.85±0.49</td><td class="n">68.85±0.44</td></tr>
+        <tr><td>差</td><td class="n">+0.12</td><td class="n">+0.35</td><td class="n">+0.21</td><td class="n">+0.17</td><td class="n">+0.24</td></tr>
+      </tbody>
+    </table></div>
+    <p>原始 VCNet：第 1 輪 64.55±0.96%，<code>orig_fast</code> 65.48±1.77%（Welch t 約 0.8，不顯著）。溫度縮放後的 ECE / NLL 兩者相同（blt 溫度 0.69–0.76）。
+      判定通過：新實驗改用快速管線，第 1–3 輪的實驗名稱與設定不變。</p>
+  </div>
+  <div class="sub">
+    <h3>4.3　較大的 batch</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>adapt_blt_fast</th><th class="n">2 步</th><th class="n">4 步</th><th class="n">8 步</th><th class="n">最終訓練損失</th><th class="n">分鐘 / 次</th></tr></thead>
+      <tbody>
+        <tr class="hl"><td>batch 256，lr 1e-3</td><td class="n">67.62±0.44</td><td class="n">68.85±0.49</td><td class="n">68.85±0.44</td><td class="n">3.24</td><td class="n">約 22</td></tr>
+        <tr><td>batch 512，lr 1.4e-3</td><td class="n">66.67±0.39</td><td class="n">67.83±0.37</td><td class="n">67.87±0.43</td><td class="n">3.29</td><td class="n">20.8</td></tr>
+        <tr><td>batch 1024，lr 2e-3</td><td class="n">63.96±0.44</td><td class="n">65.42±0.40</td><td class="n">65.35±0.26</td><td class="n">3.34</td><td class="n">15.5</td></tr>
+      </tbody>
+    </table></div>
+    <p>學習率按 √(batch / 256) 放大，epoch 數與暖機 epoch 數不變。損失曲線平滑、校準不變，看起來是欠訓練而非不穩定。訓練設定維持 batch 256。</p>
+  </div>
+  <div class="sub">
+    <h3>4.4　牆鐘時間</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>3 個種子</th><th class="n">舊管線（閒置 GPU）</th><th class="n">快速管線</th></tr></thead>
+      <tbody>
+        <tr><td>adapt_blt</td><td class="n">約 300 分鐘（3 × 100.7）</td><td class="n">約 65 分鐘（依序）</td></tr>
+        <tr><td>原始 VCNet</td><td class="n">約 50 分鐘</td><td class="n">約 18 分鐘（每次約 6）</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<section id="infer-tech">
+  <h2><span class="no">5</span>推論加速：技術</h2>
+  <div class="sub">
+    <h3>5.1　沿用 bViT 的技術（簡述）</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>技術</th><th>bViT 上的版本</th><th>在 VCNet 上</th></tr></thead>
+      <tbody>
+        <tr><td>壓縮式 runner <code>AdaptiveRunner</code>：每步只同步一次，已停的影像移出 batch</td><td>0.7.1</td><td><span class="tag same">直接沿用</span></td></tr>
+        <tr><td>batch 1 CUDA graph <code>CudaGraphBS1</code>：每步一張 graph，每步讀一次停止旗標</td><td>0.8.1</td><td><span class="tag same">直接沿用</span></td></tr>
+        <tr><td>特徵 + 停止策略融合成一個 Triton kernel <code>FusedDecide</code></td><td>0.10.0</td><td><span class="tag same">直接沿用</span>　batch 1 再快 3–9%</td></tr>
+        <tr><td>固定槽位池 <code>SlotPoolRunner</code>：S 個槽位、每個 tick 一張 graph、裝置端佇列指標、晚一個 tick 非同步讀完成數</td><td>0.13.0–0.14.0</td><td><span class="tag new">擴充</span>　見 5.2</td></tr>
+        <tr><td>CPU / GPU 迴圈 pipelining、兩個 batch 交錯</td><td>0.9.0、0.11.0（已移除）</td><td><span class="tag no">未使用</span>　bViT 上已證明沒有幫助</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+  <div class="sub">
+    <h3>5.2　VCNet 特有的部分（0.16.0–0.16.1）</h3>
+    <ul>
+      <li><b>每列各自的步數</b>：<code>forward_step(state, t, x0)</code> 的 <code>t</code> 可以是每列一個步數的 long tensor。
+        預測誤差回饋、側向、由上而下各項對所有列都算，只在 t &gt; 0 的列保留（<code>torch.where</code>），所以第 0 步的列得到的正好是純由下而上的一次掃描，舊狀態只被忽略、不會被乘到；
+        讀出依每列步數取步數嵌入。與逐批計算逐位元相同（測試）。bViT 的權重跨步共用，本來就能這樣做；VCNet 的第 0 步與之後的步計算不同，需要遮罩。</li>
+      <li><b>兩份緩衝區</b>：bViT 的狀態就是嵌入，VCNet 的狀態（AIT，或 lat / blt 時打包的 7 個腦區）與嵌入（V1）不同，所以槽位池分成 <code>x0</code> 與狀態兩份。
+        VCNet 平均 1.4–2.4 步就停，每個 tick 空出的槽位比 bViT 多，補位上限預設為全部 S 個。</li>
+      <li><b>預先計算 V1</b>：V1 在全解析度，每張圖只算一次，但佔每張圖約 1/4 的時間。補位時只做 gather，V1 在跑 tick 之前以 S 張一批先算好，
+        不必每個 tick 對所有補位候選算 V1（大多數候選不會被補上）。0.16.1 把這一步也編譯並錄成 CUDA graph：0.16.0 在編譯模式下它仍是 eager，
+        而 eager 的 blt kernel 即使在 graph 內也比編譯過的慢約 2 倍。這一項讓槽位池快了 10–16%。</li>
+      <li><b>公平的對照組</b> <code>FixedDepthGraph</code>：固定 t 步時，batch 256 的整個前向（V1 + 第 0..t 步 + 讀出）錄成一張 CUDA graph，可先編譯（每個步數一個編譯圖）。
+        第 10 輪的 bViT 比較用的是 eager 固定步數，高估了槽位池；這是最強的固定步數做法。</li>
+      <li><b>前緣比較</b>：除了「準確率不低於自適應的最便宜固定步數」，再加上「把每張圖隨機分到相鄰兩個固定步數、使平均準確率相同」的吞吐量。
+        自適應落在兩個固定步數之間時，前者會讓它看起來比較好；後者才是停止策略要贏過的線。</li>
+    </ul>
+  </div>
+</section>
+
+<section id="infer-exp">
+  <h2><span class="no">6</span>推論加速：實驗</h2>
+  <div class="sub">
+    <h3>6.1　batch 1（閒置 GPU，CUDA graph）</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>模型、設定</th><th class="n">acc %</th><th class="n">平均步數</th><th class="n">ms</th><th class="n">＋ Triton ms</th></tr></thead>
+      <tbody>
+        <tr class="ref"><td>原始 VCNet，2 步</td><td class="n">64.56</td><td class="n">2</td><td class="n">1.908</td><td class="n"></td></tr>
+        <tr><td>adapt_blt，固定 1 / 2 / 3 / 4 步</td><td class="n">63.71 / 67.27 / 68.29 / 68.68</td><td class="n"></td><td class="n">1.008 / 1.949 / 2.915 / 3.882</td><td class="n"></td></tr>
+        <tr><td>adapt_blt + 策略，λ=0.3</td><td class="n">66.74</td><td class="n">1.40</td><td class="n">1.583</td><td class="n">1.486</td></tr>
+        <tr class="hl"><td>adapt_blt + 策略，λ=0.1</td><td class="n">67.77</td><td class="n">1.73</td><td class="n">1.825</td><td class="n">1.776</td></tr>
+        <tr><td>adapt_blt + 策略，λ=0.03</td><td class="n">68.20</td><td class="n">2.09</td><td class="n">2.125</td><td class="n">1.989</td></tr>
+        <tr><td>adapt_blt + 策略，λ=0.01</td><td class="n">68.34</td><td class="n">2.41</td><td class="n">2.598</td><td class="n">2.432</td></tr>
+      </tbody>
+    </table></div>
+    <p>3 個種子的中位數。batch 1 時自適應有效：λ=0.1 比原始 VCNet 快 4–7% 且高 3.2 點；λ=0.03 以 1.99–2.13 ms 達到固定 3 步（2.92 ms）的準確率，約快 1.4 倍。</p>
+  </div>
+  <div class="sub">
+    <h3>6.2　batch 256 的固定步數：執行方式的影響</h3>
+    <div class="tbl"><table>
+      <thead><tr><th>adapt_blt 固定 2 步，batch 256</th><th class="n">張/秒</th><th class="n">×</th></tr></thead>
+      <tbody>
+        <tr><td>eager</td><td class="n">12,572</td><td class="n">1.0</td></tr>
+        <tr><td>eager kernel 錄成一張 graph</td><td class="n">12,778</td><td class="n">1.0</td></tr>
+        <tr><td>編譯，不錄 graph</td><td class="n">40,590</td><td class="n">3.2</td></tr>
+        <tr class="hl"><td>編譯 + 一張 CUDA graph</td><td class="n">105,289</td><td class="n">8.4</td></tr>
+        <tr class="ref"><td>原始 VCNet 2 步，編譯 + graph</td><td class="n">115,122</td><td class="n"></td></tr>
+      </tbody>
+    </table></div>
+    <p>只錄 graph 幾乎沒用：eager 的 blt kernel 本身就慢；編譯（融合）與 graph（去掉發送）要一起用。之前報告中 batch 256 的數字（編譯、不錄 graph）低估了固定步數。</p>
+  </div>
+  <div class="sub">
+    <h3>6.3　槽位池 vs 固定步數（graph-compiled-bs256）</h3>
+    <figure>
+      <div class="lg2">
+        <span><i style="background:var(--s1);border-radius:50%"></i>固定 1–4 步（編譯 + graph）</span>
+        <span><i style="background:var(--s2)"></i>槽位池 0.16.1（V1 預先計算也編譯 + graph）</span>
+        <span><i style="background:var(--surface);border:1.5px solid var(--fg2);border-radius:50%"></i>槽位池 0.16.0</span>
+      </div>
+      <div class="fig chart"><svg viewBox="0 0 640 360" role="img" aria-label="batch 256 的準確率對吞吐量">
+<line x1="56.0" y1="20" x2="56.0" y2="312" style="stroke:var(--grid)"/>
+<text x="56.0" y="330" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">40k</text>
+<line x1="168.0" y1="20" x2="168.0" y2="312" style="stroke:var(--grid)"/>
+<text x="168.0" y="330" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">70k</text>
+<line x1="280.0" y1="20" x2="280.0" y2="312" style="stroke:var(--grid)"/>
+<text x="280.0" y="330" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">100k</text>
+<line x1="392.0" y1="20" x2="392.0" y2="312" style="stroke:var(--grid)"/>
+<text x="392.0" y="330" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">130k</text>
+<line x1="504.0" y1="20" x2="504.0" y2="312" style="stroke:var(--grid)"/>
+<text x="504.0" y="330" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">160k</text>
+<line x1="616.0" y1="20" x2="616.0" y2="312" style="stroke:var(--grid)"/>
+<text x="616.0" y="330" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">190k</text>
+<line x1="56" y1="285.5" x2="616" y2="285.5" style="stroke:var(--grid)"/>
+<text x="48" y="289.5" text-anchor="end" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">64</text>
+<line x1="56" y1="232.4" x2="616" y2="232.4" style="stroke:var(--grid)"/>
+<text x="48" y="236.4" text-anchor="end" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">65</text>
+<line x1="56" y1="179.3" x2="616" y2="179.3" style="stroke:var(--grid)"/>
+<text x="48" y="183.3" text-anchor="end" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">66</text>
+<line x1="56" y1="126.2" x2="616" y2="126.2" style="stroke:var(--grid)"/>
+<text x="48" y="130.2" text-anchor="end" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">67</text>
+<line x1="56" y1="73.1" x2="616" y2="73.1" style="stroke:var(--grid)"/>
+<text x="48" y="77.1" text-anchor="end" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">68</text>
+<line x1="56" y1="20.0" x2="616" y2="20.0" style="stroke:var(--grid)"/>
+<text x="48" y="24.0" text-anchor="end" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">69</text>
+<text x="336.0" y="352" text-anchor="middle" style="fill:var(--fg2);font-size:12px">每秒張數（batch 256，越右越快）</text>
+<text x="14" y="166.0" transform="rotate(-90 14 166.0)" text-anchor="middle" style="fill:var(--fg2);font-size:12px">測試準確率 %</text>
+<polyline points="571.9,300.3 299.4,108.7 188.2,57.2 125.4,38.6" style="fill:none;stroke:var(--s1);stroke-width:2"/>
+<circle cx="571.9" cy="300.3" r="5" style="fill:var(--s1)"/>
+<text x="563.9" y="292.3" text-anchor="end" style="fill:var(--s1);font-size:11.5px">固定 1 步</text>
+<circle cx="299.4" cy="108.7" r="5" style="fill:var(--s1)"/>
+<text x="307.4" y="100.7" text-anchor="start" style="fill:var(--s1);font-size:11.5px">固定 2 步</text>
+<circle cx="188.2" cy="57.2" r="5" style="fill:var(--s1)"/>
+<text x="196.2" y="49.2" text-anchor="start" style="fill:var(--s1);font-size:11.5px">固定 3 步</text>
+<circle cx="125.4" cy="38.6" r="5" style="fill:var(--s1)"/>
+<text x="133.4" y="30.6" text-anchor="start" style="fill:var(--s1);font-size:11.5px">固定 4 步</text>
+<polyline points="204.2,142.1 169.9,82.1 138.5,60.3 118.7,52.9 92.2,47.1" style="fill:none;stroke:var(--fg2);stroke-width:1.5;stroke-dasharray:4 4"/>
+<circle cx="204.2" cy="142.1" r="4" style="fill:var(--surface);stroke:var(--fg2);stroke-width:1.5"/>
+<circle cx="169.9" cy="82.1" r="4" style="fill:var(--surface);stroke:var(--fg2);stroke-width:1.5"/>
+<circle cx="138.5" cy="60.3" r="4" style="fill:var(--surface);stroke:var(--fg2);stroke-width:1.5"/>
+<circle cx="118.7" cy="52.9" r="4" style="fill:var(--surface);stroke:var(--fg2);stroke-width:1.5"/>
+<circle cx="92.2" cy="47.1" r="4" style="fill:var(--surface);stroke:var(--fg2);stroke-width:1.5"/>
+<polyline points="252.7,139.5 202.3,84.8 162.8,61.9 138.5,53.4" style="fill:none;stroke:var(--s2);stroke-width:2;stroke-dasharray:6 4"/>
+<rect x="247.7" y="134.5" width="10" height="10" style="fill:var(--s2)"/>
+<text x="261.7" y="154.5" style="fill:var(--s2);font-size:11px;font-family:var(--font-mono)">λ=0.3</text>
+<rect x="197.3" y="79.8" width="10" height="10" style="fill:var(--s2)"/>
+<text x="211.3" y="99.8" style="fill:var(--s2);font-size:11px;font-family:var(--font-mono)">λ=0.1</text>
+<rect x="157.8" y="56.9" width="10" height="10" style="fill:var(--s2)"/>
+<rect x="133.5" y="48.4" width="10" height="10" style="fill:var(--s2)"/>
+</svg></div>
+      <figcaption>圖 2　batch 256 的準確率對吞吐量（3 個種子）。藍線是固定步數的前緣，連線上的點可以靠隨機混合相鄰兩個步數達到；
+        槽位池的點由右而左是 λ = 0.3、0.1、0.03、0.01（0.16.0 另有 0.003），都在線的左邊（較慢）。編譯後的壓縮式 runner 在 λ=0.1 只有每秒約 13,600 張，在圖的範圍之外。</figcaption>
+    </figure>
+    <div class="tbl"><table>
+      <thead><tr><th>槽位池</th><th class="n">acc %</th><th class="n">步數</th><th class="n">0.16.0 → 0.16.1 張/秒</th><th class="n">對同準確率固定步數</th><th class="n">對前緣</th></tr></thead>
+      <tbody>
+        <tr><td>λ=0.3</td><td class="n">66.75</td><td class="n">1.40</td><td class="n">79,684 → 92,653</td><td class="n">0.88×（2 步）</td><td class="n">0.82×</td></tr>
+        <tr class="hl"><td>λ=0.1</td><td class="n">67.78</td><td class="n">1.74</td><td class="n">70,475 → 79,210</td><td class="n">1.05×（3 步）</td><td class="n">0.89×</td></tr>
+        <tr><td>λ=0.03</td><td class="n">68.21</td><td class="n">2.08</td><td class="n">62,075 → 68,636</td><td class="n">1.00×（3 步）</td><td class="n">0.89×</td></tr>
+        <tr><td>λ=0.01</td><td class="n">68.37</td><td class="n">2.41</td><td class="n">56,754 → 62,068</td><td class="n">0.98×（4 步）</td><td class="n">0.87×</td></tr>
+      </tbody>
+    </table></div>
+    <p>槽位使用率 92–95%。編譯後的槽位池比編譯後的壓縮式 runner 快 5.3 倍（0.16.0，λ=0.1），準確率與平均步數兩者相同。</p>
+  </div>
+  <div class="sub">
+    <h3>6.4　每張圖的時間組成（λ=0.1）</h3>
+    <figure>
+      <div class="lg2">
+        <span><i style="background:var(--s4)"></i>V1（每張圖一次）</span>
+        <span><i style="background:var(--s1)"></i>模型步</span>
+        <span><i style="background:var(--s2)"></i>tick 額外開銷</span>
+      </div>
+      <div class="fig chart"><svg viewBox="0 0 640 214" role="img" aria-label="每張圖的時間組成">
+<line x1="190.0" y1="10" x2="190.0" y2="180" style="stroke:var(--grid)"/>
+<text x="190.0" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">0</text>
+<line x1="237.1" y1="10" x2="237.1" y2="180" style="stroke:var(--grid)"/>
+<text x="237.1" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">2</text>
+<line x1="284.3" y1="10" x2="284.3" y2="180" style="stroke:var(--grid)"/>
+<text x="284.3" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">4</text>
+<line x1="331.4" y1="10" x2="331.4" y2="180" style="stroke:var(--grid)"/>
+<text x="331.4" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">6</text>
+<line x1="378.6" y1="10" x2="378.6" y2="180" style="stroke:var(--grid)"/>
+<text x="378.6" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">8</text>
+<line x1="425.7" y1="10" x2="425.7" y2="180" style="stroke:var(--grid)"/>
+<text x="425.7" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">10</text>
+<line x1="472.9" y1="10" x2="472.9" y2="180" style="stroke:var(--grid)"/>
+<text x="472.9" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">12</text>
+<line x1="520.0" y1="10" x2="520.0" y2="180" style="stroke:var(--grid)"/>
+<text x="520.0" y="196" text-anchor="middle" style="fill:var(--fg2);font-size:11px;font-family:var(--font-mono)">14</text>
+<text x="355.0" y="210" text-anchor="middle" style="fill:var(--fg2);font-size:12px">µs / 張（越短越快）</text>
+<text x="180" y="30" text-anchor="end" style="fill:var(--fg);font-size:12.5px">固定 2 步</text>
+<rect x="190.0" y="17" width="68.4" height="20" style="fill:var(--s4)"/>
+<rect x="258.4" y="17" width="155.8" height="20" style="fill:var(--s1)"/>
+<text x="420.2" y="30" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">9.51<tspan style="fill:var(--fg2)"> 67.33%</tspan></text>
+<text x="180" y="64" text-anchor="end" style="fill:var(--fg);font-size:12.5px">混合 2 / 3 步（前緣）</text>
+<rect x="190.0" y="51" width="68.4" height="20" style="fill:var(--s4)"/>
+<rect x="258.4" y="51" width="196.8" height="20" style="fill:var(--s1)"/>
+<text x="461.2" y="64" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">11.25<tspan style="fill:var(--fg2)"> 67.78%</tspan></text>
+<text x="180" y="98" text-anchor="end" style="fill:var(--fg);font-size:12.5px">槽位池 λ=0.1</text>
+<rect x="190.0" y="85" width="68.4" height="20" style="fill:var(--s4)"/>
+<rect x="258.4" y="85" width="171.8" height="20" style="fill:var(--s1)"/>
+<rect x="430.2" y="85" width="58.0" height="20" style="fill:var(--s2)"/>
+<text x="494.2" y="98" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">12.65<tspan style="fill:var(--fg2)"> 67.78%</tspan></text>
+<text x="180" y="132" text-anchor="end" style="fill:var(--fg);font-size:12.5px">槽位池，tick 無額外開銷</text>
+<rect x="190.0" y="119" width="68.4" height="20" style="fill:var(--s4)"/>
+<rect x="258.4" y="119" width="171.8" height="20" style="fill:var(--s1)"/>
+<text x="436.2" y="132" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">10.19<tspan style="fill:var(--fg2)"> 上限</tspan></text>
+<text x="180" y="166" text-anchor="end" style="fill:var(--fg);font-size:12.5px">固定 3 步</text>
+<rect x="190.0" y="153" width="68.4" height="20" style="fill:var(--s4)"/>
+<rect x="258.4" y="153" width="244.2" height="20" style="fill:var(--s1)"/>
+<text x="508.6" y="166" style="fill:var(--fg);font-size:12px;font-family:var(--font-mono)">13.26<tspan style="fill:var(--fg2)"> 68.30%</tspan></text>
+</svg></div>
+      <figcaption>圖 3　每張圖的時間（µs）。10,000 張圖共 126 ms = V1 29.0 ms + 73 個 tick × 1.336 ms。固定步數的一步在 batch 256 約 1.00 ms，
+        tick 多出的 0.34 ms 來自讀出、停止決策、補位、記錄、每列遮罩與打包狀態。</figcaption>
+    </figure>
+    <p>上限：即使 tick 沒有額外開銷，λ=0.1 也只有約每秒 98,000 張、前緣的約 1.10 倍。原因有三：平均只有 1.74 步，自適應最多省下 2 步與 3 步之間的一部分；
+      V1 每張圖都要算（約 1/4 的時間），與步數無關；在槽位裡，第 0 步的列也付一次帶回饋的步數成本（約 3.9 µs），固定步數的第 0 步只是純掃描（約 2.7 µs）。</p>
+  </div>
+</section>
+
+<section id="end">
+  <h2><span class="no">7</span>結論與未完成項目</h2>
+  <ul>
+    <li><b>訓練</b>：新實驗一律用 <code>_FAST</code>、batch 256、依序執行。在同一張閒置 GPU 上，orig 快 2.9 倍、adapt_blt 快 4.6 倍，準確率在種子差異內。</li>
+    <li><b>batch 推論</b>：CIFAR-100 上用固定步數 + 編譯 + CUDA graph（<code>FixedDepthGraph(compile=True)</code>）。blt 2 步每秒 105,000 張，比原始 VCNet 高 2.8 點，速度是它的 91%。</li>
+    <li><b>自適應</b>：batch 1 有效；batch 256 的槽位池到前緣的 0.82–0.89 倍，理論上限約 1.10 倍。影像更大、每張圖的步數更多時（階段 4）空間較大，屆時再量。</li>
+    <li><b>未做</b>：
+      <ul>
+        <li>每個腦區各用一份狀態緩衝區（不打包）、調整補位上限：預估最多再快 5–10%，擱置到階段 4。</li>
+        <li>MPS 並行多個訓練行程（可選）。</li>
+        <li>階段 1 的縮窄 VCNet（<code>vcnet_r56p</code> / <code>r56f4</code>）訓練反而比全寬慢，可能是通道數不是 8 / 16 的倍數，bf16 卷積用不到快的 kernel；尚未驗證，之後的新寬度取 16 的倍數。</li>
+      </ul>
+    </li>
+  </ul>
+</section>
+
+
+<section id="data">
+  <h2><span class="no">A</span>全部數據</h2>
+  <p>本報告用到的所有量測，直接取自 <code>results/</code> 下的原始輸出。選一個類別查看。</p>
+  <div class="seg" role="group" aria-label="選擇數據類別" id="dataSel"></div>
+  <div id="dataBody" class="sub"></div>
+  <p class="note" id="dataNote"></p>
+</section>
+
+<section id="repro">
+  <h2><span class="no">B</span>重現指令</h2>
+  <p>訓練速度（每種設定量 3 × 50 次）：</p>
+  <pre>python scripts/bench_train.py c100_vcnet_orig c100_vcnet_adapt_blt</pre>
+  <p>快速管線的準確率驗證（3 個種子，依序）：</p>
+  <pre>python scripts/run_experiment.py c100_vcnet_adapt_blt_fast c100_vcnet_orig_fast --seeds 0 1 2</pre>
+  <p>batch 256 推論（只量編譯 + graph 的模式）與摘要：</p>
+  <pre>python scripts/benchmark_adaptive.py c100_vcnet_adapt_blt --seeds 0 1 2 --lams 0.01 0.03 0.1 0.3 --graph-only</pre>
+  <pre>python scripts/summarize.py c100_vcnet_adapt_blt --sections bench</pre>
+  <p class="note">原始輸出：<code>results/phase0_train_speed_h100/</code>、<code>results/vcnet_bench_idle_h100/</code>、<code>results/vcnet_phase2_h100/</code>。
+    量測請在沒有其他程式的 GPU 上進行；GPU 被共用時，同一次量測內的比較仍有參考價值，不同時段的數字不可比。</p>
+</section>
+</div>
+
+<script>
+(() => {
+  const D = {"p2a": {"c100_vcnet_adapt_blt": {"eager": {"fixedt=0": {"acc": [63.71, 0.78], "steps": [1.0, 0.0], "img_s": [66696.0, 1231.0], "bs1": [3.7, 0.106], "occ": null}, "fixedt=1": {"acc": [67.27, 0.56], "steps": [2.0, 0.0], "img_s": [12572.0, 11.0], "bs1": [7.342, 0.158], "occ": null}, "fixedt=2": {"acc": [68.29, 0.47], "steps": [3.0, 0.0], "img_s": [6854.0, 9.0], "bs1": [10.883, 0.35], "occ": null}, "fixedt=3": {"acc": [68.68, 0.55], "steps": [4.0, 0.0], "img_s": [4713.0, 3.0], "bs1": [14.738, 0.315], "occ": null}, "fixedt=4": {"acc": [68.64, 0.41], "steps": [5.0, 0.0], "img_s": [3589.0, 4.0], "bs1": [18.363, 0.18], "occ": null}, "fixedt=5": {"acc": [68.65, 0.31], "steps": [6.0, 0.0], "img_s": [2898.0, 3.0], "bs1": [21.685, 0.279], "occ": null}, "fixedt=6": {"acc": [68.56, 0.28], "steps": [7.0, 0.0], "img_s": [2433.0, 4.0], "bs1": [25.133, 0.455], "occ": null}, "fixedt=7": {"acc": [68.58, 0.28], "steps": [8.0, 0.0], "img_s": [2095.0, 2.0], "bs1": [28.378, 0.536], "occ": null}, "lam=0.003": {"acc": [68.46, 0.65], "steps": [2.89, 0.62], "img_s": [4931.0, 746.0], "bs1": [11.942, 3.077], "occ": null}, "lam=0.01": {"acc": [68.34, 0.55], "steps": [2.41, 0.4], "img_s": [5950.0, 493.0], "bs1": [10.106, 1.985], "occ": null}, "lam=0.03": {"acc": [68.2, 0.58], "steps": [2.09, 0.26], "img_s": [6867.0, 762.0], "bs1": [8.501, 1.152], "occ": null}, "lam=0.1": {"acc": [67.77, 0.42], "steps": [1.74, 0.05], "img_s": [8942.0, 1010.0], "bs1": [7.074, 0.306], "occ": null}, "lam=0.3": {"acc": [66.74, 0.45], "steps": [1.4, 0.08], "img_s": [12240.0, 1182.0], "bs1": [6.055, 0.115], "occ": null}}, "eager-triton": {"lam=0.003": {"acc": [68.47, 0.65], "steps": [2.9, 0.62], "img_s": [5082.0, 829.0], "bs1": [10.88, 2.713], "occ": null}, "lam=0.01": {"acc": [68.34, 0.55], "steps": [2.41, 0.4], "img_s": [6177.0, 435.0], "bs1": [9.529, 1.952], "occ": null}, "lam=0.03": {"acc": [68.2, 0.58], "steps": [2.09, 0.26], "img_s": [7106.0, 721.0], "bs1": [8.896, 2.36], "occ": null}, "lam=0.1": {"acc": [67.77, 0.42], "steps": [1.74, 0.05], "img_s": [9545.0, 997.0], "bs1": [6.594, 0.192], "occ": null}, "lam=0.3": {"acc": [66.74, 0.45], "steps": [1.4, 0.08], "img_s": [13202.0, 1511.0], "bs1": [5.581, 0.25], "occ": null}}, "slots": {"lam=0.003": {"acc": [68.49, 0.65], "steps": [2.89, 0.62], "img_s": [4986.0, 1079.0], "bs1": null, "occ": [95.1, 2.2]}, "lam=0.01": {"acc": [68.34, 0.56], "steps": [2.41, 0.4], "img_s": [5804.0, 850.0], "bs1": null, "occ": [94.1, 2.2]}, "lam=0.03": {"acc": [68.19, 0.57], "steps": [2.08, 0.26], "img_s": [6539.0, 588.0], "bs1": null, "occ": [92.7, 2.9]}, "lam=0.1": {"acc": [67.77, 0.44], "steps": [1.74, 0.05], "img_s": [7864.0, 192.0], "bs1": null, "occ": [94.2, 1.0]}, "lam=0.3": {"acc": [66.73, 0.43], "steps": [1.4, 0.08], "img_s": [8013.0, 2268.0], "bs1": null, "occ": [92.9, 1.3]}}, "slots-triton": {"lam=0.003": {"acc": [68.49, 0.64], "steps": [2.9, 0.62], "img_s": [4023.0, 2463.0], "bs1": null, "occ": [94.7, 2.6]}, "lam=0.01": {"acc": [68.34, 0.56], "steps": [2.41, 0.4], "img_s": [4687.0, 2724.0], "bs1": null, "occ": [94.1, 2.2]}, "lam=0.03": {"acc": [68.19, 0.57], "steps": [2.09, 0.26], "img_s": [5210.0, 2901.0], "bs1": null, "occ": [92.4, 2.4]}, "lam=0.1": {"acc": [67.77, 0.44], "steps": [1.74, 0.05], "img_s": [7922.0, 173.0], "bs1": null, "occ": [94.3, 1.0]}, "lam=0.3": {"acc": [66.73, 0.43], "steps": [1.4, 0.08], "img_s": [9602.0, 543.0], "bs1": null, "occ": [92.9, 1.3]}}, "graph-bs256": {"fixedt=0": {"acc": [63.71, 0.78], "steps": [1.0, 0.0], "img_s": [87205.0, 2605.0], "bs1": null, "occ": null}, "fixedt=1": {"acc": [67.27, 0.56], "steps": [2.0, 0.0], "img_s": [12778.0, 42.0], "bs1": null, "occ": null}, "fixedt=2": {"acc": [68.29, 0.47], "steps": [3.0, 0.0], "img_s": [6969.0, 38.0], "bs1": null, "occ": null}, "fixedt=3": {"acc": [68.68, 0.55], "steps": [4.0, 0.0], "img_s": [4788.0, 9.0], "bs1": null, "occ": null}, "fixedt=4": {"acc": [68.64, 0.41], "steps": [5.0, 0.0], "img_s": [3648.0, 6.0], "bs1": null, "occ": null}, "fixedt=5": {"acc": [68.65, 0.31], "steps": [6.0, 0.0], "img_s": [2939.0, 6.0], "bs1": null, "occ": null}, "fixedt=6": {"acc": [68.56, 0.28], "steps": [7.0, 0.0], "img_s": [2466.0, 2.0], "bs1": null, "occ": null}, "fixedt=7": {"acc": [68.58, 0.28], "steps": [8.0, 0.0], "img_s": [2025.0, 171.0], "bs1": null, "occ": null}, "lam=0.003": {"acc": [68.49, 0.64], "steps": [2.9, 0.62], "img_s": [3963.0, 2389.0], "bs1": null, "occ": [94.7, 2.6]}, "lam=0.01": {"acc": [68.34, 0.56], "steps": [2.41, 0.4], "img_s": [4542.0, 2510.0], "bs1": null, "occ": [94.1, 2.2]}, "lam=0.03": {"acc": [68.19, 0.57], "steps": [2.09, 0.26], "img_s": [5061.0, 2641.0], "bs1": null, "occ": [92.4, 2.4]}, "lam=0.1": {"acc": [67.77, 0.44], "steps": [1.74, 0.05], "img_s": [6095.0, 3072.0], "bs1": null, "occ": [94.3, 1.0]}, "lam=0.3": {"acc": [66.73, 0.43], "steps": [1.4, 0.08], "img_s": [9594.0, 552.0], "bs1": null, "occ": [92.9, 1.3]}}, "graph-compiled-bs256": {"fixedt=0": {"acc": [63.72, 0.73], "steps": [1.0, 0.0], "img_s": [180759.0, 4534.0], "bs1": null, "occ": null}, "fixedt=1": {"acc": [67.33, 0.6], "steps": [2.0, 0.0], "img_s": [105289.0, 102.0], "bs1": null, "occ": null}, "fixedt=2": {"acc": [68.3, 0.42], "steps": [3.0, 0.0], "img_s": [76032.0, 2410.0], "bs1": null, "occ": null}, "fixedt=3": {"acc": [68.65, 0.57], "steps": [4.0, 0.0], "img_s": [60074.0, 1909.0], "bs1": null, "occ": null}, "fixedt=4": {"acc": [68.66, 0.38], "steps": [5.0, 0.0], "img_s": [47220.0, 11.0], "bs1": null, "occ": null}, "fixedt=5": {"acc": [68.64, 0.29], "steps": [6.0, 0.0], "img_s": [40695.0, 1366.0], "bs1": null, "occ": null}, "fixedt=6": {"acc": [68.57, 0.27], "steps": [7.0, 0.0], "img_s": [35261.0, 1186.0], "bs1": null, "occ": null}, "fixedt=7": {"acc": [68.59, 0.27], "steps": [8.0, 0.0], "img_s": [30438.0, 6.0], "bs1": null, "occ": null}, "lam=0.003": {"acc": [68.49, 0.65], "steps": [2.9, 0.62], "img_s": [49745.0, 8651.0], "bs1": null, "occ": [94.6, 2.2]}, "lam=0.01": {"acc": [68.38, 0.59], "steps": [2.41, 0.4], "img_s": [56754.0, 5628.0], "bs1": null, "occ": [93.7, 2.5]}, "lam=0.03": {"acc": [68.24, 0.58], "steps": [2.09, 0.26], "img_s": [62075.0, 3775.0], "bs1": null, "occ": [92.8, 2.9]}, "lam=0.1": {"acc": [67.83, 0.46], "steps": [1.74, 0.05], "img_s": [70475.0, 1032.0], "bs1": null, "occ": [94.3, 0.9]}, "lam=0.3": {"acc": [66.7, 0.49], "steps": [1.4, 0.08], "img_s": [79684.0, 2907.0], "bs1": null, "occ": [92.9, 1.3]}}, "compiled": {"fixedt=0": {"acc": [63.71, 0.75], "steps": [1.0, 0.0], "img_s": [72375.0, 2216.0], "bs1": [3.238, 0.064], "occ": null}, "fixedt=1": {"acc": [67.28, 0.56], "steps": [2.0, 0.0], "img_s": [40590.0, 1263.0], "bs1": [5.566, 0.106], "occ": null}, "fixedt=2": {"acc": [68.31, 0.44], "steps": [3.0, 0.0], "img_s": [28483.0, 512.0], "bs1": [7.853, 0.153], "occ": null}, "fixedt=3": {"acc": [68.67, 0.56], "steps": [4.0, 0.0], "img_s": [21796.0, 286.0], "bs1": [10.023, 0.1], "occ": null}, "fixedt=4": {"acc": [68.66, 0.41], "steps": [5.0, 0.0], "img_s": [18105.0, 112.0], "bs1": [12.156, 0.163], "occ": null}, "fixedt=5": {"acc": [68.66, 0.3], "steps": [6.0, 0.0], "img_s": [15248.0, 261.0], "bs1": [14.447, 0.078], "occ": null}, "fixedt=6": {"acc": [68.58, 0.26], "steps": [7.0, 0.0], "img_s": [12987.0, 100.0], "bs1": [16.876, 0.189], "occ": null}, "fixedt=7": {"acc": [68.58, 0.26], "steps": [8.0, 0.0], "img_s": [11388.0, 271.0], "bs1": [19.352, 0.811], "occ": null}, "lam=0.003": {"acc": [68.48, 0.61], "steps": [2.9, 0.62], "img_s": [10030.0, 738.0], "bs1": [8.815, 1.808], "occ": null}, "lam=0.01": {"acc": [68.37, 0.55], "steps": [2.41, 0.4], "img_s": [11007.0, 2913.0], "bs1": [8.388, 0.667], "occ": null}, "lam=0.03": {"acc": [68.2, 0.57], "steps": [2.08, 0.26], "img_s": [11445.0, 2875.0], "bs1": [7.402, 0.672], "occ": null}, "lam=0.1": {"acc": [67.79, 0.43], "steps": [1.74, 0.05], "img_s": [13241.0, 3304.0], "bs1": [5.662, 0.172], "occ": null}, "lam=0.3": {"acc": [66.74, 0.46], "steps": [1.4, 0.08], "img_s": [17530.0, 1324.0], "bs1": [4.84, 0.112], "occ": null}}}, "c100_vcnet_orig": {"eager": {"fixedt=0": {"acc": [61.0, 0.94], "steps": [1.0, 0.0], "img_s": [66894.0, 500.0], "bs1": [3.604, 0.044], "occ": null}, "fixedt=1": {"acc": [64.56, 0.93], "steps": [2.0, 0.0], "img_s": [29018.0, 110.0], "bs1": [6.627, 0.301], "occ": null}}, "graph-bs256": {"fixedt=0": {"acc": [61.0, 0.94], "steps": [1.0, 0.0], "img_s": [86556.0, 2676.0], "bs1": null, "occ": null}, "fixedt=1": {"acc": [64.56, 0.93], "steps": [2.0, 0.0], "img_s": [31513.0, 691.0], "bs1": null, "occ": null}}, "graph-compiled-bs256": {"fixedt=0": {"acc": [61.01, 0.95], "steps": [1.0, 0.0], "img_s": [180759.0, 182.0], "bs1": null, "occ": null}, "fixedt=1": {"acc": [64.54, 0.91], "steps": [2.0, 0.0], "img_s": [115122.0, 36.0], "bs1": null, "occ": null}}, "compiled": {"fixedt=0": {"acc": [61.01, 0.92], "steps": [1.0, 0.0], "img_s": [76418.0, 813.0], "bs1": [3.1, 0.022], "occ": null}, "fixedt=1": {"acc": [64.6, 0.96], "steps": [2.0, 0.0], "img_s": [45993.0, 356.0], "bs1": [4.874, 0.108], "occ": null}}}}, "p2b": {"c100_vcnet_adapt_blt": {"graph-compiled-bs256": {"fixedt=0": {"acc": [63.72, 0.73], "steps": [1.0, 0.0], "img_s": [178226.0, 68.0], "bs1": null, "occ": null}, "fixedt=1": {"acc": [67.33, 0.6], "steps": [2.0, 0.0], "img_s": [105170.0, 103.0], "bs1": null, "occ": null}, "fixedt=2": {"acc": [68.3, 0.42], "steps": [3.0, 0.0], "img_s": [75391.0, 1309.0], "bs1": null, "occ": null}, "fixedt=3": {"acc": [68.65, 0.57], "steps": [4.0, 0.0], "img_s": [58555.0, 1325.0], "bs1": null, "occ": null}, "fixedt=4": {"acc": [68.66, 0.38], "steps": [5.0, 0.0], "img_s": [48123.0, 1613.0], "bs1": null, "occ": null}, "fixedt=5": {"acc": [68.64, 0.29], "steps": [6.0, 0.0], "img_s": [39897.0, 4.0], "bs1": null, "occ": null}, "fixedt=6": {"acc": [68.57, 0.27], "steps": [7.0, 0.0], "img_s": [34704.0, 295.0], "bs1": null, "occ": null}, "fixedt=7": {"acc": [68.59, 0.27], "steps": [8.0, 0.0], "img_s": [31600.0, 1001.0], "bs1": null, "occ": null}, "lam=0.01": {"acc": [68.37, 0.6], "steps": [2.41, 0.4], "img_s": [62068.0, 7494.0], "bs1": null, "occ": [94.0, 2.1]}, "lam=0.03": {"acc": [68.21, 0.58], "steps": [2.08, 0.25], "img_s": [68636.0, 4979.0], "bs1": null, "occ": [92.7, 2.9]}, "lam=0.1": {"acc": [67.78, 0.44], "steps": [1.74, 0.05], "img_s": [79210.0, 1285.0], "bs1": null, "occ": [93.5, 2.4]}, "lam=0.3": {"acc": [66.75, 0.45], "steps": [1.4, 0.08], "img_s": [92653.0, 4034.0], "bs1": null, "occ": [92.9, 1.3]}}}}, "idle": {"c100_vcnet_orig": {"eager": {"fixedt=0": {"acc": [61.00333333333334, 0.9429916931412156], "steps": [1.0, 0.0], "img_s": [60678.666666666664, 6411.221750441435], "bs1": [3.9396666666666667, 0.1797813486803716], "n": 3, "seeds_bs1": [4.109, 3.959, 3.751]}, "fixedt=1": {"acc": [64.56, 0.9331130692472389], "steps": [2.0, 0.0], "img_s": [29377.0, 24.020824298928627], "bs1": [6.851333333333333, 0.39558732706361227], "n": 3, "seeds_bs1": [6.614, 7.308, 6.632]}}, "compiled": {"fixedt=0": {"acc": [61.00666666666667, 0.9231648462400072], "steps": [1.0, 0.0], "img_s": [76681.33333333333, 1209.39337410676], "bs1": [3.4623333333333335, 0.13191411347287046], "n": 3, "seeds_bs1": [3.553, 3.523, 3.311]}, "fixedt=1": {"acc": [64.60000000000001, 0.9699484522385723], "steps": [2.0, 0.0], "img_s": [41499.333333333336, 2510.884771018641], "bs1": [5.632, 0.33349062955351505], "n": 3, "seeds_bs1": [5.496, 6.012, 5.388]}}, "cudagraph-bs1": {"fixedt=0": {"acc": [61.00333333333334, 0.9429916931412156], "steps": [1.0, 0.0], "img_s": null, "bs1": [1.059, 1.058, 1.059], "n": 3, "seeds_bs1": [1.058, 1.059, 1.059]}, "fixedt=1": {"acc": [64.56, 0.9331130692472389], "steps": [2.0, 0.0], "img_s": null, "bs1": [1.908, 1.766, 1.93], "n": 3, "seeds_bs1": [1.93, 1.908, 1.766]}}}, "c100_vcnet_adapt_carry": {"eager": {"fixedt=0": {"acc": [63.693333333333335, 0.6107645481962204], "steps": [1.0, 0.0], "img_s": [64700.666666666664, 8345.896856140347], "bs1": [3.7133333333333334, 0.319633123022839], "n": 3, "seeds_bs1": [3.972, 3.812, 3.356]}, "fixedt=1": {"acc": [65.33, 0.40951190458886566], "steps": [2.0, 0.0], "img_s": [29212.0, 89.11228871485683], "bs1": [6.917, 0.8705469545061889], "n": 3, "seeds_bs1": [6.761, 7.855, 6.135]}, "fixedt=2": {"acc": [65.43333333333334, 0.5181055233572963], "steps": [3.0, 0.0], "img_s": [17970.666666666668, 57.49202843293436], "bs1": [9.752666666666666, 0.8678279399358686], "n": 3, "seeds_bs1": [10.074, 10.414, 8.77]}, "fixedt=3": {"acc": [65.37333333333333, 0.5464735431229315], "steps": [4.0, 0.0], "img_s": [13051.666666666666, 149.85771028990578], "bs1": [12.859, 0.7186577766920773], "n": 3, "seeds_bs1": [13.087, 13.436, 12.054]}, "fixedt=4": {"acc": [65.42666666666666, 0.5643875736879149], "steps": [5.0, 0.0], "img_s": [10183.333333333334, 33.126021996812916], "bs1": [15.661, 1.5588293684685308], "n": 3, "seeds_bs1": [15.624, 17.238, 14.121]}, "fixedt=5": {"acc": [65.38, 0.5480875842417846], "steps": [6.0, 0.0], "img_s": [8367.666666666666, 59.19740985324724], "bs1": [18.903, 1.7424313472845925], "n": 3, "seeds_bs1": [19.301, 20.412, 16.996]}, "fixedt=6": {"acc": [65.44333333333333, 0.5064911976859314], "steps": [7.0, 0.0], "img_s": [7109.666666666667, 92.93187468965282], "bs1": [22.147, 1.9783950566052266], "n": 3, "seeds_bs1": [23.008, 23.549, 19.884]}, "fixedt=7": {"acc": [65.39999999999999, 0.5291502622129176], "steps": [8.0, 0.0], "img_s": [6163.666666666667, 55.77036249956901], "bs1": [26.058666666666667, 2.657329549253034], "n": 3, "seeds_bs1": [28.183, 26.914, 23.079]}, "lam=0.003": {"acc": [64.89, 0.9214662229295241], "steps": [1.5466666666666666, 0.5828664798505172], "img_s": [29186.666666666668, 24595.430923920267], "bs1": [7.064, 2.814763933263321], "n": 3, "seeds_bs1": [6.92, 9.948, 4.324]}, "lam=0.01": {"acc": [64.84333333333333, 0.8450049309520812], "steps": [1.4533333333333334, 0.4764801499887832], "img_s": [31097.0, 22066.368369081487], "bs1": [6.503, 2.147498079160957], "n": 3, "seeds_bs1": [6.861, 8.449, 4.199]}, "lam=0.03": {"acc": [64.84, 0.8501764522732929], "steps": [1.36, 0.37040518354904267], "img_s": [30442.666666666668, 22487.32786111621], "bs1": [6.328333333333333, 2.0861894289189884], "n": 3, "seeds_bs1": [6.247, 8.454, 4.284]}, "lam=0.1": {"acc": [64.71333333333334, 0.686755657663871], "steps": [1.2266666666666666, 0.22501851775650225], "img_s": [31615.333333333332, 20563.610051091062], "bs1": [5.413, 1.2066577808144279], "n": 3, "seeds_bs1": [5.367, 6.642, 4.23]}, "lam=0.3": {"acc": [64.21666666666667, 0.548117992163489], "steps": [1.09, 0.0793725393319377], "img_s": [33249.0, 20469.424320190345], "bs1": [5.252, 0.7732832598731205], "n": 3, "seeds_bs1": [5.361, 5.965, 4.43]}}, "eager-triton": {"fixedt=0": {"acc": [63.693333333333335, 0.6107645481962204], "steps": [1.0, 0.0], "img_s": [64700.666666666664, 8345.896856140347], "bs1": [3.7133333333333334, 0.319633123022839], "n": 3, "seeds_bs1": [3.972, 3.812, 3.356]}, "fixedt=1": {"acc": [65.33, 0.40951190458886566], "steps": [2.0, 0.0], "img_s": [29212.0, 89.11228871485683], "bs1": [6.917, 0.8705469545061889], "n": 3, "seeds_bs1": [6.761, 7.855, 6.135]}, "fixedt=2": {"acc": [65.43333333333334, 0.5181055233572963], "steps": [3.0, 0.0], "img_s": [17970.666666666668, 57.49202843293436], "bs1": [9.752666666666666, 0.8678279399358686], "n": 3, "seeds_bs1": [10.074, 10.414, 8.77]}, "fixedt=3": {"acc": [65.37333333333333, 0.5464735431229315], "steps": [4.0, 0.0], "img_s": [13051.666666666666, 149.85771028990578], "bs1": [12.859, 0.7186577766920773], "n": 3, "seeds_bs1": [13.087, 13.436, 12.054]}, "fixedt=4": {"acc": [65.42666666666666, 0.5643875736879149], "steps": [5.0, 0.0], "img_s": [10183.333333333334, 33.126021996812916], "bs1": [15.661, 1.5588293684685308], "n": 3, "seeds_bs1": [15.624, 17.238, 14.121]}, "fixedt=5": {"acc": [65.38, 0.5480875842417846], "steps": [6.0, 0.0], "img_s": [8367.666666666666, 59.19740985324724], "bs1": [18.903, 1.7424313472845925], "n": 3, "seeds_bs1": [19.301, 20.412, 16.996]}, "fixedt=6": {"acc": [65.44333333333333, 0.5064911976859314], "steps": [7.0, 0.0], "img_s": [7109.666666666667, 92.93187468965282], "bs1": [22.147, 1.9783950566052266], "n": 3, "seeds_bs1": [23.008, 23.549, 19.884]}, "fixedt=7": {"acc": [65.39999999999999, 0.5291502622129176], "steps": [8.0, 0.0], "img_s": [6163.666666666667, 55.77036249956901], "bs1": [26.058666666666667, 2.657329549253034], "n": 3, "seeds_bs1": [28.183, 26.914, 23.079]}, "lam=0.003": {"acc": [64.89, 0.9214662229295241], "steps": [1.5466666666666666, 0.5828664798505172], "img_s": [31009.0, 26344.134546422283], "bs1": [6.324333333333333, 2.184120036383837], "n": 3, "seeds_bs1": [6.513, 8.408, 4.052]}, "lam=0.01": {"acc": [64.84333333333333, 0.8450049309520812], "steps": [1.4533333333333334, 0.4764801499887832], "img_s": [33840.0, 21432.398185924038], "bs1": [5.986, 2.212453615332986], "n": 3, "seeds_bs1": [5.627, 8.356, 3.975]}, "lam=0.03": {"acc": [64.84, 0.8501764522732929], "steps": [1.36, 0.37040518354904267], "img_s": [33561.0, 22573.31125466532], "bs1": [5.915666666666667, 1.9007262647033982], "n": 3, "seeds_bs1": [5.855, 7.846, 4.046]}, "lam=0.1": {"acc": [64.71333333333334, 0.686755657663871], "steps": [1.2266666666666666, 0.22501851775650225], "img_s": [33896.333333333336, 22502.068045700453], "bs1": [5.307, 1.2057777573002415], "n": 3, "seeds_bs1": [5.357, 6.487, 4.077]}, "lam=0.3": {"acc": [64.21666666666667, 0.548117992163489], "steps": [1.09, 0.0793725393319377], "img_s": [37500.666666666664, 20771.372422960725], "bs1": [4.7043333333333335, 0.6660828276823636], "n": 3, "seeds_bs1": [4.772, 5.334, 4.007]}}, "compiled": {"fixedt=0": {"acc": [63.7, 0.5747173218200419], "steps": [1.0, 0.0], "img_s": [72888.66666666667, 8528.115637896413], "bs1": [3.361666666666667, 0.3208135491735555], "n": 3, "seeds_bs1": [3.401, 3.661, 3.023]}, "fixedt=1": {"acc": [65.28, 0.4150903516103444], "steps": [2.0, 0.0], "img_s": [42181.666666666664, 4317.650093897528], "bs1": [5.611, 0.48200933600916934], "n": 3, "seeds_bs1": [5.575, 6.11, 5.148]}, "fixedt=2": {"acc": [65.45666666666666, 0.5253887449625569], "steps": [3.0, 0.0], "img_s": [29755.0, 3393.2802713598535], "bs1": [7.762666666666667, 0.9173725161205419], "n": 3, "seeds_bs1": [7.303, 8.819, 7.166]}, "fixedt=3": {"acc": [65.42333333333333, 0.5387330817142468], "steps": [4.0, 0.0], "img_s": [23127.333333333332, 2523.559060797534], "bs1": [9.559000000000001, 0.38101312313357427], "n": 3, "seeds_bs1": [9.64, 9.893, 9.144]}, "fixedt=4": {"acc": [65.41, 0.5480875842417846], "steps": [5.0, 0.0], "img_s": [19650.333333333332, 887.1923880046161], "bs1": [12.52, 1.3529482621297835], "n": 3, "seeds_bs1": [13.092, 13.493, 10.975]}, "fixedt=5": {"acc": [65.44666666666666, 0.5518453889753331], "steps": [6.0, 0.0], "img_s": [15522.666666666666, 2559.7316916687446], "bs1": [14.401, 1.6843562568530457], "n": 3, "seeds_bs1": [14.441, 16.065, 12.697]}, "fixedt=6": {"acc": [65.40666666666667, 0.517815926110172], "steps": [7.0, 0.0], "img_s": [14192.333333333334, 1420.704872003096], "bs1": [15.471333333333332, 2.2910734019959573], "n": 3, "seeds_bs1": [18.08, 13.786, 14.548]}, "fixedt=7": {"acc": [65.40333333333334, 0.5107184482014888], "steps": [8.0, 0.0], "img_s": [14192.666666666666, 983.5701974609302], "bs1": [17.550666666666668, 1.9964794848265628], "n": 3, "seeds_bs1": [19.856, 16.395, 16.401]}, "lam=0.003": {"acc": [64.86666666666666, 0.9155508360180399], "steps": [1.55, 0.5881326381013045], "img_s": [35219.666666666664, 28633.78085990974], "bs1": [5.185333333333333, 1.636691276121839], "n": 3, "seeds_bs1": [5.492, 6.647, 3.417]}, "lam=0.01": {"acc": [64.83, 0.8501764522732926], "steps": [1.4533333333333334, 0.4764801499887832], "img_s": [39640.333333333336, 24918.84773285742], "bs1": [4.882333333333333, 1.3297271649978928], "n": 3, "seeds_bs1": [5.165, 6.048, 3.434]}, "lam=0.03": {"acc": [64.82666666666667, 0.8651204155106599], "steps": [1.36, 0.37040518354904267], "img_s": [40642.0, 26171.156126545116], "bs1": [4.748, 1.134245123419096], "n": 3, "seeds_bs1": [5.46, 5.344, 3.44]}, "lam=0.1": {"acc": [64.69, 0.6963476143421475], "steps": [1.2266666666666666, 0.22501851775650225], "img_s": [39590.0, 25600.404117904076], "bs1": [4.373, 0.728928665920061], "n": 3, "seeds_bs1": [4.894, 4.685, 3.54]}, "lam=0.3": {"acc": [64.24000000000001, 0.5747173218200435], "steps": [1.09, 0.0793725393319377], "img_s": [40141.0, 23716.503768473125], "bs1": [4.015333333333333, 0.6475587489435484], "n": 3, "seeds_bs1": [4.737, 3.824, 3.485]}}, "cudagraph-bs1": {"fixedt=0": {"acc": [63.693333333333335, 0.6107645481962204], "steps": [1.0, 0.0], "img_s": null, "bs1": [1.058, 1.058, 1.06], "n": 3, "seeds_bs1": [1.06, 1.058, 1.058]}, "fixedt=1": {"acc": [65.33, 0.40951190458886566], "steps": [2.0, 0.0], "img_s": null, "bs1": [1.809, 1.772, 1.913], "n": 3, "seeds_bs1": [1.809, 1.772, 1.913]}, "fixedt=2": {"acc": [65.43333333333334, 0.5181055233572963], "steps": [3.0, 0.0], "img_s": null, "bs1": [2.562, 2.562, 2.563], "n": 3, "seeds_bs1": [2.563, 2.562, 2.562]}, "fixedt=3": {"acc": [65.37333333333333, 0.5464735431229315], "steps": [4.0, 0.0], "img_s": null, "bs1": [3.35, 3.349, 3.381], "n": 3, "seeds_bs1": [3.35, 3.349, 3.381]}, "fixedt=4": {"acc": [65.42666666666666, 0.5643875736879149], "steps": [5.0, 0.0], "img_s": null, "bs1": [4.138, 4.137, 4.138], "n": 3, "seeds_bs1": [4.138, 4.138, 4.137]}, "fixedt=5": {"acc": [65.38, 0.5480875842417846], "steps": [6.0, 0.0], "img_s": null, "bs1": [4.928, 4.927, 4.928], "n": 3, "seeds_bs1": [4.928, 4.928, 4.927]}, "fixedt=6": {"acc": [65.44333333333333, 0.5064911976859314], "steps": [7.0, 0.0], "img_s": null, "bs1": [5.722, 5.722, 5.722], "n": 3, "seeds_bs1": [5.722, 5.722, 5.722]}, "fixedt=7": {"acc": [65.39999999999999, 0.5291502622129176], "steps": [8.0, 0.0], "img_s": null, "bs1": [6.508, 6.508, 6.509], "n": 3, "seeds_bs1": [6.509, 6.508, 6.508]}, "lam=0.003": {"acc": [64.89, 0.9214662229295241], "steps": [1.5466666666666666, 0.5828664798505172], "img_s": null, "bs1": [1.527, 1.089, 2.121], "n": 3, "seeds_bs1": [1.527, 2.121, 1.089]}, "lam=0.01": {"acc": [64.84333333333333, 0.8450049309520812], "steps": [1.4533333333333334, 0.4764801499887832], "img_s": null, "bs1": [1.447, 1.089, 1.944], "n": 3, "seeds_bs1": [1.447, 1.944, 1.089]}, "lam=0.03": {"acc": [64.84, 0.8501764522732929], "steps": [1.36, 0.37040518354904267], "img_s": null, "bs1": [1.397, 1.088, 1.74], "n": 3, "seeds_bs1": [1.397, 1.74, 1.088]}, "lam=0.1": {"acc": [64.71333333333334, 0.686755657663871], "steps": [1.2266666666666666, 0.22501851775650225], "img_s": null, "bs1": [1.312, 1.09, 1.497], "n": 3, "seeds_bs1": [1.312, 1.497, 1.09]}, "lam=0.3": {"acc": [64.21666666666667, 0.548117992163489], "steps": [1.09, 0.0793725393319377], "img_s": null, "bs1": [1.201, 1.089, 1.204], "n": 3, "seeds_bs1": [1.201, 1.204, 1.089]}}, "cudagraph-bs1-triton": {"fixedt=0": {"acc": [63.693333333333335, 0.6107645481962204], "steps": [1.0, 0.0], "img_s": null, "bs1": [1.058, 1.058, 1.06], "n": 3, "seeds_bs1": [1.06, 1.058, 1.058]}, "fixedt=1": {"acc": [65.33, 0.40951190458886566], "steps": [2.0, 0.0], "img_s": null, "bs1": [1.809, 1.772, 1.913], "n": 3, "seeds_bs1": [1.809, 1.772, 1.913]}, "fixedt=2": {"acc": [65.43333333333334, 0.5181055233572963], "steps": [3.0, 0.0], "img_s": null, "bs1": [2.562, 2.562, 2.563], "n": 3, "seeds_bs1": [2.563, 2.562, 2.562]}, "fixedt=3": {"acc": [65.37333333333333, 0.5464735431229315], "steps": [4.0, 0.0], "img_s": null, "bs1": [3.35, 3.349, 3.381], "n": 3, "seeds_bs1": [3.35, 3.349, 3.381]}, "fixedt=4": {"acc": [65.42666666666666, 0.5643875736879149], "steps": [5.0, 0.0], "img_s": null, "bs1": [4.138, 4.137, 4.138], "n": 3, "seeds_bs1": [4.138, 4.138, 4.137]}, "fixedt=5": {"acc": [65.38, 0.5480875842417846], "steps": [6.0, 0.0], "img_s": null, "bs1": [4.928, 4.927, 4.928], "n": 3, "seeds_bs1": [4.928, 4.928, 4.927]}, "fixedt=6": {"acc": [65.44333333333333, 0.5064911976859314], "steps": [7.0, 0.0], "img_s": null, "bs1": [5.722, 5.722, 5.722], "n": 3, "seeds_bs1": [5.722, 5.722, 5.722]}, "fixedt=7": {"acc": [65.39999999999999, 0.5291502622129176], "steps": [8.0, 0.0], "img_s": null, "bs1": [6.508, 6.508, 6.509], "n": 3, "seeds_bs1": [6.509, 6.508, 6.508]}, "lam=0.003": {"acc": [64.89, 0.9214662229295241], "steps": [1.5466666666666666, 0.5828664798505172], "img_s": null, "bs1": [1.422, 1.068, 2.124], "n": 3, "seeds_bs1": [1.422, 2.124, 1.068]}, "lam=0.01": {"acc": [64.84333333333333, 0.8450049309520812], "steps": [1.4533333333333334, 0.4764801499887832], "img_s": null, "bs1": [1.346, 1.021, 1.808], "n": 3, "seeds_bs1": [1.346, 1.808, 1.021]}, "lam=0.03": {"acc": [64.84, 0.8501764522732929], "steps": [1.36, 0.37040518354904267], "img_s": null, "bs1": [1.31, 1.021, 1.62], "n": 3, "seeds_bs1": [1.31, 1.62, 1.021]}, "lam=0.1": {"acc": [64.71333333333334, 0.686755657663871], "steps": [1.2266666666666666, 0.22501851775650225], "img_s": null, "bs1": [1.218, 1.021, 1.4], "n": 3, "seeds_bs1": [1.218, 1.4, 1.021]}, "lam=0.3": {"acc": [64.21666666666667, 0.548117992163489], "steps": [1.09, 0.0793725393319377], "img_s": null, "bs1": [1.116, 1.021, 1.126], "n": 3, "seeds_bs1": [1.116, 1.126, 1.021]}}}, "c100_vcnet_adapt_blt": {"eager": {"fixedt=0": {"acc": [63.71333333333333, 0.7769384359994934], "steps": [1.0, 0.0], "img_s": [65990.33333333333, 2834.660885067795], "bs1": [3.628, 0.03223352292257246], "n": 3, "seeds_bs1": [3.606, 3.665, 3.613]}, "fixedt=1": {"acc": [67.26666666666667, 0.555907666194066], "steps": [2.0, 0.0], "img_s": [11609.666666666666, 1740.4230328668182], "bs1": [7.415333333333333, 0.09013508380943218], "n": 3, "seeds_bs1": [7.511, 7.332, 7.403]}, "fixedt=2": {"acc": [68.29, 0.468721665810318], "steps": [3.0, 0.0], "img_s": [5784.333333333333, 951.4685141050824], "bs1": [10.955333333333334, 0.5875136877838116], "n": 3, "seeds_bs1": [11.1, 10.309, 11.457]}, "fixedt=3": {"acc": [68.68, 0.5452522352086282], "steps": [4.0, 0.0], "img_s": [4369.333333333333, 603.9216284695667], "bs1": [14.299, 0.34022933442018144], "n": 3, "seeds_bs1": [14.535, 13.909, 14.453]}, "fixedt=4": {"acc": [68.64, 0.40632499307819925], "steps": [5.0, 0.0], "img_s": [3318.6666666666665, 479.489659255894], "bs1": [17.610333333333333, 0.5790831834316497], "n": 3, "seeds_bs1": [18.067, 16.959, 17.805]}, "fixedt=5": {"acc": [68.65, 0.3117691453624015], "steps": [6.0, 0.0], "img_s": [2908.6666666666665, 2.309401076758503], "bs1": [21.114, 0.47442491502871076], "n": 3, "seeds_bs1": [20.987, 20.716, 21.639]}, "fixedt=6": {"acc": [68.56333333333333, 0.2830783166074963], "steps": [7.0, 0.0], "img_s": [2253.0, 319.5637651549374], "bs1": [24.898, 0.34831164206784637], "n": 3, "seeds_bs1": [25.269, 24.847, 24.578]}, "fixedt=7": {"acc": [68.57666666666667, 0.28219378684396246], "steps": [8.0, 0.0], "img_s": [2097.6666666666665, 2.0816659994661326], "bs1": [28.108999999999998, 0.8124426133580136], "n": 3, "seeds_bs1": [27.798, 29.031, 27.498]}, "lam=0.003": {"acc": [68.46333333333334, 0.6545481902299712], "steps": [2.8933333333333335, 0.6261256529909419], "img_s": [4713.0, 1128.8985782611296], "bs1": [13.034, 4.040451831169381], "n": 3, "seeds_bs1": [13.4, 16.879, 8.823]}, "lam=0.01": {"acc": [68.33666666666667, 0.5500303021955519], "steps": [2.413333333333333, 0.40004166449675393], "img_s": [5982.666666666667, 475.6651483274062], "bs1": [10.384333333333334, 1.8571505952219736], "n": 3, "seeds_bs1": [10.166, 12.341, 8.646]}, "lam=0.03": {"acc": [68.19666666666667, 0.5757024694521766], "steps": [2.086666666666667, 0.2532455988429676], "img_s": [6898.0, 724.7951434715881], "bs1": [8.774000000000001, 1.2623490008709957], "n": 3, "seeds_bs1": [8.349, 10.194, 7.779]}, "lam=0.1": {"acc": [67.77333333333333, 0.4200396806652138], "steps": [1.7333333333333334, 0.05131601439446889], "img_s": [9198.333333333334, 877.9574780895333], "bs1": [7.244666666666666, 0.17686812413019268], "n": 3, "seeds_bs1": [7.303, 7.385, 7.046]}, "lam=0.3": {"acc": [66.74333333333333, 0.44523402086243646], "steps": [1.4, 0.07999999999999996], "img_s": [12718.0, 1389.5779934929885], "bs1": [5.8453333333333335, 0.3704137326467976], "n": 3, "seeds_bs1": [6.011, 5.421, 6.104]}}, "eager-triton": {"fixedt=0": {"acc": [63.71333333333333, 0.7769384359994934], "steps": [1.0, 0.0], "img_s": [65990.33333333333, 2834.660885067795], "bs1": [3.628, 0.03223352292257246], "n": 3, "seeds_bs1": [3.606, 3.665, 3.613]}, "fixedt=1": {"acc": [67.26666666666667, 0.555907666194066], "steps": [2.0, 0.0], "img_s": [11609.666666666666, 1740.4230328668182], "bs1": [7.415333333333333, 0.09013508380943218], "n": 3, "seeds_bs1": [7.511, 7.332, 7.403]}, "fixedt=2": {"acc": [68.29, 0.468721665810318], "steps": [3.0, 0.0], "img_s": [5784.333333333333, 951.4685141050824], "bs1": [10.955333333333334, 0.5875136877838116], "n": 3, "seeds_bs1": [11.1, 10.309, 11.457]}, "fixedt=3": {"acc": [68.68, 0.5452522352086282], "steps": [4.0, 0.0], "img_s": [4369.333333333333, 603.9216284695667], "bs1": [14.299, 0.34022933442018144], "n": 3, "seeds_bs1": [14.535, 13.909, 14.453]}, "fixedt=4": {"acc": [68.64, 0.40632499307819925], "steps": [5.0, 0.0], "img_s": [3318.6666666666665, 479.489659255894], "bs1": [17.610333333333333, 0.5790831834316497], "n": 3, "seeds_bs1": [18.067, 16.959, 17.805]}, "fixedt=5": {"acc": [68.65, 0.3117691453624015], "steps": [6.0, 0.0], "img_s": [2908.6666666666665, 2.309401076758503], "bs1": [21.114, 0.47442491502871076], "n": 3, "seeds_bs1": [20.987, 20.716, 21.639]}, "fixedt=6": {"acc": [68.56333333333333, 0.2830783166074963], "steps": [7.0, 0.0], "img_s": [2253.0, 319.5637651549374], "bs1": [24.898, 0.34831164206784637], "n": 3, "seeds_bs1": [25.269, 24.847, 24.578]}, "fixedt=7": {"acc": [68.57666666666667, 0.28219378684396246], "steps": [8.0, 0.0], "img_s": [2097.6666666666665, 2.0816659994661326], "bs1": [28.108999999999998, 0.8124426133580136], "n": 3, "seeds_bs1": [27.798, 29.031, 27.498]}, "lam=0.003": {"acc": [68.46666666666667, 0.6504101270224256], "steps": [2.8933333333333335, 0.6261256529909419], "img_s": [5050.0, 696.9053020317754], "bs1": [11.643666666666666, 3.2184973719630925], "n": 3, "seeds_bs1": [11.709, 14.829, 8.393]}, "lam=0.01": {"acc": [68.33666666666667, 0.5500303021955519], "steps": [2.413333333333333, 0.40004166449675393], "img_s": [5846.333333333333, 632.0896560879108], "bs1": [10.217666666666666, 2.8587277473263057], "n": 3, "seeds_bs1": [9.506, 13.365, 7.782]}, "lam=0.03": {"acc": [68.19666666666667, 0.5757024694521766], "steps": [2.086666666666667, 0.2532455988429676], "img_s": [6881.333333333333, 358.4694315186908], "bs1": [9.224666666666666, 3.3196181005250187], "n": 3, "seeds_bs1": [7.772, 13.023, 6.879]}, "lam=0.1": {"acc": [67.77333333333333, 0.4200396806652138], "steps": [1.7333333333333334, 0.05131601439446889], "img_s": [8890.666666666666, 1380.77019569997], "bs1": [7.605666666666667, 1.9866165541778145], "n": 3, "seeds_bs1": [6.635, 9.891, 6.291]}, "lam=0.3": {"acc": [66.74, 0.4467661580737734], "steps": [1.4, 0.07999999999999996], "img_s": [12258.0, 887.36182022893], "bs1": [5.986666666666666, 0.3098940679221424], "n": 3, "seeds_bs1": [5.629, 6.175, 6.156]}}, "compiled": {"fixedt=0": {"acc": [63.70666666666667, 0.7454081655934135], "steps": [1.0, 0.0], "img_s": [73840.33333333333, 2402.851292388552], "bs1": [3.3076666666666665, 0.2143462930244732], "n": 3, "seeds_bs1": [3.36, 3.491, 3.072]}, "fixedt=1": {"acc": [67.27666666666667, 0.5530220007678996], "steps": [2.0, 0.0], "img_s": [39804.333333333336, 776.8077840324036], "bs1": [5.946, 0.060099916805266926], "n": 3, "seeds_bs1": [6.008, 5.942, 5.888]}, "fixedt=2": {"acc": [68.33666666666666, 0.43684474740270207], "steps": [3.0, 0.0], "img_s": [27080.666666666668, 631.8523034169721], "bs1": [8.703333333333333, 0.17621672262680738], "n": 3, "seeds_bs1": [8.888, 8.537, 8.685]}, "fixedt=3": {"acc": [68.69666666666667, 0.5468394036034101], "steps": [4.0, 0.0], "img_s": [20954.333333333332, 105.39607835841585], "bs1": [11.126, 0.14908051515875614], "n": 3, "seeds_bs1": [11.086, 11.291, 11.001]}, "fixedt=4": {"acc": [68.67666666666666, 0.38004385711827016], "steps": [5.0, 0.0], "img_s": [16978.333333333332, 124.85725182516767], "bs1": [13.962666666666667, 0.5263082113489518], "n": 3, "seeds_bs1": [14.274, 14.259, 13.355]}, "fixedt=5": {"acc": [68.61666666666666, 0.25423086620891017], "steps": [6.0, 0.0], "img_s": [14129.333333333334, 511.7209526034021], "bs1": [16.603, 0.19559907975243654], "n": 3, "seeds_bs1": [16.636, 16.78, 16.393]}, "fixedt=6": {"acc": [68.55666666666667, 0.2821937868439543], "steps": [7.0, 0.0], "img_s": [12101.0, 121.86467905016613], "bs1": [18.845333333333333, 0.6630990373491223], "n": 3, "seeds_bs1": [18.925, 18.146, 19.465]}, "fixedt=7": {"acc": [68.57333333333334, 0.26727015047201114], "steps": [8.0, 0.0], "img_s": [10650.0, 312.99840255183415], "bs1": [21.772666666666666, 0.7071494420087835], "n": 3, "seeds_bs1": [20.964, 22.079, 22.275]}, "lam=0.003": {"acc": [68.49, 0.6153860576906145], "steps": [2.896666666666667, 0.6205105424836336], "img_s": [8998.0, 373.51439061969216], "bs1": [10.455, 2.6338464268062407], "n": 3, "seeds_bs1": [10.772, 12.916, 7.677]}, "lam=0.01": {"acc": [68.39666666666666, 0.5653612414495168], "steps": [2.413333333333333, 0.40004166449675393], "img_s": [10224.333333333334, 2954.092979805025], "bs1": [8.712333333333333, 1.439463210135408], "n": 3, "seeds_bs1": [8.963, 10.01, 7.164]}, "lam=0.03": {"acc": [68.22333333333333, 0.6099453527434519], "steps": [2.086666666666667, 0.2532455988429676], "img_s": [10643.666666666666, 2731.737603309171], "bs1": [7.015333333333333, 0.8228641038065359], "n": 3, "seeds_bs1": [6.696, 7.95, 6.4]}, "lam=0.1": {"acc": [67.78, 0.43034869582699986], "steps": [1.74, 0.04582575694955844], "img_s": [13567.0, 1613.359538354672], "bs1": [5.944, 0.15776247969653648], "n": 3, "seeds_bs1": [5.967, 6.089, 5.776]}, "lam=0.3": {"acc": [66.74333333333333, 0.4812830075260678], "steps": [1.4033333333333333, 0.0850490054811538], "img_s": [16774.0, 1308.7578079996313], "bs1": [4.872, 0.33161574148402573], "n": 3, "seeds_bs1": [4.939, 4.512, 5.165]}}, "cudagraph-bs1": {"fixedt=0": {"acc": [63.71333333333333, 0.7769384359994934], "steps": [1.0, 0.0], "img_s": null, "bs1": [1.008, 0.982, 1.06], "n": 3, "seeds_bs1": [0.982, 1.06, 1.008]}, "fixedt=1": {"acc": [67.26666666666667, 0.555907666194066], "steps": [2.0, 0.0], "img_s": null, "bs1": [1.949, 1.949, 2.014], "n": 3, "seeds_bs1": [1.949, 2.014, 1.949]}, "fixedt=2": {"acc": [68.29, 0.468721665810318], "steps": [3.0, 0.0], "img_s": null, "bs1": [2.915, 2.914, 2.915], "n": 3, "seeds_bs1": [2.915, 2.914, 2.915]}, "fixedt=3": {"acc": [68.68, 0.5452522352086282], "steps": [4.0, 0.0], "img_s": null, "bs1": [3.882, 3.881, 3.882], "n": 3, "seeds_bs1": [3.882, 3.881, 3.882]}, "fixedt=4": {"acc": [68.64, 0.40632499307819925], "steps": [5.0, 0.0], "img_s": null, "bs1": [4.844, 4.843, 4.845], "n": 3, "seeds_bs1": [4.845, 4.843, 4.844]}, "fixedt=5": {"acc": [68.65, 0.3117691453624015], "steps": [6.0, 0.0], "img_s": null, "bs1": [5.815, 5.813, 5.815], "n": 3, "seeds_bs1": [5.815, 5.813, 5.815]}, "fixedt=6": {"acc": [68.56333333333333, 0.2830783166074963], "steps": [7.0, 0.0], "img_s": null, "bs1": [6.775, 6.774, 6.776], "n": 3, "seeds_bs1": [6.776, 6.774, 6.775]}, "fixedt=7": {"acc": [68.57666666666667, 0.28219378684396246], "steps": [8.0, 0.0], "img_s": null, "bs1": [7.744, 7.744, 10.007], "n": 3, "seeds_bs1": [7.744, 10.007, 7.744]}, "lam=0.003": {"acc": [68.46333333333334, 0.6545481902299712], "steps": [2.8933333333333335, 0.6261256529909419], "img_s": null, "bs1": [3.306, 2.326, 6.139], "n": 3, "seeds_bs1": [3.306, 6.139, 2.326]}, "lam=0.01": {"acc": [68.33666666666667, 0.5500303021955519], "steps": [2.413333333333333, 0.40004166449675393], "img_s": null, "bs1": [2.598, 2.178, 5.078], "n": 3, "seeds_bs1": [2.598, 5.078, 2.178]}, "lam=0.03": {"acc": [68.19666666666667, 0.5757024694521766], "steps": [2.086666666666667, 0.2532455988429676], "img_s": null, "bs1": [2.125, 2.01, 4.131], "n": 3, "seeds_bs1": [2.125, 4.131, 2.01]}, "lam=0.1": {"acc": [67.77333333333333, 0.4200396806652138], "steps": [1.7333333333333334, 0.05131601439446889], "img_s": null, "bs1": [1.825, 1.811, 3.095], "n": 3, "seeds_bs1": [1.825, 3.095, 1.811]}, "lam=0.3": {"acc": [66.74333333333333, 0.44523402086243646], "steps": [1.4, 0.07999999999999996], "img_s": null, "bs1": [1.583, 1.505, 2.229], "n": 3, "seeds_bs1": [1.505, 2.229, 1.583]}}, "cudagraph-bs1-triton": {"fixedt=0": {"acc": [63.71333333333333, 0.7769384359994934], "steps": [1.0, 0.0], "img_s": null, "bs1": [1.008, 0.982, 1.06], "n": 3, "seeds_bs1": [0.982, 1.06, 1.008]}, "fixedt=1": {"acc": [67.26666666666667, 0.555907666194066], "steps": [2.0, 0.0], "img_s": null, "bs1": [1.949, 1.949, 2.014], "n": 3, "seeds_bs1": [1.949, 2.014, 1.949]}, "fixedt=2": {"acc": [68.29, 0.468721665810318], "steps": [3.0, 0.0], "img_s": null, "bs1": [2.915, 2.914, 2.915], "n": 3, "seeds_bs1": [2.915, 2.914, 2.915]}, "fixedt=3": {"acc": [68.68, 0.5452522352086282], "steps": [4.0, 0.0], "img_s": null, "bs1": [3.882, 3.881, 3.882], "n": 3, "seeds_bs1": [3.882, 3.881, 3.882]}, "fixedt=4": {"acc": [68.64, 0.40632499307819925], "steps": [5.0, 0.0], "img_s": null, "bs1": [4.844, 4.843, 4.845], "n": 3, "seeds_bs1": [4.845, 4.843, 4.844]}, "fixedt=5": {"acc": [68.65, 0.3117691453624015], "steps": [6.0, 0.0], "img_s": null, "bs1": [5.815, 5.813, 5.815], "n": 3, "seeds_bs1": [5.815, 5.813, 5.815]}, "fixedt=6": {"acc": [68.56333333333333, 0.2830783166074963], "steps": [7.0, 0.0], "img_s": null, "bs1": [6.775, 6.774, 6.776], "n": 3, "seeds_bs1": [6.776, 6.774, 6.775]}, "fixedt=7": {"acc": [68.57666666666667, 0.28219378684396246], "steps": [8.0, 0.0], "img_s": null, "bs1": [7.744, 7.744, 10.007], "n": 3, "seeds_bs1": [7.744, 10.007, 7.744]}, "lam=0.003": {"acc": [68.46333333333334, 0.6545481902299712], "steps": [2.8933333333333335, 0.6261256529909419], "img_s": null, "bs1": [3.136, 2.351, 3.704], "n": 3, "seeds_bs1": [3.136, 3.704, 2.351]}, "lam=0.01": {"acc": [68.33666666666667, 0.5500303021955519], "steps": [2.413333333333333, 0.40004166449675393], "img_s": null, "bs1": [2.432, 2.044, 2.867], "n": 3, "seeds_bs1": [2.432, 2.867, 2.044]}, "lam=0.03": {"acc": [68.19666666666667, 0.5757024694521766], "steps": [2.086666666666667, 0.2532455988429676], "img_s": null, "bs1": [1.989, 1.886, 2.361], "n": 3, "seeds_bs1": [1.989, 2.361, 1.886]}, "lam=0.1": {"acc": [67.77333333333333, 0.4200396806652138], "steps": [1.7333333333333334, 0.05131601439446889], "img_s": null, "bs1": [1.776, 1.698, 2.315], "n": 3, "seeds_bs1": [2.315, 1.776, 1.698]}, "lam=0.3": {"acc": [66.74333333333333, 0.44523402086243646], "steps": [1.4, 0.07999999999999996], "img_s": null, "bs1": [1.486, 1.293, 1.908], "n": 3, "seeds_bs1": [1.908, 1.293, 1.486]}}}}, "train": [{"exp": "c100_vcnet_orig", "copies": 1, "ref": "cpu-eager", "rows": [["cpu-eager", 256, 9034, 28.34, 1.0, 1.9, 1.37, 16.5, 49.6, 1.08], ["gpu-eager", 256, 8129, 31.49, 0.9, 0.4, 1.5, 18.4, 55.1, 1.18], ["gpu-fused", 256, 9360, 27.35, 1.04, 0.0, 1.5, 16.0, 47.9, 1.1], ["gpu-compile", 256, 8305, 30.83, 0.92, 62.2, 1.08, 18.0, 53.9, 1.09], ["gpu-cg", 256, 15494, 16.52, 1.72, 29.4, 0.84, 9.6, 28.9, 1.05], ["cpu-cg", 256, 11895, 21.52, 1.32, 25.4, 0.71, 12.6, 37.7, 1.21], ["gpu-cg-bs512", 512, 25205, 20.31, 2.79, 55.2, 1.68, 5.9, 17.7, 1.01], ["gpu-cg-bs1024", 1024, 33891, 30.21, 3.75, 58.5, 2.93, 4.3, 13.0, 1.01]], "loader": [11465, 64903]}, {"exp": "c100_vcnet_adapt_blt", "copies": 1, "ref": "cpu-eager", "rows": [["cpu-eager", 256, 1483, 172.59, 1.0, 0.7, 3.94, 100.7, 302.0, 1.0], ["gpu-eager", 256, 1411, 181.49, 0.95, 0.2, 4.07, 105.9, 317.6, 1.05], ["gpu-fused", 256, 1384, 184.96, 0.93, 0.2, 4.07, 107.9, 323.7, 1.03], ["gpu-compile", 256, 3664, 69.86, 2.47, 143.9, 2.42, 40.8, 122.3, 1.03], ["gpu-cg", 256, 6105, 41.93, 4.12, 111.7, 2.12, 24.5, 73.4, 1.0], ["cpu-cg", 256, 6867, 37.28, 4.63, 92.6, 2.0, 21.7, 65.2, 1.0], ["gpu-cg-bs512", 512, 8011, 63.91, 5.4, 140.3, 4.34, 18.5, 55.6, 1.01], ["gpu-cg-bs1024", 1024, 9919, 103.24, 6.69, 144.3, 8.23, 14.8, 44.4, 1.01]], "loader": [10947, 58190]}, {"exp": "c100_vcnet_adapt_blt", "copies": 3, "ref": "cpu-eager", "rows": [["cpu-eager", 256, 1050, 731.55, 1.0, 1.5, 11.84, 428.7, 428.7, 1.21], ["gpu-compile", 256, 5095, 150.73, 4.85, 40.3, 6.47, 88.2, 88.2, 1.02], ["gpu-cg", 256, 5776, 132.97, 5.5, 39.8, 6.37, 77.8, 77.8, 1.02]], "loader": [15148, 69539]}, {"exp": "c100_vcnet_orig", "copies": 1, "ref": "cpu-eager", "rows": [["cpu-eager", 256, 8382, 30.54, 1.0, 1.9, 1.37, 17.8, 53.4, 1.06], ["cpu-cg", 256, 12994, 19.7, 1.55, 11.7, 0.71, 11.5, 34.5, 1.28], ["gpu-cg-noprefetch", 256, 21884, 11.7, 2.61, 9.8, 0.84, 6.8, 20.5, 1.0], ["gpu-cg", 256, 24387, 10.5, 2.91, 9.9, 0.85, 6.1, 18.4, 1.0], ["cpu-cg-cl", 256, 13955, 18.34, 1.66, 80.6, 0.93, 10.7, 32.1, 1.15], ["gpu-cg-cl", 256, 14451, 17.72, 1.72, 24.0, 0.87, 10.3, 31.0, 1.01], ["gpu-cg-bs512", 512, 31024, 16.5, 3.7, 22.8, 1.51, 4.8, 14.4, 1.0], ["gpu-cg-bs1024", 1024, 37641, 27.2, 4.49, 22.2, 2.84, 3.9, 11.7, 1.0]], "loader": [11643, 73992]}, {"exp": "c100_vcnet_adapt_blt", "copies": 1, "ref": "cpu-eager", "rows": [["cpu-eager", 256, 1484, 172.54, 1.0, 0.7, 4.0, 100.7, 302.0, 1.0], ["cpu-cg", 256, 6874, 37.24, 4.63, 35.6, 2.0, 21.7, 65.2, 1.01], ["gpu-cg-noprefetch", 256, 6616, 38.7, 4.46, 37.8, 2.12, 22.6, 67.7, 1.0], ["gpu-cg", 256, 6577, 38.92, 4.43, 36.0, 2.13, 22.7, 68.1, 1.01], ["cpu-cg-cl", 256, 4489, 57.03, 3.03, 184.5, 2.27, 33.3, 99.8, 1.0], ["gpu-cg-cl", 256, 4363, 58.68, 2.94, 86.4, 2.14, 34.2, 102.7, 1.01], ["gpu-cg-bs512", 512, 8280, 61.83, 5.58, 83.6, 4.06, 17.9, 53.8, 1.0], ["gpu-cg-bs1024", 1024, 10219, 100.2, 6.89, 78.7, 7.9, 14.4, 43.1, 1.0]], "loader": [10036, 43247]}, {"exp": "c100_vcnet_adapt_blt", "copies": 1, "ref": "cpu-cg", "rows": [["cpu-cg", 256, 6986, 36.64, 1.0, 36.0, 1.9, 21.4, 64.1, 1.05], ["gpu-cg", 256, 6858, 37.33, 0.98, 34.5, 2.04, 21.8, 65.3, 1.0], ["gpu-cg-bs1024", 1024, 11102, 92.24, 1.59, 34.8, 7.59, 13.2, 39.7, 1.0]]}]}, ACC = {"steps": [1, 2, 3, 4, 5, 6, 7, 8], "rows": [["adapt_blt（第 2 輪，舊管線）", "63.72±0.77 67.27±0.57 68.30±0.48 68.68±0.58 68.65±0.39 68.60±0.29 68.56±0.30 68.61±0.30", "", "", ""], ["adapt_blt_fast（batch 256）", "63.84±0.53 67.62±0.44 68.51±0.31 68.85±0.49 68.85±0.36 68.88±0.49 68.78±0.47 68.85±0.44", "3.244", "82.6（3 個並行）", "2.21 2.43 2.46 2.55 2.51 2.44 2.61 2.51"], ["adapt_blt_fast_bs512（lr 1.4e-3）", "62.36±0.30 66.67±0.39 67.58±0.53 67.83±0.37 67.80±0.47 67.86±0.52 67.86±0.45 67.87±0.43", "3.294", "20.8±0.5", "2.44 2.44 2.49 2.39 2.36 2.39 2.34 2.38"], ["adapt_blt_fast_bs1024（lr 2e-3）", "60.24±0.32 63.96±0.44 65.11±0.47 65.42±0.40 65.43±0.37 65.44±0.37 65.41±0.36 65.35±0.26", "3.340", "15.5±0.7", "2.13 2.69 2.73 2.57 2.64 2.73 2.64 2.73"], ["orig（第 1 輪，舊管線）", "60.99±0.93 64.55±0.96", "", "", "— 1.79"], ["orig_fast", "61.83±2.26 65.48±1.77", "2.599", "30.5（3 個並行）", "2.03 1.48"]]}, GF = {"blt": [0.161, 0.284, 0.406, 0.528, 0.65, 0.773, 0.895, 1.017], "base": [0.161, 0.275, 0.388, 0.502, 0.615, 0.729, 0.842, 0.955]};
+  const fmt = (v, p) => v == null ? "" : Number(v).toLocaleString("en-US", {minimumFractionDigits: p, maximumFractionDigits: p});
+  // mean ± sd cell; grey dotted underline when sd > 25% of the mean
+  const ms = (a, p) => {
+    if (!a) return `<td class="n"></td>`;
+    const noisy = a[0] && a[1] / a[0] > 0.25;
+    return `<td class="n${noisy ? " noisy" : ""}"${noisy ? ' title="標準差超過平均的 25%"' : ""}>${fmt(a[0], p)}<span style="color:var(--fg2)">±${fmt(a[1], p)}</span></td>`;
+  };
+  // median [med, min, max] cell
+  const md = (a, p) => {
+    if (!a) return `<td class="n"></td>`;
+    const noisy = (a[2] - a[1]) / a[0] > 0.25;
+    return `<td class="n${noisy ? " noisy" : ""}" title="3 個種子：${fmt(a[1], p)}–${fmt(a[2], p)}">${fmt(a[0], p)}</td>`;
+  };
+  const gfAt = (arr, s) => { const i = Math.floor(s) - 1, f = s - Math.floor(s); return i >= arr.length - 1 ? arr[arr.length - 1] : arr[i] + (arr[i + 1] - arr[i]) * f; };
+  const label = s => s.startsWith("fixed") ? `固定 ${+s.slice(-1) + 1} 步` : `λ = ${s.slice(4)}`;
+  const order = sets => [...sets].sort((a, b) => (a.startsWith("fixed") ? 0 : 1) - (b.startsWith("fixed") ? 0 : 1) || (a.startsWith("fixed") ? a.localeCompare(b) : parseFloat(b.slice(4)) - parseFloat(a.slice(4))));
+  const grp = (n, t) => `<tr><td class="grp" colspan="${n}">${t}</td></tr>`;
+  const table = (head, body) => `<div class="tbl"><table>${head}${body}</table></div>`;
+
+  function inferTable(model, cols, gfk, accMode) {
+    // cols: [label, kind ("img"|"bs1"|"bs1med"|"occ"), source object (mode -> set -> row)]
+    const src0 = accMode;
+    const sets = order(new Set(cols.flatMap(c => Object.keys(c[2] || {}))));
+    const nc = 4 + cols.length;
+    let h = `<tr><th>設定</th><th class="n">準確率 %</th><th class="n">平均步數</th><th class="n">GFLOPs<br>每張圖</th>` + cols.map(c => `<th class="n">${c[0]}</th>`).join("") + "</tr>";
+    let b = "", last = "";
+    for (const s of sets) {
+      const kind = s.startsWith("fixed") ? "f" : "l";
+      if (kind !== last) { b += grp(nc, kind === "f" ? "固定步數" : "停止策略 S0-reward_acc（λ 越小，跑越多步）"); last = kind; }
+      const a = (src0[s] || cols.map(c => (c[2] || {})[s]).find(r => r && r.acc)) || {};
+      const steps = a.steps ? a.steps[0] : null;
+      const g = steps == null ? "" : (kind === "f" ? fmt(gfAt(GF[gfk], steps), 3) : "≈" + fmt(gfAt(GF[gfk], steps), 3));
+      b += `<tr><td>${label(s)}</td>${ms(a.acc, 2)}${ms(a.steps, 2)}<td class="n">${g}</td>` + cols.map(c => {
+        const r = (c[2] || {})[s];
+        if (!r) return `<td class="n"></td>`;
+        if (c[1] === "img") return ms(r.img_s, 0);
+        if (c[1] === "occ") return r.occ ? `<td class="n">${fmt(r.occ[0], 1)}%</td>` : `<td class="n"></td>`;
+        if (c[1] === "bs1med") return md(r.bs1, 3);
+        return ms(r.bs1, 3);
+      }).join("") + "</tr>";
+    }
+    return table(h, b);
+  }
+
+  const P2 = D.p2a.c100_vcnet_adapt_blt, P2b = D.p2b.c100_vcnet_adapt_blt, PO = D.p2a.c100_vcnet_orig;
+  const IB = D.idle.c100_vcnet_adapt_blt, IC = D.idle.c100_vcnet_adapt_carry, IO = D.idle.c100_vcnet_orig;
+
+  const VIEWS = [
+    ["p2", "推論 · adapt_blt（階段 2）", () =>
+      `<h3 style="font-size:1rem">batch 256 吞吐量（張/秒）與 batch 1 延遲（ms），3 個種子平均 ± 標準差</h3>` +
+      inferTable("blt", [
+        ["b256 壓縮式<br>eager", "img", P2.eager], ["b256 壓縮式<br>eager＋Triton", "img", P2["eager-triton"]],
+        ["b256 壓縮式<br>編譯", "img", P2.compiled], ["b256 槽位池<br>eager", "img", P2.slots],
+        ["b256 槽位池<br>＋Triton", "img", P2["slots-triton"]], ["b256 graph-bs256", "img", P2["graph-bs256"]],
+        ["b256 graph-compiled<br>0.16.0", "img", P2["graph-compiled-bs256"]], ["b256 graph-compiled<br>0.16.1", "img", P2b["graph-compiled-bs256"]],
+        ["槽位使用率<br>0.16.1", "occ", P2b["graph-compiled-bs256"]],
+        ["b1 eager<br>ms", "bs1", P2.eager], ["b1 eager＋Triton<br>ms", "bs1", P2["eager-triton"]], ["b1 編譯<br>ms", "bs1", P2.compiled],
+      ], "blt", P2.eager),
+      "階段 2 的 benchmark（0.16.0；最後兩個 graph-compiled 欄的 0.16.1 為另一次量測），閒置 H100、bf16、10,000 張測試圖。batch 1 每個種子 100 張。" +
+      "模式：壓縮式 = <code>AdaptiveRunner</code>（每步同步、移出已停的影像）；槽位池 = <code>SlotPoolRunner</code>（每個 tick 一張 CUDA graph）；" +
+      "graph-bs256 的固定步數為 eager kernel 錄成一張 graph、停止策略為槽位池＋Triton（eager kernel）；graph-compiled 兩者都先編譯再錄 graph，0.16.1 另把 V1 預先計算也編譯並錄成 graph。" +
+      "灰色虛線底線：標準差超過平均的 25%（eager kernel 的槽位池與 graph-bs256 停止策略不穩定）。停止策略列的 GFLOPs 依平均步數估算。"],
+    ["idle", "推論 · adapt_blt（閒置 GPU）", () =>
+      inferTable("blt", [
+        ["b256 壓縮式<br>eager", "img", IB.eager], ["b256 壓縮式<br>eager＋Triton", "img", IB["eager-triton"]], ["b256 壓縮式<br>編譯", "img", IB.compiled],
+        ["b1 eager<br>ms", "bs1", IB.eager], ["b1 eager＋Triton<br>ms", "bs1", IB["eager-triton"]], ["b1 編譯<br>ms", "bs1", IB.compiled],
+        ["b1 CUDA graph<br>ms（中位數）", "bs1med", IB["cudagraph-bs1"]], ["b1 CUDA graph<br>＋Triton ms", "bs1med", IB["cudagraph-bs1-triton"]],
+      ], "blt", IB.eager),
+      "閒置 GPU 的 benchmark（第 2 輪之後，0.10.0 的融合 kernel 分支），batch 1 每個種子 500 張。CUDA graph 兩欄為 3 個種子的中位數，滑鼠移上去可看最小–最大；其餘為平均 ± 標準差。" +
+      "固定步數不受停止策略影響，所以「＋Triton」欄只有停止策略列。"],
+    ["carry", "推論 · adapt_carry（閒置 GPU）", () =>
+      inferTable("base", [
+        ["b256 壓縮式<br>eager", "img", IC.eager], ["b256 壓縮式<br>eager＋Triton", "img", IC["eager-triton"]], ["b256 壓縮式<br>編譯", "img", IC.compiled],
+        ["b1 eager<br>ms", "bs1", IC.eager], ["b1 eager＋Triton<br>ms", "bs1", IC["eager-triton"]], ["b1 編譯<br>ms", "bs1", IC.compiled],
+        ["b1 CUDA graph<br>ms（中位數）", "bs1med", IC["cudagraph-bs1"]], ["b1 CUDA graph<br>＋Triton ms", "bs1med", IC["cudagraph-bs1-triton"]],
+      ], "base", IC.eager),
+      "同上一個類別的量測。種子 2 的停止策略在所有 λ 下都在第 0 步停，所以停止策略列的種子差異很大。"],
+    ["orig", "推論 · 原始 VCNet", () =>
+      `<h3 style="font-size:1rem">階段 2（0.16.0）</h3>` +
+      inferTable("base", [
+        ["b256 eager", "img", PO.eager], ["b256 編譯", "img", PO.compiled], ["b256 graph-bs256", "img", PO["graph-bs256"]],
+        ["b256 graph-compiled", "img", PO["graph-compiled-bs256"]], ["b1 eager ms", "bs1", PO.eager], ["b1 編譯 ms", "bs1", PO.compiled],
+      ], "base", PO.eager) +
+      `<h3 style="font-size:1rem">閒置 GPU</h3>` +
+      inferTable("base", [
+        ["b256 eager", "img", IO.eager], ["b256 編譯", "img", IO.compiled], ["b1 eager ms", "bs1", IO.eager], ["b1 編譯 ms", "bs1", IO.compiled],
+        ["b1 CUDA graph<br>ms（中位數）", "bs1med", IO["cudagraph-bs1"]],
+      ], "base", IO.eager),
+      "原始 VCNet 沒有停止策略，只量固定步數（訓練時為 2 步；第 1 步的讀出沒有訓練）。"],
+    ["train", "訓練速度", () => {
+      const NAMES = ["第 1 次量測（0.15.0）", "第 1 次量測（0.15.0）", "第 1 次量測（0.15.0），3 份同時跑", "第 2 次量測（0.15.1）", "第 2 次量測（0.15.1）", "第 3 次量測（0.15.2）"];
+      return D.train.map((t, i) => {
+        const h = `<tr><th>設定</th><th class="n">batch</th><th class="n">張/秒</th><th class="n">ms / iter</th><th class="n">倍數（對 ${t.ref}）</th><th class="n">第一次 iter 秒</th><th class="n">峰值 GB</th><th class="n">分鐘 / 次</th><th class="n">3 種子分鐘</th><th class="n">spread</th></tr>`;
+        const b = t.rows.map(r => `<tr><td><code>${r[0]}</code></td><td class="n">${r[1]}</td><td class="n">${fmt(r[2], 0)}</td><td class="n">${fmt(r[3], 2)}</td><td class="n">${fmt(r[4], 2)}×</td><td class="n">${fmt(r[5], 1)}</td><td class="n">${fmt(r[6], 2)}</td><td class="n">${fmt(r[7], 1)}</td><td class="n">${fmt(r[8], 1)}</td><td class="n">${fmt(r[9], 2)}</td></tr>`).join("");
+        const ld = t.loader ? `<p class="note">只跑資料管線：CPU（7 個 worker）${fmt(t.loader[0], 0)} 張/秒，GPU ${fmt(t.loader[1], 0)} 張/秒。</p>` : "";
+        return `<h3 style="font-size:1rem">${NAMES[i]} · ${t.exp.replace("c100_vcnet_", "")}</h3>` + table(h, b) + ld;
+      }).join("");
+    }, "<code>scripts/bench_train.py</code>，完整訓練步（資料＋前向＋損失＋反向＋最佳化器）。每種設定暖機 15 次（含編譯），再量 3 × 50 次取中位數。" +
+       "設定：cpu / gpu = 資料增強在哪裡；eager / fused / compile / cg = 不編譯、只用 fused AdamW、編譯、編譯＋CUDA graph；noprefetch = 不用副串流；cl = channels_last；bs512 / bs1024 = batch。" +
+       "分鐘 / 次 = 200 epoch 的估計訓練時間（不含評估）；spread = 最慢 / 最快的計時重複。3 份同時跑時，張/秒是 3 份的總和。"],
+    ["acc", "訓練準確率", () => {
+      let h = `<tr><th>實驗</th>` + ACC.steps.map(s => `<th class="n">第 ${s} 步</th>`).join("") + `<th class="n">最終訓練損失</th><th class="n">訓練分鐘</th></tr>`;
+      let b = "";
+      for (const [name, acc, loss, mins] of ACC.rows) {
+        const cells = acc.split(" ");
+        b += `<tr><td>${name}</td>` + ACC.steps.map((_, i) => {
+          const c = cells[i]; if (!c) return `<td class="n"></td>`;
+          const [m, s] = c.split("±"); return `<td class="n">${m}<span style="color:var(--fg2)">±${s}</span></td>`;
+        }).join("") + `<td class="n">${loss}</td><td class="n">${mins}</td></tr>`;
+      }
+      let h2 = `<tr><th>溫度縮放後 ECE %</th>` + ACC.steps.map(s => `<th class="n">第 ${s} 步</th>`).join("") + "</tr>";
+      let b2 = ACC.rows.filter(r => r[4]).map(r => `<tr><td>${r[0]}</td>` + ACC.steps.map((_, i) => `<td class="n">${(r[4].split(" ")[i] || "").replace("—", "")}</td>`).join("") + "</tr>").join("");
+      return `<h3 style="font-size:1rem">測試準確率 %（3 個種子平均 ± 標準差）</h3>` + table(h, b) +
+             `<h3 style="font-size:1rem">溫度縮放後的 ECE %</h3>` + table(h2, b2);
+    }, "CIFAR-100 測試集。fast = <code>--gpu-aug --compile-mode reduce-overhead --opt-impl fused</code>；舊管線為第 1–2 輪的做法。" +
+       "adapt_blt_fast 與 orig_fast 的 3 個種子是並行跑（<code>--parallel 3</code>，每份約 2 個 CPU 核心），訓練分鐘不代表依序執行的時間；依序執行時 adapt_blt_fast 約 22 分鐘 / 次。" +
+       "batch 512 / 1024 的學習率按 √(batch / 256) 放大，epoch 數不變。"],
+  ];
+
+  const sel = document.getElementById("dataSel"), body = document.getElementById("dataBody"), note = document.getElementById("dataNote");
+  sel.innerHTML = VIEWS.map(([k, nm]) => `<button type="button" id="data-${k}" data-k="${k}" aria-pressed="false">${nm}</button>`).join("");
+  function render(k) {
+    const v = VIEWS.find(x => x[0] === k);
+    body.innerHTML = v[2](); note.innerHTML = v[3];
+    sel.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.k === k)));
+    try { localStorage.setItem("speedDataView", k); } catch (e) {}
+  }
+  sel.addEventListener("click", e => { const b = e.target.closest("button"); if (b) render(b.dataset.k); });
+  let start = "p2";
+  try { const s = localStorage.getItem("speedDataView"); if (VIEWS.some(v => v[0] === s)) start = s; } catch (e) {}
+  render(start);
+})();
+</script>
+
+</body></html>

@@ -22,6 +22,33 @@ _VC = [
 _VC_ORIG = _VC + ["--t-max", "2", "--loss-steps", "last", "--beta", "0", "--gamma", "0", "--delta", "0"]
 # adaptive VCNet: 8 predictive-coding steps, a readout after every step, Stage A loss
 _VC_ADAPT = _VC + ["--t-max", "8", "--step-weights", "quadratic"]
+# phase 0 (0.15.0) fast training pipeline: augmentation on the GPU (fsv/gpu_aug.py), forward + loss
+# compiled with CUDA graphs, fused AdamW. Same recipe otherwise; validated by the *_fast runs below
+# against rounds 1-2 before new experiments adopt it.
+_FAST = ["--gpu-aug", "--compile-mode", "reduce-overhead", "--opt-impl", "fused"]
+
+
+def _set(args: list[str], flag: str, value: str) -> list[str]:
+    """Copy of a recipe with ``flag``'s value replaced."""
+    i = args.index(flag)
+    return [*args[:i + 1], value, *args[i + 2:]]
+
+
+# phase 1 baselines: the CIFAR ResNet with one step and plain cross-entropy
+# (a) the VCNet recipe unchanged (AdamW, RandAugment, random erasing, Mixup / CutMix): same training for every model
+_RN_FAST = _set(_set(_VC_ORIG, "--model", "resnet56"), "--t-max", "1") + _FAST
+
+
+def _sgd(args: list[str]) -> list[str]:
+    """(b) the standard CIFAR ResNet recipe (He et al. 2016, cosine schedule): SGD + Nesterov, lr 0.1 per 128
+    images (0.2 at batch 256), weight decay 5e-4, crop + flip only, no clipping. Checks the implementation
+    against the literature (ResNet-56 on CIFAR-100: about 71-72%; here trained on 45k images, 5k held out)."""
+    for flag, value in (("--lr", "0.2"), ("--wd", "5e-4"), ("--warmup-epochs", "1")):
+        args = _set(args, flag, value)
+    return args + ["--opt", "sgd", "--clip", "0", "--no-randaug", "--erase", "0", "--mixup", "0", "--cutmix", "0"]
+
+
+_RN_SGD = _sgd(_RN_FAST)
 
 EXPERIMENTS: dict[str, dict] = {
     "smoke": {
@@ -146,5 +173,74 @@ EXPERIMENTS: dict[str, dict] = {
         "desc": "Same as c100_vcnet_blt_orig2 with 4 fixed steps (the best fixed depth of c100_vcnet_adapt_blt).",
         "train": [*_VC_ORIG[:_VC_ORIG.index("--t-max") + 1], "4", *_VC_ORIG[_VC_ORIG.index("--t-max") + 2:],
                   "--lateral", "--topdown"],
+    },
+    # ---- phase 0: the fast training pipeline must reproduce rounds 1-2 (run 3 seeds with --parallel 3)
+    "c100_vcnet_orig_fast": {
+        "desc": "c100_vcnet_orig with the fast pipeline (GPU augmentation + compiled step with CUDA graphs + "
+                "fused AdamW); must match 64.55% (round 1, 3 seeds).",
+        "train": _VC_ORIG + _FAST,
+    },
+    "c100_vcnet_adapt_blt_fast": {
+        "desc": "c100_vcnet_adapt_blt with the fast pipeline; must match round 2 (67.27% at 2 steps, "
+                "68.68% at 4 steps, 3 seeds).",
+        "train": _VC_ADAPT + ["--lateral", "--topdown"] + _FAST,
+    },
+    # ---- phase 0, step 2: bigger batches (bench_train: blt 6.6k -> 8.3k / 10.2k img/s at 512 / 1024).
+    # AdamW learning rate scaled with sqrt(batch / 256); same epochs and warmup epochs (fewer updates).
+    # Result (results/phase0_train_speed_h100): -1.0 (512) and -3.4 (1024) points; batch 256 stays the recipe.
+    "c100_vcnet_adapt_blt_fast_bs512": {
+        "desc": "c100_vcnet_adapt_blt_fast with batch 512, lr 1.4e-3 (sqrt scaling); must match the batch-256 run.",
+        "train": _VC_ADAPT + ["--lateral", "--topdown"] + _FAST + ["--batch-size", "512", "--lr", "1.4e-3"],
+    },
+    "c100_vcnet_adapt_blt_fast_bs1024": {
+        "desc": "c100_vcnet_adapt_blt_fast with batch 1024, lr 2e-3 (sqrt scaling); must match the batch-256 run.",
+        "train": _VC_ADAPT + ["--lateral", "--topdown"] + _FAST + ["--batch-size", "1024", "--lr", "2e-3"],
+    },
+    # ---- phase 1: feed-forward CNN baseline (ResNet-56: 0.862M params, 0.252 GFLOPs) and VCNet at the same size
+    "c100_resnet56_fast": {
+        "desc": "ResNet-56 (He et al. 2016, option-A shortcuts, BatchNorm) with the VCNet recipe and the fast "
+                "pipeline: AdamW, RandAugment, erasing, Mixup / CutMix, cross-entropy.",
+        "train": _RN_FAST,
+    },
+    "c100_resnet56_sgd": {
+        "desc": "ResNet-56 with the standard CIFAR recipe (SGD + Nesterov lr 0.2 at batch 256, wd 5e-4, crop + flip "
+                "only); reference to the literature (~71-72% on CIFAR-100).",
+        "train": _RN_SGD,
+    },
+    "c100_resnet56_gn_fast": {
+        "desc": "c100_resnet56_fast with GroupNorm instead of BatchNorm (VCNet uses GroupNorm): "
+                "separates the normalisation from the architecture.",
+        "train": _RN_FAST + ["--resnet-norm", "gn"],
+    },
+    "c100_vcnet_r56p_blt_fast": {
+        "desc": "VCNet blt (adaptive, 8 steps) at ResNet-56's parameter count (vcnet_r56p: 0.864M; "
+                "0.232 / 0.327 GFLOPs at 2 / 3 steps), fast pipeline.",
+        "train": _set(_VC_ADAPT, "--model", "vcnet_r56p") + ["--lateral", "--topdown"] + _FAST,
+    },
+    "c100_vcnet_r56f4_blt_fast": {
+        "desc": "VCNet blt (adaptive, 8 steps) at ResNet-56's FLOPs after 4 steps (vcnet_r56f4: 0.545M params, "
+                "0.249 GFLOPs at 4 steps), fast pipeline.",
+        "train": _set(_VC_ADAPT, "--model", "vcnet_r56f4") + ["--lateral", "--topdown"] + _FAST,
+    },
+    # ---- phase 1, round 2: GroupNorm costs ResNet-56 7.6 points (62.84 vs 70.44%), so VCNet's gap may be the
+    # normalisation. GN + weight standardisation keeps the TODO.md rule (no BatchNorm) and usually closes most of
+    # the GN-BN gap.
+    "c100_resnet56_gnws_fast": {
+        "desc": "c100_resnet56_gn_fast + weight standardisation in every conv (GN + WS): how much of BatchNorm's "
+                "7.6-point lead does it recover?",
+        "train": _RN_FAST + ["--resnet-norm", "gn", "--ws"],
+    },
+    "c100_vcnet_r56p_blt_ws_fast": {
+        "desc": "c100_vcnet_r56p_blt_fast + weight standardisation in every conv before a GroupNorm.",
+        "train": _set(_VC_ADAPT, "--model", "vcnet_r56p") + ["--lateral", "--topdown", "--ws"] + _FAST,
+    },
+    "c100_vcnet_r56f4_blt_ws_fast": {
+        "desc": "c100_vcnet_r56f4_blt_fast + weight standardisation (FLOPs-matched at 4 steps).",
+        "train": _set(_VC_ADAPT, "--model", "vcnet_r56f4") + ["--lateral", "--topdown", "--ws"] + _FAST,
+    },
+    "c100_vcnet_r56p_blt_sgd": {
+        "desc": "c100_vcnet_r56p_blt_fast with the standard ResNet recipe (SGD, crop + flip only); "
+                "only needed if c100_resnet56_sgd beats c100_resnet56_fast.",
+        "train": _sgd(_set(_VC_ADAPT, "--model", "vcnet_r56p") + ["--lateral", "--topdown"] + _FAST),
     },
 }

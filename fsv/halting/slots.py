@@ -25,6 +25,19 @@ are not refilled (no gather + where + scatter of the whole candidate set); ``x0`
 when the model uses input injection; the model step writes its result in place
 (``forward_step(..., out=tok)``), so no copy of the token buffer is needed.
 Same decisions as ``AdaptiveRunner.run`` up to float rounding (different batch shapes).
+
+VCNet (0.16.0): its step state (AIT, or all area maps packed) is not the embedding (the V1
+activity), so it keeps two buffers: ``x0`` (V1, written at refill, read by every step) and the
+state; a refilled row's state is stale and ignored at step 0 (``VCNet._step_areas_rows``).
+VCNet stops after fewer steps (1.4-2.4 on CIFAR-100 vs 3-4.6 for bViT), so more slots free up
+per tick and the default refill cap is all S slots. Its embedding (V1, a third of step 0) is
+computed once per image before the ticks, in batches of S (``pre_embed``): refilling then only
+gathers rows, instead of embedding all R refill candidates every tick (most are not taken).
+Memory: one V1 map per queued image (96 KB in bf16 on CIFAR). The pre-embedding of a batch is
+itself one CUDA graph (compiled with ``compile=True``): run eagerly it cost about as much per
+image as the whole tick overhead (H100, phase 2, 0.16.0 -> 0.16.1).
+``last_embed_ms`` / ``last_tick_ms``: GPU time of the pre-embedding and of the ticks of the last run. ``compile=True`` compiles the model step +
+readout with Inductor (no graphs of its own) before the tick is captured as a CUDA graph.
 """
 
 from __future__ import annotations
@@ -59,26 +72,38 @@ def s0_rows(p, logp, prev_logp, prev_pred, run, t: torch.Tensor, T: int):
 
 
 def supports_slots(model) -> bool:
-    """The slot pool batches rows at different steps through ONE block: it needs the bViT-style
-    recurrent ViT with weights shared across steps (``n_blocks == 1``). VCNet and the
-    non-shared ViT baseline are not supported."""
+    """The slot pool batches rows at different steps through one call: it needs weights shared
+    across steps, i.e. the bViT-style recurrent ViT (``n_blocks == 1``) or VCNet (per-row steps,
+    ``VCNet.forward_step`` with a step tensor). The non-shared ViT baseline is not supported."""
     from ..models.bvit import RecurrentViT
+    from ..models.vcnet import VCNet
 
-    return isinstance(model, RecurrentViT) and len(model.blocks) == 1
+    return (isinstance(model, RecurrentViT) and len(model.blocks) == 1) or isinstance(model, VCNet)
 
 
 class SlotPoolRunner:
     def __init__(self, model, policy, temps: torch.Tensor, device, amp: str = "none", slots: int = 256,
-                 refill: int | None = None, fused: bool = False, graph: bool | None = None):
+                 refill: int | None = None, fused: bool = False, graph: bool | None = None, compile: bool = False,
+                 pre_embed: bool | None = None):
         if not supports_slots(model):
-            raise NotImplementedError("the slot pool needs the recurrent ViT with one shared block (n_blocks == 1)")
+            raise NotImplementedError("the slot pool needs weights shared across steps (bViT n_blocks == 1, or VCNet)")
         if policy is None:
             raise ValueError("the slot pool needs a halting policy")
+        from ..models.vcnet import VCNet
+
         self.model, self.policy = model.eval(), policy.eval()
         self.device, self.amp = device, amp
         self.T, self.S = model.cfg.t_max, slots
-        self.R = min(refill or max(1, slots // 2), slots)
-        self.keep_x0 = model.inject_gate is not None  # x0 is only read by input injection
+        self.vcnet = isinstance(model, VCNet)
+        self.R = min(refill or (slots if self.vcnet else max(1, slots // 2)), slots)
+        # x0 is read by every VCNet step, and by bViT only with input injection
+        self.keep_x0 = self.vcnet or model.inject_gate is not None
+        self.pre_embed = self.vcnet if pre_embed is None else pre_embed
+        self._step_readout, self._embed = self._step_readout_impl, self._embed_impl
+        if compile:
+            self._step_readout = torch.compile(self._step_readout_impl, dynamic=False)
+            self._embed = torch.compile(self._embed_impl, dynamic=False)
+        self.last_embed_ms = self.last_tick_ms = 0.0
         self.temps = temps.float().to(device)
         self.graph = (device.type == "cuda") if graph is None else graph
         self.fd = None
@@ -94,10 +119,14 @@ class SlotPoolRunner:
         dev, S, cfg = self.device, self.S, self.model.cfg
         with torch.no_grad():
             with autocast_ctx(dev, self.amp, cache_enabled=False):
-                probe = self.model.forward_step(self.model.embed(torch.zeros(1, *shape, device=dev)), 0,
-                                                self.model.embed(torch.zeros(1, *shape, device=dev)))
+                emb = self.model.embed(torch.zeros(1, *shape, device=dev))
+                probe = self.model.forward_step(emb, 0, emb)
+            # bViT: the state IS the embedding (refilled rows start from it); VCNet: separate buffers
+            self.emb_is_state = probe.shape == emb.shape
             self.Q = Q
             self.queue = torch.zeros(Q, *shape, device=dev)
+            # pre_embed: embeddings of the queued images, computed once per run (row Q: zeros for idle refills)
+            self.emb_queue = torch.zeros(Q + 1, *emb.shape[1:], dtype=emb.dtype, device=dev) if self.pre_embed else None
             self.n_total = torch.zeros((), dtype=torch.long, device=dev)
             self.next_ptr = torch.zeros((), dtype=torch.long, device=dev)
             self.done = torch.zeros((), dtype=torch.long, device=dev)
@@ -106,7 +135,7 @@ class SlotPoolRunner:
             # S slots + 1 sink row that absorbs the writes of candidate slots that are not refilled
             self.tok_buf = torch.zeros(S + 1, *probe.shape[1:], dtype=probe.dtype, device=dev)
             self.tok = self.tok_buf[:S]
-            self.x0_buf = torch.zeros_like(self.tok_buf) if self.keep_x0 else None
+            self.x0_buf = torch.zeros(S + 1, *emb.shape[1:], dtype=emb.dtype, device=dev) if self.keep_x0 else None
             self.x0 = self.x0_buf[:S] if self.keep_x0 else None
             self.t = torch.zeros(S, dtype=torch.long, device=dev)
             self.img = torch.full((S,), Q, dtype=torch.long, device=dev)
@@ -116,6 +145,10 @@ class SlotPoolRunner:
             self.prev_pred = torch.zeros(S, dtype=torch.long, device=dev)
             self.run_ = torch.zeros(S, device=dev)
             self.lam = torch.ones(S, device=dev)
+            if self.pre_embed:  # static input / output of the pre-embedding graph (S images per replay)
+                self.pe_x = torch.zeros(S, *shape, device=dev)
+                self.pe_out = torch.zeros(S, *emb.shape[1:], dtype=emb.dtype, device=dev)
+                self.g_embed = _Replay(lambda: self.pe_out.copy_(self._embed(self.pe_x)), self.graph)
             self.n_total.fill_(0)  # the warm-up / capture ticks below then do nothing useful
             self.g_tick = _Replay(self._tick, self.graph)
             self.done_host = torch.zeros(2, dtype=torch.long, pin_memory=self.graph)
@@ -137,20 +170,22 @@ class SlotPoolRunner:
         qi = self.next_ptr + torch.cumsum(free.long(), 0) - 1
         take = free & (qi < self.n_total)
         qi = torch.where(take, qi, torch.zeros_like(qi))
-        with autocast_ctx(self.device, self.amp, cache_enabled=False):
-            emb = self.model.embed(self.queue.index_select(0, qi)).to(self.tok.dtype)
+        if self.pre_embed:
+            emb = self.emb_queue.index_select(0, qi)
+        else:
+            with autocast_ctx(self.device, self.amp, cache_enabled=False):
+                emb = self.model.embed(self.queue.index_select(0, qi))
         dest = torch.where(take, order, torch.full_like(order, self.S))  # not taken -> sink row S
-        self.tok_buf.index_copy_(0, dest, emb)
+        if self.emb_is_state:
+            self.tok_buf.index_copy_(0, dest, emb.to(self.tok.dtype))
         if self.keep_x0:
-            self.x0_buf.index_copy_(0, dest, emb)
+            self.x0_buf.index_copy_(0, dest, emb.to(self.x0_buf.dtype))
         self.t.index_copy_(0, order, torch.where(take, torch.zeros_like(qi), self.t.index_select(0, order)))
         self.img.index_copy_(0, order, torch.where(take, qi, self.img.index_select(0, order)))
         self.active.index_copy_(0, order, self.active.index_select(0, order) | take)
         self.next_ptr.add_(take.sum())
         # 2. one recurrent step for every slot, each at its own step
-        with autocast_ctx(self.device, self.amp, cache_enabled=False):
-            self.model.forward_step(self.tok, self.t, self.x0, out=self.tok)  # in place: no buffer copy
-            z = self.model.readout(self.tok, self.t)
+        z = self._step_readout(self.tok, self.t, self.x0)
         # 3. decide (state updated in place; step T-1 always stops)
         if self.fd is not None:
             self.fd.rows(z, self.prev_logp, self.prev_pred, self.run_, self.lam, self.t,
@@ -173,6 +208,15 @@ class SlotPoolRunner:
         self.active.copy_(self.active & ~stop)
         self.t.copy_((self.t + 1).clamp(max=T - 1))
 
+    def _embed_impl(self, x):
+        with autocast_ctx(self.device, self.amp, cache_enabled=False):
+            return self.model.embed(x)
+
+    def _step_readout_impl(self, tok, t, x0):
+        with autocast_ctx(self.device, self.amp, cache_enabled=False):
+            self.model.forward_step(tok, t, x0, out=tok)  # bViT: in place, no buffer copy
+            return self.model.readout(tok, t)
+
     # ------------------------------------------------------------------ runner
     @torch.no_grad()
     def run(self, x: torch.Tensor, lam: float | None = None) -> tuple[torch.Tensor, torch.Tensor]:
@@ -181,6 +225,24 @@ class SlotPoolRunner:
         if N > self.Q:
             self._build(max(N, 2 * self.Q), tuple(x.shape[1:]))
         self.queue[:N].copy_(x)
+        cuda = self.graph
+        if cuda:
+            ev = [torch.cuda.Event(enable_timing=True) for _ in range(3)]
+            ev[0].record()
+        else:
+            import time
+
+            t0 = time.perf_counter()
+        if self.pre_embed:  # every image embedded exactly once, in full batches of S (one graph each)
+            for i in range(0, N, self.S):
+                n = min(self.S, N - i)
+                self.pe_x[:n].copy_(x[i:i + n])
+                self.g_embed()
+                self.emb_queue[i:i + n].copy_(self.pe_out[:n])
+        if cuda:
+            ev[1].record()
+        else:
+            t1 = time.perf_counter()
         if lam is not None:
             self.lam.fill_(float(lam))
         self._reset(N)
@@ -204,6 +266,13 @@ class SlotPoolRunner:
                         break
                 prev = i
         self.last_ticks = ticks
+        if cuda:
+            ev[2].record()
+            ev[2].synchronize()
+            self.last_embed_ms, self.last_tick_ms = ev[0].elapsed_time(ev[1]), ev[1].elapsed_time(ev[2])
+        else:
+            t2 = time.perf_counter()
+            self.last_embed_ms, self.last_tick_ms = (t1 - t0) * 1e3, (t2 - t1) * 1e3
         return self.out_pred[:N].clone(), self.out_step[:N].clone()
 
     def occupancy(self, steps: torch.Tensor) -> float:
